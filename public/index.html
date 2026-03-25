@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Browser Automation Panel</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Browser Automation Panel</h1>
+      <p>Manage browser tasks, run them manually, and schedule them with cron.</p>
+    </header>
+
+    <section class="card">
+      <h2>Create Task</h2>
+      <form id="task-form">
+        <div class="grid">
+          <input name="name" placeholder="Task name" required />
+          <select name="type">
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+          </select>
+          <input name="script_path" placeholder="tasks/example.js" required />
+          <input name="cron_expr" placeholder="*/5 * * * *" />
+          <input name="timeout_sec" type="number" value="300" />
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" name="enabled" /> Enabled</label>
+          <label><input type="checkbox" name="use_browser" checked /> Use browser</label>
+          <label><input type="checkbox" name="use_persistent" checked /> Use persistent profile</label>
+        </div>
+        <button type="submit">Save Task</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Tasks</h2>
+      <div id="tasks"></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent Runs</h2>
+      <div id="runs"></div>
+    </section>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
