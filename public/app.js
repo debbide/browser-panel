@@ -9,6 +9,8 @@ const tasksEl = document.getElementById('tasks');
 const runsEl = document.getElementById('runs');
 const metaEl = document.getElementById('meta');
 const form = document.getElementById('task-form');
+const formTitle = document.getElementById('form-title');
+const formHint = document.getElementById('form-hint');
 const saveBtn = document.getElementById('save-btn');
 const resetBtn = document.getElementById('reset-btn');
 const cleanupBtn = document.getElementById('cleanup-runs-btn');
@@ -22,22 +24,6 @@ function escapeHtml(input) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function taskCard(task) {
-  return `
-    <div class="task">
-      <div><strong>${escapeHtml(task.name)}</strong> <small>#${task.id}</small></div>
-      <div>Type: ${escapeHtml(task.type)} | Script: ${escapeHtml(task.script_path)}</div>
-      <div>Cron: ${escapeHtml(task.cron_expr || '-')} | Enabled: ${task.enabled ? 'Yes' : 'No'}</div>
-      <div>Browser: ${task.use_browser ? 'Yes' : 'No'} | Persistent: ${task.use_persistent ? 'Yes' : 'No'} | Timeout: ${task.timeout_sec}s</div>
-      <div class="row">
-        <button onclick="runTask(${task.id})">Run</button>
-        <button class="alt" onclick="editTask(${task.id})">Edit</button>
-        <button class="alt" onclick="deleteTask(${task.id})">Delete</button>
-      </div>
-    </div>
-  `;
 }
 
 function runCard(run) {
@@ -56,10 +42,37 @@ function runCard(run) {
   `;
 }
 
+async function showTaskRuns(id) {
+  const data = await fetchJson(`/api/tasks/${id}/runs`);
+  const html = data.data.map(runCard).join('') || '<p>No runs for this task yet.</p>';
+  const target = document.getElementById(`task-runs-${id}`);
+  if (target) target.innerHTML = html;
+}
+
+function taskCard(task) {
+  return `
+    <div class="task">
+      <div><strong>${escapeHtml(task.name)}</strong> <small>#${task.id}</small></div>
+      <div>Type: ${escapeHtml(task.type)} | Script: ${escapeHtml(task.script_path)}</div>
+      <div>Cron: ${escapeHtml(task.cron_expr || '-')} | Enabled: ${task.enabled ? 'Yes' : 'No'}</div>
+      <div>Browser: ${task.use_browser ? 'Yes' : 'No'} | Persistent: ${task.use_persistent ? 'Yes' : 'No'} | Timeout: ${task.timeout_sec}s</div>
+      <div class="row">
+        <button onclick="runTask(${task.id})">Run</button>
+        <button class="alt" onclick="editTask(${task.id})">Edit</button>
+        <button class="alt" onclick="showTaskRuns(${task.id})">Runs</button>
+        <button class="alt" onclick="deleteTask(${task.id})">Delete</button>
+      </div>
+      <div id="task-runs-${task.id}" class="task-runs"></div>
+    </div>
+  `;
+}
+
 function resetForm() {
   form.reset();
   editingId = null;
   saveBtn.textContent = 'Save Task';
+  formTitle.textContent = 'Create or Edit Task';
+  formHint.textContent = 'Use JS or Python tasks on the same shared headed browser profile.';
 }
 
 async function loadMeta() {
@@ -93,6 +106,7 @@ async function loadRuns() {
 async function runTask(id) {
   await fetchJson(`/api/tasks/${id}/run`, { method: 'POST' });
   await loadRuns();
+  await showTaskRuns(id);
 }
 
 async function deleteTask(id) {
@@ -114,7 +128,9 @@ function editTask(id) {
   form.enabled.checked = Boolean(task.enabled);
   form.use_browser.checked = Boolean(task.use_browser);
   form.use_persistent.checked = Boolean(task.use_persistent);
-  saveBtn.textContent = 'Update Task';
+  saveBtn.textContent = `Update Task #${id}`;
+  formTitle.textContent = `Editing Task #${id}`;
+  formHint.textContent = `Editing ${task.name} (${task.type})`;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -142,11 +158,13 @@ resetBtn.addEventListener('click', resetForm);
 cleanupBtn.addEventListener('click', async () => {
   await fetchJson('/api/runs/cleanup', { method: 'POST' });
   await loadRuns();
+  await loadTasks();
 });
 
 window.runTask = runTask;
 window.deleteTask = deleteTask;
 window.editTask = editTask;
+window.showTaskRuns = showTaskRuns;
 
 loadMeta();
 loadTasks();
