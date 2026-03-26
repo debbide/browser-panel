@@ -126,7 +126,7 @@
               <div class="section-header compact">
                 <div>
                   <h4>定时器配置</h4>
-                  <p>支持固定时间模式与随机区间模式。</p>
+                  <p>支持固定间隔模式与随机区间模式，统一按“时长”配置。</p>
                 </div>
               </div>
 
@@ -137,43 +137,37 @@
                   <input type="radio" name="schedule_mode" value="fixed" checked />
                   <div>
                     <strong>固定模式</strong>
-                    <span>按每天或每周的固定时间执行</span>
+                    <span>例如：4小时、1天、30分钟</span>
                   </div>
                 </label>
                 <label class="timer-mode-card">
                   <input type="radio" name="schedule_mode" value="interval" />
                   <div>
                     <strong>区间模式</strong>
-                    <span>在最小值到最大值之间随机安排下一次执行</span>
+                    <span>例如：10-12小时、8-9天</span>
                   </div>
                 </label>
               </div>
 
               <div id="fixed-schedule-fields" class="grid two-col-tight schedule-fields">
-                <select name="fixed_kind">
-                  <option value="daily">每天</option>
-                  <option value="weekly">每周</option>
+                <input name="fixed_value" type="number" min="1" value="4" placeholder="固定值" />
+                <select name="fixed_unit">
+                  <option value="minutes">分钟</option>
+                  <option value="hours" selected>小时</option>
+                  <option value="days">天</option>
                 </select>
-                <select name="fixed_weekday">
-                  <option value="1">周一</option>
-                  <option value="2">周二</option>
-                  <option value="3">周三</option>
-                  <option value="4">周四</option>
-                  <option value="5">周五</option>
-                  <option value="6">周六</option>
-                  <option value="0">周日</option>
-                </select>
-                <input name="fixed_time" type="time" value="09:00" />
+                <div class="field-span-2 muted">固定模式会按这个单值时长重复执行。</div>
               </div>
 
               <div id="interval-schedule-fields" class="grid two-col-tight schedule-fields" hidden>
                 <input name="interval_min" type="number" min="1" value="10" placeholder="最小值" />
                 <input name="interval_max" type="number" min="1" value="12" placeholder="最大值" />
                 <select name="interval_unit">
-                  <option value="hours">小时</option>
+                  <option value="minutes">分钟</option>
+                  <option value="hours" selected>小时</option>
                   <option value="days">天</option>
                 </select>
-                <div class="field-span-2 muted">例如：10天 - 12天之间，或 30小时 - 36小时之间随机执行一次。</div>
+                <div class="field-span-2 muted">区间模式会在最小值与最大值之间随机安排下一次执行。</div>
               </div>
 
               <input type="hidden" name="cron_expr" />

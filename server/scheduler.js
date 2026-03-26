@@ -1,4 +1,3 @@
-const cron = require('node-cron');
 const { listTasks, updateTask } = require('./db');
 
 const jobs = new Map();
@@ -6,8 +5,7 @@ const runningTasks = new Set();
 
 function stopAllJobs() {
   for (const job of jobs.values()) {
-    if (job.kind === 'cron') job.handle.stop();
-    if (job.kind === 'timeout') clearTimeout(job.handle);
+    clearTimeout(job.handle);
   }
   jobs.clear();
 }
@@ -36,37 +34,43 @@ function randomIntInclusive(min, max) {
 
 function addInterval(date, value, unit) {
   const next = new Date(date.getTime());
-  if (unit === 'days') {
-    next.setUTCDate(next.getUTCDate() + value);
-  } else {
-    next.setUTCHours(next.getUTCHours() + value);
-  }
+  if (unit === 'days') next.setUTCDate(next.getUTCDate() + value);
+  else if (unit === 'minutes') next.setUTCMinutes(next.getUTCMinutes() + value);
+  else next.setUTCHours(next.getUTCHours() + value);
   return next;
 }
 
-function scheduleNextIntervalRun(task, runTaskById) {
-  if (!task.enabled || task.schedule_mode !== 'interval') return;
+function computeNextRun(task, fromDate = new Date()) {
   const min = Number(task.interval_min || 0);
   const max = Number(task.interval_max || 0);
   const unit = task.interval_unit || 'hours';
-  if (!min || !max) return;
+  if (!min || !max) return null;
+  const value = task.schedule_mode === 'interval' ? randomIntInclusive(min, max) : min;
+  return addInterval(fromDate, value, unit).toISOString();
+}
 
-  const nextRunAt = task.next_run_at ? new Date(task.next_run_at) : addInterval(new Date(), randomIntInclusive(min, max), unit);
-  const delayMs = Math.max(0, nextRunAt.getTime() - Date.now());
+function scheduleTask(task, runTaskById) {
+  if (!task.enabled) return;
+  const nextRunAt = task.next_run_at || computeNextRun(task);
+  if (!nextRunAt) return;
 
+  if (!task.next_run_at) {
+    updateTask(task.id, { ...task, next_run_at: nextRunAt });
+  }
+
+  const delayMs = Math.max(0, new Date(nextRunAt).getTime() - Date.now());
   const handle = setTimeout(async () => {
-    const latestTasks = listTasks();
-    const latestTask = latestTasks.find(item => item.id === task.id);
+    const latestTask = listTasks().find(item => item.id === task.id);
     if (!latestTask || !latestTask.enabled) return;
 
     await runTaskSafely(task.id, runTaskById);
 
-    const nextScheduledAt = addInterval(new Date(), randomIntInclusive(min, max), unit).toISOString();
-    updateTask(task.id, {
+    const nextScheduledAt = computeNextRun(latestTask, new Date());
+    const updated = updateTask(task.id, {
       ...latestTask,
       next_run_at: nextScheduledAt,
     });
-    scheduleNextIntervalRun({ ...latestTask, next_run_at: nextScheduledAt }, runTaskById);
+    scheduleTask(updated, runTaskById);
   }, delayMs);
 
   jobs.set(task.id, { kind: 'timeout', handle });
@@ -77,29 +81,7 @@ function reloadJobs(runTaskById) {
   const tasks = listTasks();
   for (const task of tasks) {
     if (!task.enabled) continue;
-    if (task.schedule_mode === 'interval') {
-      let nextRunAt = task.next_run_at;
-      if (!nextRunAt) {
-        const min = Number(task.interval_min || 0);
-        const max = Number(task.interval_max || 0);
-        const unit = task.interval_unit || 'hours';
-        if (min && max) {
-          nextRunAt = addInterval(new Date(), randomIntInclusive(min, max), unit).toISOString();
-          updateTask(task.id, { ...task, next_run_at: nextRunAt });
-          scheduleNextIntervalRun({ ...task, next_run_at: nextRunAt }, runTaskById);
-        }
-      } else {
-        scheduleNextIntervalRun(task, runTaskById);
-      }
-      continue;
-    }
-
-    if (!task.cron_expr) continue;
-    if (!cron.validate(task.cron_expr)) continue;
-    const handle = cron.schedule(task.cron_expr, async () => {
-      await runTaskSafely(task.id, runTaskById);
-    });
-    jobs.set(task.id, { kind: 'cron', handle });
+    scheduleTask(task, runTaskById);
   }
 }
 

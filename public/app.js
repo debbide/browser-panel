@@ -33,9 +33,8 @@ const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 const scheduleModeInputs = Array.from(document.querySelectorAll('input[name="schedule_mode"]'));
 const fixedFieldsEl = document.getElementById('fixed-schedule-fields');
 const intervalFieldsEl = document.getElementById('interval-schedule-fields');
-const fixedKindEl = form.elements.fixed_kind;
-const fixedWeekdayEl = form.elements.fixed_weekday;
-const fixedTimeEl = form.elements.fixed_time;
+const fixedValueEl = form.elements.fixed_value;
+const fixedUnitEl = form.elements.fixed_unit;
 const intervalMinEl = form.elements.interval_min;
 const intervalMaxEl = form.elements.interval_max;
 const intervalUnitEl = form.elements.interval_unit;
@@ -96,7 +95,6 @@ function updateScheduleModeUI() {
     const input = label.querySelector('input');
     label.classList.toggle('active-mode', input.checked);
   }
-  fixedWeekdayEl.disabled = fixedKindEl.value !== 'weekly';
 }
 
 function buildSchedulePayloadFromForm() {
@@ -128,21 +126,15 @@ function buildSchedulePayloadFromForm() {
     };
   }
 
-  const fixedTime = fixedTimeEl.value || '09:00';
-  const [hourRaw, minuteRaw] = fixedTime.split(':');
-  const hour = Number(hourRaw || 0);
-  const minute = Number(minuteRaw || 0);
-  const cronExpr = fixedKindEl.value === 'weekly'
-    ? `${minute} ${hour} * * ${fixedWeekdayEl.value}`
-    : `${minute} ${hour} * * *`;
-
+  const value = Math.max(1, Number(fixedValueEl.value || 1));
+  const unit = fixedUnitEl.value || 'hours';
   return {
     enabled: true,
-    cron_expr: cronExpr,
+    cron_expr: '',
     schedule_mode: 'fixed',
-    interval_min: null,
-    interval_max: null,
-    interval_unit: null,
+    interval_min: value,
+    interval_max: value,
+    interval_unit: unit,
     next_run_at: null,
   };
 }
@@ -152,9 +144,8 @@ function parseTaskSchedule(task) {
     return {
       enabled: false,
       mode: 'fixed',
-      fixedKind: 'daily',
-      fixedWeekday: '1',
-      fixedTime: '09:00',
+      fixedValue: '4',
+      fixedUnit: 'hours',
       intervalMin: '10',
       intervalMax: '12',
       intervalUnit: 'days',
@@ -165,56 +156,37 @@ function parseTaskSchedule(task) {
     return {
       enabled: true,
       mode: 'interval',
-      fixedKind: 'daily',
-      fixedWeekday: '1',
-      fixedTime: '09:00',
+      fixedValue: '4',
+      fixedUnit: 'hours',
       intervalMin: String(task.interval_min || 10),
       intervalMax: String(task.interval_max || 12),
       intervalUnit: task.interval_unit || 'days',
     };
   }
 
-  const cronExpr = task.cron_expr || '';
-  const fixedMatch = cronExpr.match(/^(\d{1,2}) (\d{1,2}) \* \* (\*|[0-6])$/);
-  if (fixedMatch) {
-    const minute = String(fixedMatch[1]).padStart(2, '0');
-    const hour = String(fixedMatch[2]).padStart(2, '0');
-    const day = fixedMatch[3];
-    return {
-      enabled: true,
-      mode: 'fixed',
-      fixedKind: day === '*' ? 'daily' : 'weekly',
-      fixedWeekday: day === '*' ? '1' : day,
-      fixedTime: `${hour}:${minute}`,
-      intervalMin: '10',
-      intervalMax: '12',
-      intervalUnit: 'days',
-    };
-  }
-
   return {
     enabled: true,
     mode: 'fixed',
-    fixedKind: 'daily',
-    fixedWeekday: '1',
-    fixedTime: '09:00',
+    fixedValue: String(task.interval_min || task.interval_max || 4),
+    fixedUnit: task.interval_unit || 'hours',
     intervalMin: '10',
     intervalMax: '12',
     intervalUnit: 'days',
   };
 }
 
+function prettyUnit(unit) {
+  if (unit === 'minutes') return '分钟';
+  if (unit === 'days') return '天';
+  return '小时';
+}
+
 function describeTaskSchedule(task) {
   if (!task.enabled) return '未启用';
   if (task.schedule_mode === 'interval') {
-    return `${task.interval_min} - ${task.interval_max} ${task.interval_unit === 'days' ? '天' : '小时'}之间`;
+    return `${task.interval_min} - ${task.interval_max} ${prettyUnit(task.interval_unit)}之间`;
   }
-  const schedule = parseTaskSchedule(task);
-  if (schedule.fixedKind === 'weekly') {
-    const weekdayMap = { 0: '周日', 1: '周一', 2: '周二', 3: '周三', 4: '周四', 5: '周五', 6: '周六' };
-    return `${weekdayMap[schedule.fixedWeekday] || '每周'} ${schedule.fixedTime}`;
-  }
-  return `每天 ${schedule.fixedTime}`;
+  return `固定 ${task.interval_min || task.interval_max} ${prettyUnit(task.interval_unit)}`;
 }
 
 function describeNextRun(task) {
@@ -262,9 +234,8 @@ function resetTaskForm() {
   form.elements.timeout_sec.value = '300';
   form.elements.enabled.checked = false;
   form.elements.schedule_mode.value = 'fixed';
-  fixedKindEl.value = 'daily';
-  fixedWeekdayEl.value = '1';
-  fixedTimeEl.value = '09:00';
+  fixedValueEl.value = '4';
+  fixedUnitEl.value = 'hours';
   intervalMinEl.value = '10';
   intervalMaxEl.value = '12';
   intervalUnitEl.value = 'days';
@@ -496,9 +467,8 @@ function fillTaskForm(task) {
   const schedule = parseTaskSchedule(task);
   form.elements.enabled.checked = schedule.enabled;
   form.elements.schedule_mode.value = schedule.mode;
-  fixedKindEl.value = schedule.fixedKind;
-  fixedWeekdayEl.value = schedule.fixedWeekday;
-  fixedTimeEl.value = schedule.fixedTime;
+  fixedValueEl.value = schedule.fixedValue;
+  fixedUnitEl.value = schedule.fixedUnit;
   intervalMinEl.value = schedule.intervalMin;
   intervalMaxEl.value = schedule.intervalMax;
   intervalUnitEl.value = schedule.intervalUnit;
@@ -650,7 +620,6 @@ for (const btn of tabButtons) {
 for (const input of scheduleModeInputs) {
   input.addEventListener('change', updateScheduleModeUI);
 }
-fixedKindEl.addEventListener('change', updateScheduleModeUI);
 
 window.runTask = runTask;
 window.stopTask = stopTask;
