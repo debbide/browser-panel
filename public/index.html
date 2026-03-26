@@ -115,14 +115,11 @@
           <h3 id="form-title">创建或编辑任务</h3>
           <p class="muted" id="form-hint">可使用 JS 或 Python 任务，共享同一浏览器持久化配置。</p>
           <form id="task-form" class="stack-form">
-            <div class="grid two-col-tight">
+            <div class="grid single-col">
               <input name="name" placeholder="任务名称" required />
-              <select name="type">
-                <option value="javascript">JavaScript</option>
-                <option value="python">Python</option>
-              </select>
-              <input name="script_path" placeholder="tasks/example.js" required />
-              <input name="timeout_sec" type="number" value="300" />
+              <input type="hidden" name="type" value="javascript" />
+              <input type="hidden" name="script_path" required />
+              <input type="hidden" name="timeout_sec" value="300" />
             </div>
 
             <div class="config-block">

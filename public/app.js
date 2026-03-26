@@ -254,8 +254,12 @@ function resetTaskForm() {
   selectedScriptPath = '';
   saveBtn.textContent = '保存任务';
   formTitle.textContent = '创建或编辑任务';
-  formHint.textContent = '可使用 JS 或 Python 任务，共享同一浏览器持久化配置。';
+  formHint.textContent = '只保留任务名称；脚本、类型和调度在下方配置。';
   modalTitle.textContent = '新建任务';
+  form.elements.name.value = '';
+  form.elements.type.value = 'javascript';
+  form.elements.script_path.value = '';
+  form.elements.timeout_sec.value = '300';
   form.elements.enabled.checked = false;
   form.elements.schedule_mode.value = 'fixed';
   fixedKindEl.value = 'daily';
@@ -270,6 +274,7 @@ function resetTaskForm() {
 
 function resetScriptEditor() {
   modalImportForm.reset();
+  modalImportForm.elements.type.value = 'javascript';
 }
 
 function resetAllModalState() {
@@ -345,7 +350,7 @@ function taskCard(task) {
             <span class="pill pill-type">${escapeHtml(task.type)}</span>
             ${isRunning ? '<span class="pill pill-running">运行中</span>' : ''}
           </div>
-          <div class="task-subtitle">${escapeHtml(task.script_path)}</div>
+          <div class="task-subtitle">${escapeHtml(task.script_path || '未绑定脚本')}</div>
         </div>
         <button class="icon-btn" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''}>编辑</button>
       </div>
@@ -509,7 +514,7 @@ function editTask(id) {
   selectedScriptPath = task.script_path;
   saveBtn.textContent = `保存修改 #${id}`;
   formTitle.textContent = `正在编辑任务 #${id}`;
-  formHint.textContent = `正在编辑：${task.name}（${task.type}）`;
+  formHint.textContent = `任务只保留名称；脚本和调度都在下面配置。`;
   renderScripts();
   openModal('edit');
 }
@@ -542,6 +547,10 @@ async function loadScriptIntoEditor(scriptPath) {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (!form.elements.script_path.value) {
+    alert('请先选择或导入脚本');
+    return;
+  }
   const schedule = buildSchedulePayloadFromForm();
   form.elements.cron_expr.value = schedule.cron_expr;
   const formData = new FormData(form);
