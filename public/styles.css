@@ -370,6 +370,10 @@ a {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.grid.three-col-tight {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .grid.single-col {
   grid-template-columns: 1fr;
 }
@@ -482,13 +486,19 @@ a {
   margin-top: 6px;
 }
 
+.schedule-pane {
+  display: grid;
+  gap: 12px;
+  margin-top: 6px;
+}
+
 @media (max-width: 980px) {
   .panel-grid.two-col,
   .task-metrics,
   .grid.two-col-tight,
+  .grid.three-col-tight,
   .run-grid.compact,
-  .two-col-modal,
-  .timer-mode-group {
+  .two-col-modal {
     grid-template-columns: 1fr;
   }
 

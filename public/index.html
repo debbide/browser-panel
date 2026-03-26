@@ -126,7 +126,7 @@
               <div class="section-header compact">
                 <div>
                   <h4>定时器配置</h4>
-                  <p>支持固定间隔模式与随机区间模式，统一按“时长”配置。</p>
+                  <p>只支持固定间隔和随机区间两种最简单模式。</p>
                 </div>
               </div>
 
@@ -139,25 +139,29 @@
                 </select>
               </div>
 
-              <div id="fixed-schedule-fields" class="grid two-col-tight schedule-fields">
-                <input name="fixed_value" type="number" min="1" value="4" placeholder="固定值" />
-                <select name="fixed_unit">
-                  <option value="minutes">分钟</option>
-                  <option value="hours" selected>小时</option>
-                  <option value="days">天</option>
-                </select>
-                <div class="field-span-2 muted">固定模式会按这个单值时长重复执行。</div>
+              <div id="fixed-schedule-fields" class="schedule-pane">
+                <div class="grid two-col-tight">
+                  <input name="fixed_value" type="number" min="1" value="4" placeholder="固定值" />
+                  <select name="fixed_unit">
+                    <option value="minutes">分钟</option>
+                    <option value="hours" selected>小时</option>
+                    <option value="days">天</option>
+                  </select>
+                </div>
+                <div class="field-span-2 muted">示例：4小时、1天、30分钟。</div>
               </div>
 
-              <div id="interval-schedule-fields" class="grid two-col-tight schedule-fields" hidden>
-                <input name="interval_min" type="number" min="1" value="10" placeholder="最小值" />
-                <input name="interval_max" type="number" min="1" value="12" placeholder="最大值" />
-                <select name="interval_unit">
-                  <option value="minutes">分钟</option>
-                  <option value="hours" selected>小时</option>
-                  <option value="days">天</option>
-                </select>
-                <div class="field-span-2 muted">区间模式会在最小值与最大值之间随机安排下一次执行。</div>
+              <div id="interval-schedule-fields" class="schedule-pane" hidden>
+                <div class="grid three-col-tight">
+                  <input name="interval_min" type="number" min="1" value="10" placeholder="最小值" />
+                  <input name="interval_max" type="number" min="1" value="12" placeholder="最大值" />
+                  <select name="interval_unit">
+                    <option value="minutes">分钟</option>
+                    <option value="hours" selected>小时</option>
+                    <option value="days">天</option>
+                  </select>
+                </div>
+                <div class="field-span-2 muted">示例：10-12小时、8-9天、30-36小时。</div>
               </div>
 
               <input type="hidden" name="cron_expr" />
