@@ -101,6 +101,18 @@ app.get('/api/runs', (req, res) => {
   res.json({ data: db.listRuns(100) });
 });
 
+app.post('/api/runs/cleanup', (req, res) => {
+  const rows = db.db.prepare('SELECT MAX(id) as id FROM task_runs GROUP BY task_id').all();
+  const keep = new Set(rows.map(row => row.id));
+  const allRows = db.listRuns(1000);
+  for (const row of allRows) {
+    if (!keep.has(row.id)) {
+      db.db.prepare('DELETE FROM task_runs WHERE id = ?').run(row.id);
+    }
+  }
+  res.json({ ok: true });
+});
+
 app.get('/api/meta', (req, res) => {
   res.json({
     data: {

@@ -10,11 +10,12 @@
   <div class="container">
     <header>
       <h1>Browser Automation Panel</h1>
-      <p>Manage browser tasks, run them manually, and schedule them with cron.</p>
+      <p>Shared headed browser automation for JavaScript and Python tasks.</p>
     </header>
 
     <section class="card">
-      <h2>Create Task</h2>
+      <h2>Create or Edit Task</h2>
+      <p class="muted">Use JS or Python tasks on the same shared headed browser profile.</p>
       <form id="task-form">
         <div class="grid">
           <input name="name" placeholder="Task name" required />
@@ -31,8 +32,16 @@
           <label><input type="checkbox" name="use_browser" checked /> Use browser</label>
           <label><input type="checkbox" name="use_persistent" checked /> Use persistent profile</label>
         </div>
-        <button type="submit">Save Task</button>
+        <div class="row">
+          <button type="submit" id="save-btn">Save Task</button>
+          <button type="button" class="alt" id="reset-btn">Reset</button>
+        </div>
       </form>
+    </section>
+
+    <section class="card">
+      <h2>Browser Environment</h2>
+      <div id="meta"></div>
     </section>
 
     <section class="card">
@@ -42,6 +51,9 @@
 
     <section class="card">
       <h2>Recent Runs</h2>
+      <div class="row">
+        <button id="cleanup-runs-btn" class="alt" type="button">Keep latest successful run per task</button>
+      </div>
       <div id="runs"></div>
     </section>
   </div>

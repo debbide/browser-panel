@@ -1,19 +1,31 @@
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
-  background: #111827;
-  color: #f3f4f6;
+  font-family: Inter, Arial, sans-serif;
+  background: #0f172a;
+  color: #e5e7eb;
 }
 .container {
-  max-width: 1100px;
+  max-width: 1180px;
   margin: 0 auto;
   padding: 24px;
 }
+header {
+  margin-bottom: 24px;
+}
+header h1 {
+  margin: 0 0 8px;
+}
+header p {
+  margin: 0;
+  color: #94a3b8;
+}
 .card {
-  background: #1f2937;
-  border-radius: 12px;
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
   padding: 20px;
   margin-bottom: 20px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
 }
 .grid {
   display: grid;
@@ -23,30 +35,39 @@ body {
 }
 input, select, button, textarea {
   padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid #374151;
-  background: #111827;
-  color: #f3f4f6;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  background: #0b1220;
+  color: #f8fafc;
+}
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid #2563eb;
+  border-color: #2563eb;
 }
 button {
   cursor: pointer;
   background: #2563eb;
   border: none;
+  transition: 0.15s ease;
+}
+button:hover {
+  filter: brightness(1.08);
 }
 button.alt {
-  background: #374151;
+  background: #334155;
 }
 .task, .run {
-  border: 1px solid #374151;
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 10px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+  background: #0b1220;
 }
 .row {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 .toggles {
   display: flex;
@@ -54,4 +75,18 @@ button.alt {
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
-a { color: #93c5fd; }
+a {
+  color: #93c5fd;
+}
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #020617;
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 10px;
+  color: #fca5a5;
+}
+.muted {
+  color: #94a3b8;
+}

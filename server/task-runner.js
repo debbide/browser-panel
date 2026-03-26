@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const config = require('../config');
+const { launchBrowserTaskAndWait } = require('./runtime/browser-launcher');
 
 fs.mkdirSync(config.paths.logsDir, { recursive: true });
 fs.mkdirSync(config.paths.screenshotsDir, { recursive: true });
@@ -18,7 +19,7 @@ function makeScreenshotPath(taskId) {
   return path.join(config.paths.screenshotsDir, `task-${taskId}-${stamp()}.png`);
 }
 
-function buildEnv(task) {
+function buildEnv(task, screenshotPath) {
   const env = { ...process.env };
   if (task.use_browser) {
     env.BROWSER_DISPLAY = config.browser.display;
@@ -32,26 +33,26 @@ function buildEnv(task) {
   env.APP_ROOT = config.paths.root;
   env.LOGS_DIR = config.paths.logsDir;
   env.SCREENSHOTS_DIR = config.paths.screenshotsDir;
+  env.TASK_SCREENSHOT_PATH = screenshotPath;
   return env;
 }
 
 function getCommand(task) {
   if (task.type === 'python') {
-    return { cmd: 'python3', args: [task.script_path] };
+    return { cmd: path.join(config.paths.root, '.venv', 'bin', 'python'), args: [task.script_path] };
   }
   return { cmd: 'node', args: [task.script_path] };
 }
 
-function runTask(task) {
+function runForegroundTask(task, screenshotPath) {
   return new Promise((resolve) => {
     const logPath = makeLogPath(task.id);
-    const screenshotPath = makeScreenshotPath(task.id);
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
     const startedAt = new Date().toISOString();
     const { cmd, args } = getCommand(task);
     const child = spawn(cmd, args, {
       cwd: config.paths.root,
-      env: buildEnv(task),
+      env: buildEnv(task, screenshotPath),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -71,20 +72,47 @@ function runTask(task) {
     child.on('close', (code) => {
       clearTimeout(timer);
       logStream.end();
-      const endedAt = new Date().toISOString();
-      const status = code === 0 ? 'success' : 'failed';
-      const screenshotExists = fs.existsSync(screenshotPath);
       resolve({
-        status,
+        status: code === 0 ? 'success' : 'failed',
         startedAt,
-        endedAt,
+        endedAt: new Date().toISOString(),
         exitCode: code,
         logPath,
-        screenshotPath: screenshotExists ? screenshotPath : null,
+        screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
         errorText: stderrText.trim() || null,
       });
     });
   });
+}
+
+async function runBrowserTask(task) {
+  const screenshotPath = makeScreenshotPath(task.id);
+  const logPath = makeLogPath(task.id);
+  const runId = `${task.id}-${Date.now()}`;
+  const result = await launchBrowserTaskAndWait(task, runId);
+  const workerScreenshotPath = result.workerScreenshotPath;
+  const workerResultPath = result.resultPath;
+  fs.writeFileSync(logPath, `${result.stdout || ''}${result.stderr || ''}`);
+  const taskResult = fs.existsSync(workerResultPath) ? JSON.parse(fs.readFileSync(workerResultPath, 'utf8')) : null;
+  if (fs.existsSync(workerResultPath)) fs.unlinkSync(workerResultPath);
+  if (fs.existsSync(workerScreenshotPath)) fs.copyFileSync(workerScreenshotPath, screenshotPath);
+
+  return {
+    status: taskResult?.ok || fs.existsSync(screenshotPath) ? 'success' : 'failed',
+    startedAt: result.startedAt,
+    endedAt: result.endedAt,
+    exitCode: result.exitCode,
+    logPath,
+    screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
+    errorText: taskResult?.error || result.stderr || (fs.existsSync(screenshotPath) ? null : 'No result payload written'),
+  };
+}
+
+async function runTask(task) {
+  if (task.use_browser) {
+    return runBrowserTask(task);
+  }
+  return runForegroundTask(task, makeScreenshotPath(task.id));
 }
 
 module.exports = {
