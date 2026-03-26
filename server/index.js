@@ -54,6 +54,11 @@ app.post('/api/tasks', (req, res) => {
     type: payload.type === 'python' ? 'python' : 'javascript',
     script_path: String(payload.script_path || ''),
     cron_expr: String(payload.cron_expr || ''),
+    schedule_mode: payload.schedule_mode === 'interval' ? 'interval' : 'fixed',
+    interval_min: payload.interval_min ? Number(payload.interval_min) : null,
+    interval_max: payload.interval_max ? Number(payload.interval_max) : null,
+    interval_unit: payload.interval_unit ? String(payload.interval_unit) : null,
+    next_run_at: payload.next_run_at ? String(payload.next_run_at) : null,
     enabled: payload.enabled ? 1 : 0,
     use_browser: payload.use_browser === false ? 0 : 1,
     use_persistent: payload.use_persistent === false ? 0 : 1,
@@ -66,11 +71,17 @@ app.post('/api/tasks', (req, res) => {
 app.put('/api/tasks/:id', (req, res) => {
   const id = Number(req.params.id);
   const payload = req.body || {};
+  const existing = db.getTask(id);
   const task = db.updateTask(id, {
     name: String(payload.name || 'Untitled Task'),
     type: payload.type === 'python' ? 'python' : 'javascript',
     script_path: String(payload.script_path || ''),
     cron_expr: String(payload.cron_expr || ''),
+    schedule_mode: payload.schedule_mode === 'interval' ? 'interval' : 'fixed',
+    interval_min: payload.interval_min ? Number(payload.interval_min) : null,
+    interval_max: payload.interval_max ? Number(payload.interval_max) : null,
+    interval_unit: payload.interval_unit ? String(payload.interval_unit) : null,
+    next_run_at: payload.schedule_mode === 'interval' ? (payload.next_run_at ? String(payload.next_run_at) : existing?.next_run_at || null) : null,
     enabled: payload.enabled ? 1 : 0,
     use_browser: payload.use_browser === false ? 0 : 1,
     use_persistent: payload.use_persistent === false ? 0 : 1,

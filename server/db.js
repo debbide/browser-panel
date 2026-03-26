@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   type TEXT NOT NULL DEFAULT 'javascript',
   script_path TEXT NOT NULL,
   cron_expr TEXT DEFAULT '',
+  schedule_mode TEXT NOT NULL DEFAULT 'fixed',
+  interval_min INTEGER,
+  interval_max INTEGER,
+  interval_unit TEXT,
+  next_run_at TEXT,
   enabled INTEGER NOT NULL DEFAULT 0,
   use_browser INTEGER NOT NULL DEFAULT 1,
   use_persistent INTEGER NOT NULL DEFAULT 1,
@@ -43,7 +48,14 @@ if (!taskRunColumns.includes('error_code')) {
   db.exec('ALTER TABLE task_runs ADD COLUMN error_code TEXT');
 }
 
-const taskColumns = ['name', 'type', 'script_path', 'cron_expr', 'enabled', 'use_browser', 'use_persistent', 'timeout_sec'];
+const taskTableColumns = db.prepare('PRAGMA table_info(tasks)').all().map(row => row.name);
+if (!taskTableColumns.includes('schedule_mode')) db.exec("ALTER TABLE tasks ADD COLUMN schedule_mode TEXT NOT NULL DEFAULT 'fixed'");
+if (!taskTableColumns.includes('interval_min')) db.exec('ALTER TABLE tasks ADD COLUMN interval_min INTEGER');
+if (!taskTableColumns.includes('interval_max')) db.exec('ALTER TABLE tasks ADD COLUMN interval_max INTEGER');
+if (!taskTableColumns.includes('interval_unit')) db.exec('ALTER TABLE tasks ADD COLUMN interval_unit TEXT');
+if (!taskTableColumns.includes('next_run_at')) db.exec('ALTER TABLE tasks ADD COLUMN next_run_at TEXT');
+
+const taskColumns = ['name', 'type', 'script_path', 'cron_expr', 'schedule_mode', 'interval_min', 'interval_max', 'interval_unit', 'next_run_at', 'enabled', 'use_browser', 'use_persistent', 'timeout_sec'];
 
 function listTasks() {
   return db.prepare('SELECT * FROM tasks ORDER BY id DESC').all();
@@ -55,8 +67,8 @@ function getTask(id) {
 
 function createTask(payload) {
   const stmt = db.prepare(`
-    INSERT INTO tasks (name, type, script_path, cron_expr, enabled, use_browser, use_persistent, timeout_sec, updated_at)
-    VALUES (@name, @type, @script_path, @cron_expr, @enabled, @use_browser, @use_persistent, @timeout_sec, CURRENT_TIMESTAMP)
+    INSERT INTO tasks (name, type, script_path, cron_expr, schedule_mode, interval_min, interval_max, interval_unit, next_run_at, enabled, use_browser, use_persistent, timeout_sec, updated_at)
+    VALUES (@name, @type, @script_path, @cron_expr, @schedule_mode, @interval_min, @interval_max, @interval_unit, @next_run_at, @enabled, @use_browser, @use_persistent, @timeout_sec, CURRENT_TIMESTAMP)
   `);
   const result = stmt.run(payload);
   return getTask(result.lastInsertRowid);

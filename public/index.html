@@ -129,9 +129,11 @@
               <div class="section-header compact">
                 <div>
                   <h4>定时器配置</h4>
-                  <p>支持固定时间模式与区间循环模式。</p>
+                  <p>支持固定时间模式与随机区间模式。</p>
                 </div>
               </div>
+
+              <label class="inline-check"><input type="checkbox" name="enabled" /> 启用定时</label>
 
               <div class="stack-form timer-mode-group">
                 <label class="timer-mode-card active-mode">
@@ -145,7 +147,7 @@
                   <input type="radio" name="schedule_mode" value="interval" />
                   <div>
                     <strong>区间模式</strong>
-                    <span>按固定间隔重复执行</span>
+                    <span>在最小值到最大值之间随机安排下一次执行</span>
                   </div>
                 </label>
               </div>
@@ -165,16 +167,16 @@
                   <option value="0">周日</option>
                 </select>
                 <input name="fixed_time" type="time" value="09:00" />
-                <label class="inline-check"><input type="checkbox" name="enabled" /> 启用定时</label>
               </div>
 
               <div id="interval-schedule-fields" class="grid two-col-tight schedule-fields" hidden>
-                <input name="interval_value" type="number" min="1" value="5" />
+                <input name="interval_min" type="number" min="1" value="10" placeholder="最小值" />
+                <input name="interval_max" type="number" min="1" value="12" placeholder="最大值" />
                 <select name="interval_unit">
-                  <option value="minutes">分钟</option>
                   <option value="hours">小时</option>
+                  <option value="days">天</option>
                 </select>
-                <div class="field-span-2 muted">例如每 5 分钟、每 2 小时循环执行。</div>
+                <div class="field-span-2 muted">例如：10天 - 12天之间，或 30小时 - 36小时之间随机执行一次。</div>
               </div>
 
               <input type="hidden" name="cron_expr" />
