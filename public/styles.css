@@ -40,6 +40,12 @@ input, select, button, textarea {
   background: #0b1220;
   color: #f8fafc;
 }
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 180px;
+}
 input:focus, select:focus, textarea:focus {
   outline: 2px solid #2563eb;
   border-color: #2563eb;

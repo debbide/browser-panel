@@ -4,6 +4,8 @@ const { spawn } = require('child_process');
 const config = require('../config');
 const { launchBrowserTaskAndWait } = require('./runtime/browser-launcher');
 
+const activeChildren = new Map();
+
 fs.mkdirSync(config.paths.logsDir, { recursive: true });
 fs.mkdirSync(config.paths.screenshotsDir, { recursive: true });
 
@@ -67,6 +69,7 @@ function runForegroundTask(task, screenshotPath) {
       env: buildEnv(task, screenshotPath),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    activeChildren.set(task.id, child);
 
     let stderrText = '';
     const timer = setTimeout(() => {
@@ -81,13 +84,18 @@ function runForegroundTask(task, screenshotPath) {
       logStream.write(chunk);
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer);
+      activeChildren.delete(task.id);
       logStream.end();
       const errorText = stderrText.trim() || null;
+      let errorCode = classifyForegroundFailure(code, errorText);
+      if (signal === 'SIGTERM' && !errorText?.includes('Task timeout exceeded')) {
+        errorCode = 'stopped';
+      }
       resolve({
         status: code === 0 ? 'success' : 'failed',
-        errorCode: classifyForegroundFailure(code, errorText),
+        errorCode,
         startedAt,
         endedAt: new Date().toISOString(),
         exitCode: code,
@@ -141,6 +149,14 @@ async function runTask(task) {
   return runForegroundTask(task, makeScreenshotPath(task.id));
 }
 
+function stopTask(taskId) {
+  const child = activeChildren.get(Number(taskId));
+  if (!child) return false;
+  child.kill('SIGTERM');
+  return true;
+}
+
 module.exports = {
   runTask,
+  stopTask,
 };

@@ -3,7 +3,7 @@ const path = require('path');
 const express = require('express');
 const config = require('../config');
 const db = require('./db');
-const { runTask } = require('./task-runner');
+const { runTask, stopTask } = require('./task-runner');
 const { reloadJobs, isTaskRunning, runTaskSafely } = require('./scheduler');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
@@ -86,16 +86,53 @@ app.delete('/api/tasks/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/scripts', (req, res) => {
+  const allowedExts = new Set(['.js', '.py']);
+  const files = fs.readdirSync(config.paths.tasksDir, { withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => entry.name)
+    .filter(name => allowedExts.has(path.extname(name)))
+    .sort()
+    .map(name => ({
+      name,
+      path: `tasks/${name}`,
+      type: path.extname(name) === '.py' ? 'python' : 'javascript',
+    }));
+  res.json({ data: files });
+});
+
+app.post('/api/scripts/import', (req, res) => {
+  const payload = req.body || {};
+  const name = path.basename(String(payload.name || '')).trim();
+  const content = String(payload.content || '');
+  const ext = path.extname(name).toLowerCase();
+  if (!name) return res.status(400).json({ message: 'Script name is required' });
+  if (!['.js', '.py'].includes(ext)) return res.status(400).json({ message: 'Only .js and .py scripts are supported' });
+  if (!content.trim()) return res.status(400).json({ message: 'Script content is required' });
+  const target = path.join(config.paths.tasksDir, name);
+  fs.writeFileSync(target, content, 'utf8');
+  res.json({ data: { name, path: `tasks/${name}`, type: ext === '.py' ? 'python' : 'javascript' } });
+});
+
 app.post('/api/tasks/:id/run', async (req, res) => {
   try {
     const result = await runTaskSafely(Number(req.params.id), executeTask);
     if (result?.skipped) {
-      return res.status(409).json({ message: 'Task is already running', code: result.reason });
+      return res.status(409).json({ message: '任务正在运行中', code: result.reason });
     }
     res.json({ data: result });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
+});
+
+app.post('/api/tasks/:id/stop', (req, res) => {
+  const id = Number(req.params.id);
+  const stopped = stopTask(id);
+  if (!stopped) {
+    return res.status(404).json({ message: '当前没有可停止的运行任务' });
+  }
+  res.json({ ok: true });
 });
 
 app.get('/api/tasks/:id/runs', (req, res) => {

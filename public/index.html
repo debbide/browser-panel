@@ -1,24 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Browser Automation Panel</title>
+  <title>浏览器自动化面板</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>Browser Automation Panel</h1>
-      <p>Shared headed browser automation for JavaScript and Python tasks.</p>
+      <h1>浏览器自动化面板</h1>
+      <p>基于共享有头浏览器环境运行 JavaScript 与 Python 自动化任务。</p>
     </header>
 
     <section class="card">
-      <h2 id="form-title">Create or Edit Task</h2>
-      <p class="muted" id="form-hint">Use JS or Python tasks on the same shared headed browser profile.</p>
+      <h2 id="form-title">创建或编辑任务</h2>
+      <p class="muted" id="form-hint">可使用 JS 或 Python 任务，共享同一浏览器持久化配置。</p>
       <form id="task-form">
         <div class="grid">
-          <input name="name" placeholder="Task name" required />
+          <input name="name" placeholder="任务名称" required />
           <select name="type">
             <option value="javascript">JavaScript</option>
             <option value="python">Python</option>
@@ -28,31 +28,51 @@
           <input name="timeout_sec" type="number" value="300" />
         </div>
         <div class="toggles">
-          <label><input type="checkbox" name="enabled" /> Enabled</label>
-          <label><input type="checkbox" name="use_browser" checked /> Use browser</label>
-          <label><input type="checkbox" name="use_persistent" checked /> Use persistent profile</label>
+          <label><input type="checkbox" name="enabled" /> 启用定时</label>
+          <label><input type="checkbox" name="use_browser" checked /> 使用浏览器</label>
+          <label><input type="checkbox" name="use_persistent" checked /> 使用持久化配置</label>
         </div>
         <div class="row">
-          <button type="submit" id="save-btn">Save Task</button>
-          <button type="button" class="alt" id="reset-btn">Reset</button>
+          <button type="submit" id="save-btn">保存任务</button>
+          <button type="button" class="alt" id="reset-btn">重置</button>
         </div>
       </form>
     </section>
 
     <section class="card">
-      <h2>Browser Environment</h2>
+      <h2>脚本导入</h2>
+      <p class="muted">可直接把 JS / Python 脚本导入到 tasks 目录，并快速填入任务表单。</p>
+      <form id="import-form">
+        <div class="grid">
+          <input name="name" placeholder="例如：my-task.js" required />
+          <select name="type">
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+          </select>
+        </div>
+        <textarea name="content" rows="10" placeholder="粘贴脚本内容" required></textarea>
+        <div class="row">
+          <button type="submit" id="import-btn">导入脚本</button>
+          <button type="button" class="alt" id="refresh-scripts-btn">刷新脚本列表</button>
+        </div>
+      </form>
+      <div id="scripts" class="task-runs"></div>
+    </section>
+
+    <section class="card">
+      <h2>浏览器环境</h2>
       <div id="meta"></div>
     </section>
 
     <section class="card">
-      <h2>Tasks</h2>
+      <h2>任务列表</h2>
       <div id="tasks"></div>
     </section>
 
     <section class="card">
-      <h2>Recent Runs</h2>
+      <h2>最近运行记录</h2>
       <div class="row">
-        <button id="cleanup-runs-btn" class="alt" type="button">Keep latest successful run per task</button>
+        <button id="cleanup-runs-btn" class="alt" type="button">每个任务仅保留最近一次成功记录</button>
       </div>
       <div id="runs"></div>
     </section>
