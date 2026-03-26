@@ -97,7 +97,10 @@ a {
 .muted,
 .empty,
 .section-header p,
-.task-subtitle {
+.task-subtitle,
+.timer-mode-card span,
+.inline-check,
+.field-span-2 {
   color: #94a3b8;
 }
 
@@ -114,7 +117,10 @@ a {
 .task-actions,
 .task-title-row,
 .modal-header,
-.tabs {
+.tabs,
+.modal-layout,
+.config-block,
+.timer-mode-group {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -160,7 +166,17 @@ a {
   margin-bottom: 16px;
 }
 
-.section-header h2 {
+.section-header.compact {
+  margin-bottom: 12px;
+}
+
+.section-header.with-top-gap {
+  margin-top: 18px;
+}
+
+.section-header h2,
+.section-header h3,
+.section-header h4 {
   margin: 0 0 4px;
 }
 
@@ -177,14 +193,17 @@ a {
 .task-card,
 .script-card,
 .run-card,
-.metric-card {
+.metric-card,
+.modal-panel,
+.timer-mode-card {
   background: #111827;
   border: 1px solid #1f2937;
   border-radius: 18px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.24);
 }
 
-.panel-card {
+.panel-card,
+.modal-panel {
   padding: 18px;
 }
 
@@ -258,6 +277,11 @@ a {
   box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.3), 0 14px 40px rgba(0, 0, 0, 0.24);
 }
 
+.selected-script {
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25);
+}
+
 .metric-card {
   padding: 14px;
 }
@@ -269,7 +293,8 @@ a {
 }
 
 .metric-card .metric-label,
-.run-grid .label {
+.run-grid .label,
+.field-label {
   display: block;
   font-size: 12px;
   color: #94a3b8;
@@ -346,20 +371,27 @@ a {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.field-span-2 {
+  grid-column: 1 / -1;
+}
+
 .toggles {
   display: flex;
   gap: 18px;
   flex-wrap: wrap;
 }
 
-.toggles label {
+.toggles label,
+.inline-check {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: #e2e8f0;
 }
 
-.toggles input {
+.toggles input,
+.inline-check input,
+.timer-mode-card input {
   width: auto;
 }
 
@@ -395,6 +427,10 @@ a {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
+.modal.modal-wide {
+  width: min(1180px, calc(100vw - 32px));
+}
+
 .modal.open {
   opacity: 1;
   pointer-events: auto;
@@ -416,18 +452,65 @@ a {
   margin: 0 0 6px;
 }
 
+.two-col-modal {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 18px;
+}
+
+.config-block {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid #23314d;
+}
+
+.timer-mode-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.timer-mode-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px;
+  cursor: pointer;
+  background: #0f172a;
+}
+
+.timer-mode-card.active-mode {
+  border-color: rgba(96, 165, 250, 0.55);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25);
+}
+
+.timer-mode-card strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.schedule-fields {
+  margin-top: 6px;
+}
+
 @media (max-width: 980px) {
   .panel-grid.two-col,
   .task-metrics,
   .grid.two-col-tight,
-  .run-grid.compact {
+  .run-grid.compact,
+  .two-col-modal,
+  .timer-mode-group {
     grid-template-columns: 1fr;
   }
 
   .topbar,
   .section-header,
   .task-card-top,
-  .run-head {
+  .run-head,
+  .modal-layout {
     flex-direction: column;
     align-items: stretch;
   }

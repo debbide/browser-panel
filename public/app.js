@@ -21,11 +21,21 @@ const saveBtn = document.getElementById('save-btn');
 const resetBtn = document.getElementById('reset-btn');
 const cleanupBtn = document.getElementById('cleanup-runs-btn');
 const refreshScriptsBtn = document.getElementById('refresh-scripts-btn');
+const refreshScriptsModalBtn = document.getElementById('refresh-scripts-modal-btn');
+const useScriptContentBtn = document.getElementById('use-script-content-btn');
 const addTaskBtn = document.getElementById('add-task-btn');
 const addScriptBtn = document.getElementById('add-script-btn');
 const topSettingsBtn = document.getElementById('top-settings-btn');
 const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+const scheduleModeInputs = Array.from(document.querySelectorAll('input[name="schedule_mode"]'));
+const fixedFieldsEl = document.getElementById('fixed-schedule-fields');
+const intervalFieldsEl = document.getElementById('interval-schedule-fields');
+const fixedKindEl = form.elements.fixed_kind;
+const fixedWeekdayEl = form.elements.fixed_weekday;
+const fixedTimeEl = form.elements.fixed_time;
+const intervalValueEl = form.elements.interval_value;
+const intervalUnitEl = form.elements.interval_unit;
 
 let editingId = null;
 let tasksCache = [];
@@ -34,6 +44,7 @@ let runningTaskIds = new Set();
 let scriptsCache = [];
 let activeTab = 'tasks';
 let lastRunsByTask = new Map();
+let selectedScriptPath = '';
 
 function escapeHtml(input) {
   return String(input ?? '')
@@ -70,6 +81,109 @@ function shortTime(value) {
   return String(value).replace('T', ' ').slice(0, 19);
 }
 
+function getScheduleMode() {
+  return form.elements.schedule_mode.value || 'fixed';
+}
+
+function updateScheduleModeUI() {
+  const mode = getScheduleMode();
+  fixedFieldsEl.hidden = mode !== 'fixed';
+  intervalFieldsEl.hidden = mode !== 'interval';
+  for (const label of document.querySelectorAll('.timer-mode-card')) {
+    const input = label.querySelector('input');
+    label.classList.toggle('active-mode', input.checked);
+  }
+}
+
+function buildCronExprFromForm() {
+  const enabled = form.elements.enabled.checked;
+  if (!enabled) return '';
+  const mode = getScheduleMode();
+  if (mode === 'interval') {
+    const value = Math.max(1, Number(intervalValueEl.value || 1));
+    const unit = intervalUnitEl.value;
+    if (unit === 'hours') {
+      return `0 */${value} * * *`;
+    }
+    return `*/${value} * * * *`;
+  }
+
+  const fixedTime = fixedTimeEl.value || '09:00';
+  const [hourRaw, minuteRaw] = fixedTime.split(':');
+  const hour = Number(hourRaw || 0);
+  const minute = Number(minuteRaw || 0);
+  if (fixedKindEl.value === 'weekly') {
+    return `${minute} ${hour} * * ${fixedWeekdayEl.value}`;
+  }
+  return `${minute} ${hour} * * *`;
+}
+
+function parseCronToSchedule(cronExpr) {
+  if (!cronExpr) {
+    return {
+      enabled: false,
+      mode: 'fixed',
+      fixedKind: 'daily',
+      fixedWeekday: '1',
+      fixedTime: '09:00',
+      intervalValue: '5',
+      intervalUnit: 'minutes',
+    };
+  }
+
+  const hourlyMatch = cronExpr.match(/^0 \*\/(\d+) \* \* \*$/);
+  if (hourlyMatch) {
+    return {
+      enabled: true,
+      mode: 'interval',
+      fixedKind: 'daily',
+      fixedWeekday: '1',
+      fixedTime: '09:00',
+      intervalValue: hourlyMatch[1],
+      intervalUnit: 'hours',
+    };
+  }
+
+  const minuteMatch = cronExpr.match(/^\*\/(\d+) \* \* \* \*$/);
+  if (minuteMatch) {
+    return {
+      enabled: true,
+      mode: 'interval',
+      fixedKind: 'daily',
+      fixedWeekday: '1',
+      fixedTime: '09:00',
+      intervalValue: minuteMatch[1],
+      intervalUnit: 'minutes',
+    };
+  }
+
+  const fixedMatch = cronExpr.match(/^(\d{1,2}) (\d{1,2}) \* \* (\*|[0-6])$/);
+  if (fixedMatch) {
+    const minute = String(fixedMatch[1]).padStart(2, '0');
+    const hour = String(fixedMatch[2]).padStart(2, '0');
+    const day = fixedMatch[3];
+    return {
+      enabled: true,
+      mode: 'fixed',
+      fixedKind: day === '*' ? 'daily' : 'weekly',
+      fixedWeekday: day === '*' ? '1' : day,
+      fixedTime: `${hour}:${minute}`,
+      intervalValue: '5',
+      intervalUnit: 'minutes',
+    };
+  }
+
+  return {
+    enabled: true,
+    mode: 'fixed',
+    fixedKind: 'daily',
+    fixedWeekday: '1',
+    fixedTime: '09:00',
+    intervalValue: '5',
+    intervalUnit: 'minutes',
+  };
+}
+
 function setActiveTab(name) {
   activeTab = name;
   for (const btn of tabButtons) {
@@ -83,21 +197,33 @@ function setActiveTab(name) {
 function openModal(mode = 'create') {
   modal.classList.add('open');
   modalMask.hidden = false;
+  modal.setAttribute('aria-hidden', 'false');
   modalTitle.textContent = mode === 'edit' ? '编辑任务配置' : '新建任务';
 }
 
 function closeModal() {
   modal.classList.remove('open');
   modalMask.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
 }
 
 function resetForm() {
   form.reset();
   editingId = null;
+  selectedScriptPath = '';
   saveBtn.textContent = '保存任务';
   formTitle.textContent = '创建或编辑任务';
   formHint.textContent = '可使用 JS 或 Python 任务，共享同一浏览器持久化配置。';
   modalTitle.textContent = '新建任务';
+  form.elements.enabled.checked = false;
+  form.elements.schedule_mode.value = 'fixed';
+  fixedKindEl.value = 'daily';
+  fixedWeekdayEl.value = '1';
+  fixedTimeEl.value = '09:00';
+  intervalValueEl.value = '5';
+  intervalUnitEl.value = 'minutes';
+  form.elements.cron_expr.value = '';
+  updateScheduleModeUI();
 }
 
 function groupLastRuns(runs) {
@@ -204,8 +330,9 @@ function taskCard(task) {
 }
 
 function scriptCard(script) {
+  const selected = selectedScriptPath === script.path;
   return `
-    <article class="script-card">
+    <article class="script-card ${selected ? 'selected-script' : ''}">
       <div class="task-title-row">
         <h3>${escapeHtml(script.name)}</h3>
         <span class="pill pill-type">${escapeHtml(script.type)}</span>
@@ -213,6 +340,7 @@ function scriptCard(script) {
       <div class="task-subtitle">${escapeHtml(script.path)}</div>
       <div class="task-actions">
         <button class="alt" onclick="useScript('${escapeHtml(script.path)}', '${escapeHtml(script.type)}')">填入任务配置</button>
+        <button class="alt" onclick="loadScriptIntoEditor('${escapeHtml(script.path)}')">加载到编辑器</button>
       </div>
     </article>
   `;
@@ -299,11 +427,20 @@ function fillTaskForm(task) {
   form.name.value = task.name;
   form.type.value = task.type;
   form.script_path.value = task.script_path;
-  form.cron_expr.value = task.cron_expr || '';
   form.timeout_sec.value = task.timeout_sec;
-  form.enabled.checked = Boolean(task.enabled);
   form.use_browser.checked = Boolean(task.use_browser);
   form.use_persistent.checked = Boolean(task.use_persistent);
+
+  const schedule = parseCronToSchedule(task.cron_expr || '');
+  form.elements.enabled.checked = schedule.enabled;
+  form.elements.schedule_mode.value = schedule.mode;
+  fixedKindEl.value = schedule.fixedKind;
+  fixedWeekdayEl.value = schedule.fixedWeekday;
+  fixedTimeEl.value = schedule.fixedTime;
+  intervalValueEl.value = schedule.intervalValue;
+  intervalUnitEl.value = schedule.intervalUnit;
+  form.elements.cron_expr.value = task.cron_expr || '';
+  updateScheduleModeUI();
 }
 
 function editTask(id) {
@@ -311,24 +448,43 @@ function editTask(id) {
   if (!task) return;
   editingId = id;
   fillTaskForm(task);
+  selectedScriptPath = task.script_path;
   saveBtn.textContent = `保存修改 #${id}`;
   formTitle.textContent = `正在编辑任务 #${id}`;
   formHint.textContent = `正在编辑：${task.name}（${task.type}）`;
   openModal('edit');
+  loadScripts();
 }
 
 function useScript(scriptPath, type) {
+  selectedScriptPath = scriptPath;
   form.script_path.value = scriptPath;
   form.type.value = type;
   if (!form.name.value.trim()) {
     form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
   }
   formHint.textContent = `已选择脚本：${scriptPath}`;
+  loadScripts();
+  openModal(editingId ? 'edit' : 'create');
+}
+
+async function loadScriptIntoEditor(scriptPath) {
+  const script = scriptsCache.find(item => item.path === scriptPath);
+  if (!script) return;
+  const response = await fetch(scriptPath);
+  const content = await response.text();
+  selectedScriptPath = scriptPath;
+  importForm.elements.name.value = script.name;
+  importForm.elements.type.value = script.type;
+  importForm.elements.content.value = content;
+  formHint.textContent = `已加载脚本到编辑器：${scriptPath}`;
+  loadScripts();
   openModal(editingId ? 'edit' : 'create');
 }
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  form.elements.cron_expr.value = buildCronExprFromForm();
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
   payload.enabled = formData.get('enabled') === 'on';
@@ -361,9 +517,8 @@ importForm.addEventListener('submit', async (event) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, content }),
   });
-  importForm.reset();
+  selectedScriptPath = result.data.path;
   await loadScripts();
-  setActiveTab('scripts');
   useScript(result.data.path, result.data.type);
   alert(`脚本已导入：${result.data.path}`);
 });
@@ -376,6 +531,19 @@ resetBtn.addEventListener('click', () => {
 modalCloseBtn.addEventListener('click', closeModal);
 modalMask.addEventListener('click', closeModal);
 refreshScriptsBtn.addEventListener('click', loadScripts);
+refreshScriptsModalBtn.addEventListener('click', loadScripts);
+useScriptContentBtn.addEventListener('click', () => {
+  const currentName = String(importForm.elements.name.value || '').trim();
+  const currentType = String(importForm.elements.type.value || 'javascript');
+  if (!currentName) {
+    alert('请先填写脚本名称');
+    return;
+  }
+  let target = currentName;
+  if (currentType === 'python' && !target.endsWith('.py')) target += '.py';
+  if (currentType === 'javascript' && !target.endsWith('.js')) target += '.js';
+  useScript(`tasks/${target}`, currentType);
+});
 cleanupBtn.addEventListener('click', async () => {
   await fetchJson('/api/runs/cleanup', { method: 'POST' });
   await refreshAll();
@@ -391,12 +559,22 @@ for (const btn of tabButtons) {
   btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
 }
 
+for (const input of scheduleModeInputs) {
+  input.addEventListener('change', updateScheduleModeUI);
+}
+fixedKindEl.addEventListener('change', () => {
+  fixedWeekdayEl.disabled = fixedKindEl.value !== 'weekly';
+});
+fixedWeekdayEl.disabled = fixedKindEl.value !== 'weekly';
+
 window.runTask = runTask;
 window.stopTask = stopTask;
 window.deleteTask = deleteTask;
 window.editTask = editTask;
 window.showTaskRuns = showTaskRuns;
 window.useScript = useScript;
+window.loadScriptIntoEditor = loadScriptIntoEditor;
 
 setActiveTab('tasks');
+resetForm();
 refreshAll();

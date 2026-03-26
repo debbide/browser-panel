@@ -101,7 +101,7 @@
   </div>
 
   <div id="modal-mask" class="modal-mask" hidden></div>
-  <section id="task-modal" class="modal" aria-hidden="true">
+  <section id="task-modal" class="modal modal-wide" aria-hidden="true">
     <div class="modal-header">
       <div>
         <p class="eyebrow">Task Config</p>
@@ -110,29 +110,120 @@
       <button id="modal-close-btn" class="icon-btn" type="button">关闭</button>
     </div>
     <div class="modal-body">
-      <h3 id="form-title">创建或编辑任务</h3>
-      <p class="muted" id="form-hint">可使用 JS 或 Python 任务，共享同一浏览器持久化配置。</p>
-      <form id="task-form" class="stack-form">
-        <div class="grid two-col-tight">
-          <input name="name" placeholder="任务名称" required />
-          <select name="type">
-            <option value="javascript">JavaScript</option>
-            <option value="python">Python</option>
-          </select>
-          <input name="script_path" placeholder="tasks/example.js" required />
-          <input name="cron_expr" placeholder="*/5 * * * *" />
-          <input name="timeout_sec" type="number" value="300" />
-        </div>
-        <div class="toggles">
-          <label><input type="checkbox" name="enabled" /> 启用定时</label>
-          <label><input type="checkbox" name="use_browser" checked /> 使用浏览器</label>
-          <label><input type="checkbox" name="use_persistent" checked /> 使用持久化配置</label>
-        </div>
-        <div class="row">
-          <button type="submit" id="save-btn">保存任务</button>
-          <button type="button" class="alt" id="reset-btn">取消</button>
-        </div>
-      </form>
+      <div class="modal-layout two-col-modal">
+        <section class="modal-panel">
+          <h3 id="form-title">创建或编辑任务</h3>
+          <p class="muted" id="form-hint">可使用 JS 或 Python 任务，共享同一浏览器持久化配置。</p>
+          <form id="task-form" class="stack-form">
+            <div class="grid two-col-tight">
+              <input name="name" placeholder="任务名称" required />
+              <select name="type">
+                <option value="javascript">JavaScript</option>
+                <option value="python">Python</option>
+              </select>
+              <input name="script_path" placeholder="tasks/example.js" required />
+              <input name="timeout_sec" type="number" value="300" />
+            </div>
+
+            <div class="config-block">
+              <div class="section-header compact">
+                <div>
+                  <h4>定时器配置</h4>
+                  <p>支持固定时间模式与区间循环模式。</p>
+                </div>
+              </div>
+
+              <div class="stack-form timer-mode-group">
+                <label class="timer-mode-card active-mode">
+                  <input type="radio" name="schedule_mode" value="fixed" checked />
+                  <div>
+                    <strong>固定模式</strong>
+                    <span>按每天或每周的固定时间执行</span>
+                  </div>
+                </label>
+                <label class="timer-mode-card">
+                  <input type="radio" name="schedule_mode" value="interval" />
+                  <div>
+                    <strong>区间模式</strong>
+                    <span>按固定间隔重复执行</span>
+                  </div>
+                </label>
+              </div>
+
+              <div id="fixed-schedule-fields" class="grid two-col-tight schedule-fields">
+                <select name="fixed_kind">
+                  <option value="daily">每天</option>
+                  <option value="weekly">每周</option>
+                </select>
+                <select name="fixed_weekday">
+                  <option value="1">周一</option>
+                  <option value="2">周二</option>
+                  <option value="3">周三</option>
+                  <option value="4">周四</option>
+                  <option value="5">周五</option>
+                  <option value="6">周六</option>
+                  <option value="0">周日</option>
+                </select>
+                <input name="fixed_time" type="time" value="09:00" />
+                <label class="inline-check"><input type="checkbox" name="enabled" /> 启用定时</label>
+              </div>
+
+              <div id="interval-schedule-fields" class="grid two-col-tight schedule-fields" hidden>
+                <input name="interval_value" type="number" min="1" value="5" />
+                <select name="interval_unit">
+                  <option value="minutes">分钟</option>
+                  <option value="hours">小时</option>
+                </select>
+                <div class="field-span-2 muted">例如每 5 分钟、每 2 小时循环执行。</div>
+              </div>
+
+              <input type="hidden" name="cron_expr" />
+            </div>
+
+            <div class="toggles">
+              <label><input type="checkbox" name="use_browser" checked /> 使用浏览器</label>
+              <label><input type="checkbox" name="use_persistent" checked /> 使用持久化配置</label>
+            </div>
+            <div class="row">
+              <button type="submit" id="save-btn">保存任务</button>
+              <button type="button" class="alt" id="reset-btn">取消</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="modal-panel">
+          <div class="section-header compact">
+            <div>
+              <h3>脚本配置</h3>
+              <p>可直接在这里导入、编辑并选择脚本，不用离开任务配置页。</p>
+            </div>
+            <button type="button" class="alt" id="refresh-scripts-modal-btn">刷新列表</button>
+          </div>
+
+          <form id="import-form" class="stack-form">
+            <div class="grid two-col-tight">
+              <input name="name" placeholder="例如：my-task.js" required />
+              <select name="type">
+                <option value="javascript">JavaScript</option>
+                <option value="python">Python</option>
+              </select>
+            </div>
+            <textarea name="content" rows="12" placeholder="在这里粘贴或编辑脚本内容" required></textarea>
+            <div class="row">
+              <button type="submit" id="import-btn">导入/保存脚本</button>
+              <button type="button" class="alt" id="use-script-content-btn">填入当前脚本路径</button>
+            </div>
+          </form>
+
+          <div class="section-header compact with-top-gap">
+            <div>
+              <h4>已有脚本</h4>
+              <p>选择后可直接带入任务配置，也可加载进编辑器继续修改。</p>
+            </div>
+          </div>
+          <div id="scripts" class="task-grid compact"></div>
+        </section>
+      </div>
     </div>
   </section>
 
