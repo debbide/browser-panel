@@ -8,9 +8,11 @@ async function fetchJson(url, options) {
 const tasksEl = document.getElementById('tasks');
 const runsEl = document.getElementById('runs');
 const metaEl = document.getElementById('meta');
-const scriptsEl = document.getElementById('scripts');
+const scriptsPageEl = document.getElementById('scripts-page');
+const scriptsModalEl = document.getElementById('scripts-modal');
 const form = document.getElementById('task-form');
-const importForm = document.getElementById('import-form');
+const pageImportForm = document.getElementById('page-import-form');
+const modalImportForm = document.getElementById('modal-import-form');
 const modal = document.getElementById('task-modal');
 const modalMask = document.getElementById('modal-mask');
 const modalTitle = document.getElementById('modal-title');
@@ -34,7 +36,8 @@ const intervalFieldsEl = document.getElementById('interval-schedule-fields');
 const fixedKindEl = form.elements.fixed_kind;
 const fixedWeekdayEl = form.elements.fixed_weekday;
 const fixedTimeEl = form.elements.fixed_time;
-const intervalValueEl = form.elements.interval_value;
+const intervalMinEl = form.elements.interval_min;
+const intervalMaxEl = form.elements.interval_max;
 const intervalUnitEl = form.elements.interval_unit;
 
 let editingId = null;
@@ -93,70 +96,85 @@ function updateScheduleModeUI() {
     const input = label.querySelector('input');
     label.classList.toggle('active-mode', input.checked);
   }
+  fixedWeekdayEl.disabled = fixedKindEl.value !== 'weekly';
 }
 
-function buildCronExprFromForm() {
+function buildSchedulePayloadFromForm() {
   const enabled = form.elements.enabled.checked;
-  if (!enabled) return '';
   const mode = getScheduleMode();
+  if (!enabled) {
+    return {
+      enabled: false,
+      cron_expr: '',
+      schedule_mode: 'fixed',
+      interval_min: null,
+      interval_max: null,
+      interval_unit: null,
+      next_run_at: null,
+    };
+  }
+
   if (mode === 'interval') {
-    const value = Math.max(1, Number(intervalValueEl.value || 1));
-    const unit = intervalUnitEl.value;
-    if (unit === 'hours') {
-      return `0 */${value} * * *`;
-    }
-    return `*/${value} * * * *`;
+    const min = Math.max(1, Number(intervalMinEl.value || 1));
+    const max = Math.max(min, Number(intervalMaxEl.value || min));
+    return {
+      enabled: true,
+      cron_expr: '',
+      schedule_mode: 'interval',
+      interval_min: min,
+      interval_max: max,
+      interval_unit: intervalUnitEl.value || 'hours',
+      next_run_at: null,
+    };
   }
 
   const fixedTime = fixedTimeEl.value || '09:00';
   const [hourRaw, minuteRaw] = fixedTime.split(':');
   const hour = Number(hourRaw || 0);
   const minute = Number(minuteRaw || 0);
-  if (fixedKindEl.value === 'weekly') {
-    return `${minute} ${hour} * * ${fixedWeekdayEl.value}`;
-  }
-  return `${minute} ${hour} * * *`;
+  const cronExpr = fixedKindEl.value === 'weekly'
+    ? `${minute} ${hour} * * ${fixedWeekdayEl.value}`
+    : `${minute} ${hour} * * *`;
+
+  return {
+    enabled: true,
+    cron_expr: cronExpr,
+    schedule_mode: 'fixed',
+    interval_min: null,
+    interval_max: null,
+    interval_unit: null,
+    next_run_at: null,
+  };
 }
 
-function parseCronToSchedule(cronExpr) {
-  if (!cronExpr) {
+function parseTaskSchedule(task) {
+  if (!task || !task.enabled) {
     return {
       enabled: false,
       mode: 'fixed',
       fixedKind: 'daily',
       fixedWeekday: '1',
       fixedTime: '09:00',
-      intervalValue: '5',
-      intervalUnit: 'minutes',
+      intervalMin: '10',
+      intervalMax: '12',
+      intervalUnit: 'days',
     };
   }
 
-  const hourlyMatch = cronExpr.match(/^0 \*\/(\d+) \* \* \*$/);
-  if (hourlyMatch) {
+  if (task.schedule_mode === 'interval') {
     return {
       enabled: true,
       mode: 'interval',
       fixedKind: 'daily',
       fixedWeekday: '1',
       fixedTime: '09:00',
-      intervalValue: hourlyMatch[1],
-      intervalUnit: 'hours',
+      intervalMin: String(task.interval_min || 10),
+      intervalMax: String(task.interval_max || 12),
+      intervalUnit: task.interval_unit || 'days',
     };
   }
 
-  const minuteMatch = cronExpr.match(/^\*\/(\d+) \* \* \* \*$/);
-  if (minuteMatch) {
-    return {
-      enabled: true,
-      mode: 'interval',
-      fixedKind: 'daily',
-      fixedWeekday: '1',
-      fixedTime: '09:00',
-      intervalValue: minuteMatch[1],
-      intervalUnit: 'minutes',
-    };
-  }
-
+  const cronExpr = task.cron_expr || '';
   const fixedMatch = cronExpr.match(/^(\d{1,2}) (\d{1,2}) \* \* (\*|[0-6])$/);
   if (fixedMatch) {
     const minute = String(fixedMatch[1]).padStart(2, '0');
@@ -168,8 +186,9 @@ function parseCronToSchedule(cronExpr) {
       fixedKind: day === '*' ? 'daily' : 'weekly',
       fixedWeekday: day === '*' ? '1' : day,
       fixedTime: `${hour}:${minute}`,
-      intervalValue: '5',
-      intervalUnit: 'minutes',
+      intervalMin: '10',
+      intervalMax: '12',
+      intervalUnit: 'days',
     };
   }
 
@@ -179,9 +198,31 @@ function parseCronToSchedule(cronExpr) {
     fixedKind: 'daily',
     fixedWeekday: '1',
     fixedTime: '09:00',
-    intervalValue: '5',
-    intervalUnit: 'minutes',
+    intervalMin: '10',
+    intervalMax: '12',
+    intervalUnit: 'days',
   };
+}
+
+function describeTaskSchedule(task) {
+  if (!task.enabled) return '未启用';
+  if (task.schedule_mode === 'interval') {
+    return `${task.interval_min} - ${task.interval_max} ${task.interval_unit === 'days' ? '天' : '小时'}之间`;
+  }
+  const schedule = parseTaskSchedule(task);
+  if (schedule.fixedKind === 'weekly') {
+    const weekdayMap = { 0: '周日', 1: '周一', 2: '周二', 3: '周三', 4: '周四', 5: '周五', 6: '周六' };
+    return `${weekdayMap[schedule.fixedWeekday] || '每周'} ${schedule.fixedTime}`;
+  }
+  return `每天 ${schedule.fixedTime}`;
+}
+
+function describeNextRun(task) {
+  if (!task.enabled) return '未启用';
+  if (task.schedule_mode === 'interval') {
+    return task.next_run_at ? `下次：${shortTime(task.next_run_at)}` : '等待生成下次时间';
+  }
+  return describeTaskSchedule(task);
 }
 
 function setActiveTab(name) {
@@ -207,7 +248,7 @@ function closeModal() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
-function resetForm() {
+function resetTaskForm() {
   form.reset();
   editingId = null;
   selectedScriptPath = '';
@@ -220,10 +261,20 @@ function resetForm() {
   fixedKindEl.value = 'daily';
   fixedWeekdayEl.value = '1';
   fixedTimeEl.value = '09:00';
-  intervalValueEl.value = '5';
-  intervalUnitEl.value = 'minutes';
+  intervalMinEl.value = '10';
+  intervalMaxEl.value = '12';
+  intervalUnitEl.value = 'days';
   form.elements.cron_expr.value = '';
   updateScheduleModeUI();
+}
+
+function resetScriptEditor() {
+  modalImportForm.reset();
+}
+
+function resetAllModalState() {
+  resetTaskForm();
+  resetScriptEditor();
 }
 
 function groupLastRuns(runs) {
@@ -306,14 +357,14 @@ function taskCard(task) {
           <span class="metric-value">${escapeHtml(latest.detail)}</span>
         </div>
         <div class="metric-card">
-          <span class="metric-label">调度</span>
-          <strong>${task.enabled ? '已启用' : '未启用'}</strong>
-          <span class="metric-value">${escapeHtml(task.cron_expr || '手动触发')}</span>
+          <span class="metric-label">调度模式</span>
+          <strong>${task.enabled ? (task.schedule_mode === 'interval' ? '区间随机' : '固定时间') : '未启用'}</strong>
+          <span class="metric-value">${escapeHtml(describeTaskSchedule(task))}</span>
         </div>
         <div class="metric-card">
-          <span class="metric-label">浏览器</span>
-          <strong>${task.use_browser ? '启用' : '关闭'}</strong>
-          <span class="metric-value">持久化：${task.use_persistent ? '是' : '否'} / 超时：${task.timeout_sec}秒</span>
+          <span class="metric-label">下次执行 / 浏览器</span>
+          <strong>${escapeHtml(describeNextRun(task))}</strong>
+          <span class="metric-value">浏览器：${task.use_browser ? '启用' : '关闭'} / 持久化：${task.use_persistent ? '是' : '否'} / 超时：${task.timeout_sec}秒</span>
         </div>
       </div>
 
@@ -363,10 +414,16 @@ async function loadMeta() {
   `;
 }
 
+function renderScripts() {
+  const html = scriptsCache.map(scriptCard).join('') || '<p class="empty">当前还没有脚本文件。</p>';
+  scriptsPageEl.innerHTML = html;
+  scriptsModalEl.innerHTML = html;
+}
+
 async function loadScripts() {
   const data = await fetchJson('/api/scripts');
   scriptsCache = data.data;
-  scriptsEl.innerHTML = data.data.map(scriptCard).join('') || '<p class="empty">当前还没有脚本文件。</p>';
+  renderScripts();
 }
 
 async function loadTasks() {
@@ -417,7 +474,7 @@ async function deleteTask(id) {
   if (!confirm('确定要删除这个任务吗？')) return;
   await fetchJson(`/api/tasks/${id}`, { method: 'DELETE' });
   if (editingId === id) {
-    resetForm();
+    resetAllModalState();
     closeModal();
   }
   await refreshAll();
@@ -431,13 +488,14 @@ function fillTaskForm(task) {
   form.use_browser.checked = Boolean(task.use_browser);
   form.use_persistent.checked = Boolean(task.use_persistent);
 
-  const schedule = parseCronToSchedule(task.cron_expr || '');
+  const schedule = parseTaskSchedule(task);
   form.elements.enabled.checked = schedule.enabled;
   form.elements.schedule_mode.value = schedule.mode;
   fixedKindEl.value = schedule.fixedKind;
   fixedWeekdayEl.value = schedule.fixedWeekday;
   fixedTimeEl.value = schedule.fixedTime;
-  intervalValueEl.value = schedule.intervalValue;
+  intervalMinEl.value = schedule.intervalMin;
+  intervalMaxEl.value = schedule.intervalMax;
   intervalUnitEl.value = schedule.intervalUnit;
   form.elements.cron_expr.value = task.cron_expr || '';
   updateScheduleModeUI();
@@ -452,8 +510,8 @@ function editTask(id) {
   saveBtn.textContent = `保存修改 #${id}`;
   formTitle.textContent = `正在编辑任务 #${id}`;
   formHint.textContent = `正在编辑：${task.name}（${task.type}）`;
+  renderScripts();
   openModal('edit');
-  loadScripts();
 }
 
 function useScript(scriptPath, type) {
@@ -464,7 +522,7 @@ function useScript(scriptPath, type) {
     form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
   }
   formHint.textContent = `已选择脚本：${scriptPath}`;
-  loadScripts();
+  renderScripts();
   openModal(editingId ? 'edit' : 'create');
 }
 
@@ -474,20 +532,27 @@ async function loadScriptIntoEditor(scriptPath) {
   const response = await fetch(scriptPath);
   const content = await response.text();
   selectedScriptPath = scriptPath;
-  importForm.elements.name.value = script.name;
-  importForm.elements.type.value = script.type;
-  importForm.elements.content.value = content;
+  modalImportForm.elements.name.value = script.name;
+  modalImportForm.elements.type.value = script.type;
+  modalImportForm.elements.content.value = content;
   formHint.textContent = `已加载脚本到编辑器：${scriptPath}`;
-  loadScripts();
+  renderScripts();
   openModal(editingId ? 'edit' : 'create');
 }
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  form.elements.cron_expr.value = buildCronExprFromForm();
+  const schedule = buildSchedulePayloadFromForm();
+  form.elements.cron_expr.value = schedule.cron_expr;
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
-  payload.enabled = formData.get('enabled') === 'on';
+  payload.enabled = schedule.enabled;
+  payload.cron_expr = schedule.cron_expr;
+  payload.schedule_mode = schedule.schedule_mode;
+  payload.interval_min = schedule.interval_min;
+  payload.interval_max = schedule.interval_max;
+  payload.interval_unit = schedule.interval_unit;
+  payload.next_run_at = schedule.next_run_at;
   payload.use_browser = formData.get('use_browser') === 'on';
   payload.use_persistent = formData.get('use_persistent') === 'on';
   payload.timeout_sec = Number(payload.timeout_sec || 300);
@@ -499,24 +564,37 @@ form.addEventListener('submit', async (event) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  resetForm();
+  resetAllModalState();
   closeModal();
   await refreshAll();
 });
 
-importForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const formData = new FormData(importForm);
+async function saveScriptFromForm(sourceForm) {
+  const formData = new FormData(sourceForm);
   let name = String(formData.get('name') || '').trim();
   const type = String(formData.get('type') || 'javascript');
   const content = String(formData.get('content') || '');
+  if (!name) throw new Error('脚本名称不能为空');
   if (type === 'python' && !name.endsWith('.py')) name += '.py';
   if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
-  const result = await fetchJson('/api/scripts/import', {
+  return fetchJson('/api/scripts/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, content }),
   });
+}
+
+pageImportForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const result = await saveScriptFromForm(pageImportForm);
+  pageImportForm.reset();
+  await loadScripts();
+  alert(`脚本已导入：${result.data.path}`);
+});
+
+modalImportForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const result = await saveScriptFromForm(modalImportForm);
   selectedScriptPath = result.data.path;
   await loadScripts();
   useScript(result.data.path, result.data.type);
@@ -524,7 +602,7 @@ importForm.addEventListener('submit', async (event) => {
 });
 
 resetBtn.addEventListener('click', () => {
-  resetForm();
+  resetAllModalState();
   closeModal();
 });
 
@@ -533,8 +611,8 @@ modalMask.addEventListener('click', closeModal);
 refreshScriptsBtn.addEventListener('click', loadScripts);
 refreshScriptsModalBtn.addEventListener('click', loadScripts);
 useScriptContentBtn.addEventListener('click', () => {
-  const currentName = String(importForm.elements.name.value || '').trim();
-  const currentType = String(importForm.elements.type.value || 'javascript');
+  const currentName = String(modalImportForm.elements.name.value || '').trim();
+  const currentType = String(modalImportForm.elements.type.value || 'javascript');
   if (!currentName) {
     alert('请先填写脚本名称');
     return;
@@ -549,7 +627,8 @@ cleanupBtn.addEventListener('click', async () => {
   await refreshAll();
 });
 addTaskBtn.addEventListener('click', () => {
-  resetForm();
+  resetAllModalState();
+  renderScripts();
   openModal('create');
 });
 addScriptBtn.addEventListener('click', () => setActiveTab('scripts'));
@@ -562,10 +641,7 @@ for (const btn of tabButtons) {
 for (const input of scheduleModeInputs) {
   input.addEventListener('change', updateScheduleModeUI);
 }
-fixedKindEl.addEventListener('change', () => {
-  fixedWeekdayEl.disabled = fixedKindEl.value !== 'weekly';
-});
-fixedWeekdayEl.disabled = fixedKindEl.value !== 'weekly';
+fixedKindEl.addEventListener('change', updateScheduleModeUI);
 
 window.runTask = runTask;
 window.stopTask = stopTask;
@@ -576,5 +652,5 @@ window.useScript = useScript;
 window.loadScriptIntoEditor = loadScriptIntoEditor;
 
 setActiveTab('tasks');
-resetForm();
+resetAllModalState();
 refreshAll();

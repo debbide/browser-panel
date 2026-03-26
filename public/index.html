@@ -49,7 +49,7 @@
                 <p>粘贴 JS / Python 脚本后自动保存到 tasks 目录。</p>
               </div>
             </div>
-            <form id="import-form" class="stack-form">
+            <form id="page-import-form" class="stack-form">
               <div class="grid two-col-tight">
                 <input name="name" placeholder="例如：my-task.js" required />
                 <select name="type">
@@ -59,7 +59,7 @@
               </div>
               <textarea name="content" rows="14" placeholder="粘贴脚本内容" required></textarea>
               <div class="row">
-                <button type="submit" id="import-btn">导入脚本</button>
+                <button type="submit" id="page-import-btn">导入脚本</button>
                 <button type="button" class="alt" id="refresh-scripts-btn">刷新脚本列表</button>
               </div>
             </form>
@@ -72,7 +72,7 @@
                 <p>选择已有脚本可直接填入任务配置弹窗。</p>
               </div>
             </div>
-            <div id="scripts" class="task-grid compact"></div>
+            <div id="scripts-page" class="task-grid compact"></div>
           </section>
         </div>
       </section>
@@ -202,7 +202,7 @@
             <button type="button" class="alt" id="refresh-scripts-modal-btn">刷新列表</button>
           </div>
 
-          <form id="import-form" class="stack-form">
+          <form id="modal-import-form" class="stack-form">
             <div class="grid two-col-tight">
               <input name="name" placeholder="例如：my-task.js" required />
               <select name="type">
@@ -212,7 +212,7 @@
             </div>
             <textarea name="content" rows="12" placeholder="在这里粘贴或编辑脚本内容" required></textarea>
             <div class="row">
-              <button type="submit" id="import-btn">导入/保存脚本</button>
+              <button type="submit" id="modal-import-btn">导入/保存脚本</button>
               <button type="button" class="alt" id="use-script-content-btn">填入当前脚本路径</button>
             </div>
           </form>
@@ -223,7 +223,7 @@
               <p>选择后可直接带入任务配置，也可加载进编辑器继续修改。</p>
             </div>
           </div>
-          <div id="scripts" class="task-grid compact"></div>
+          <div id="scripts-modal" class="task-grid compact"></div>
         </section>
       </div>
     </div>
