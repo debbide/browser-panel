@@ -30,11 +30,16 @@ const addScriptBtn = document.getElementById('add-script-btn');
 const topSettingsBtn = document.getElementById('top-settings-btn');
 const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
-const scheduleModeSelect = form.elements.schedule_mode;
+
+const scheduleModeSelect = document.getElementById('schedule-mode-select');
 const fixedFieldsEl = document.getElementById('fixed-schedule-fields');
 const intervalFieldsEl = document.getElementById('interval-schedule-fields');
-const fixedValueEl = form.elements.fixed_value;
-const fixedUnitEl = form.elements.fixed_unit;
+const fixedSummaryEl = document.getElementById('fixed-schedule-summary');
+const intervalSummaryEl = document.getElementById('interval-schedule-summary');
+
+const fixedDaysEl = form.elements.fixed_days;
+const fixedHoursEl = form.elements.fixed_hours;
+const fixedMinutesEl = form.elements.fixed_minutes;
 const intervalMinEl = form.elements.interval_min;
 const intervalMaxEl = form.elements.interval_max;
 const intervalUnitEl = form.elements.interval_unit;
@@ -44,7 +49,6 @@ let tasksCache = [];
 let runsCache = [];
 let runningTaskIds = new Set();
 let scriptsCache = [];
-let activeTab = 'tasks';
 let lastRunsByTask = new Map();
 let selectedScriptPath = '';
 
@@ -78,37 +82,66 @@ function prettyStatus(status) {
   return status || '-';
 }
 
+function prettyUnit(unit) {
+  if (unit === 'minutes') return '分钟';
+  if (unit === 'days') return '天';
+  return '小时';
+}
+
 function shortTime(value) {
   if (!value) return '-';
   return String(value).replace('T', ' ').slice(0, 19);
 }
 
+function setActiveTab(name) {
+  for (const btn of tabButtons) btn.classList.toggle('active', btn.dataset.tab === name);
+  for (const panel of tabPanels) panel.classList.toggle('active', panel.dataset.panel === name);
+}
+
+function openModal(mode = 'create') {
+  modal.classList.add('open');
+  modalMask.hidden = false;
+  modalTitle.textContent = mode === 'edit' ? '编辑任务配置' : '新建任务';
+}
+
+function closeModal() {
+  modal.classList.remove('open');
+  modalMask.hidden = true;
+}
+
 function getScheduleMode() {
-  return form.elements.schedule_mode.value || 'fixed';
+  return scheduleModeSelect.value || 'fixed';
+}
+
+function updateFixedSummary() {
+  const days = Number(fixedDaysEl.value || 0);
+  const hours = Number(fixedHoursEl.value || 0);
+  const minutes = Number(fixedMinutesEl.value || 0);
+  fixedSummaryEl.textContent = `每隔 ${days} 天 ${hours} 小时 ${minutes} 分钟执行一次`;
+}
+
+function updateIntervalSummary() {
+  const min = Number(intervalMinEl.value || 1);
+  const max = Math.max(min, Number(intervalMaxEl.value || min));
+  const unit = prettyUnit(intervalUnitEl.value || 'minutes');
+  intervalSummaryEl.textContent = `每次检查将在 ${min} - ${max} ${unit}内随机触发`;
 }
 
 function updateScheduleModeUI() {
   const mode = getScheduleMode();
   fixedFieldsEl.hidden = mode !== 'fixed';
   intervalFieldsEl.hidden = mode !== 'interval';
+  updateFixedSummary();
+  updateIntervalSummary();
 }
 
 function buildSchedulePayloadFromForm() {
   const enabled = form.elements.enabled.checked;
-  const mode = getScheduleMode();
   if (!enabled) {
-    return {
-      enabled: false,
-      cron_expr: '',
-      schedule_mode: 'fixed',
-      interval_min: null,
-      interval_max: null,
-      interval_unit: null,
-      next_run_at: null,
-    };
+    return { enabled: false, cron_expr: '', schedule_mode: 'fixed', interval_min: null, interval_max: null, interval_unit: null, next_run_at: null };
   }
 
-  if (mode === 'interval') {
+  if (getScheduleMode() === 'interval') {
     const min = Math.max(1, Number(intervalMinEl.value || 1));
     const max = Math.max(min, Number(intervalMaxEl.value || min));
     return {
@@ -117,103 +150,77 @@ function buildSchedulePayloadFromForm() {
       schedule_mode: 'interval',
       interval_min: min,
       interval_max: max,
-      interval_unit: intervalUnitEl.value || 'hours',
+      interval_unit: intervalUnitEl.value || 'minutes',
       next_run_at: null,
     };
   }
 
-  const value = Math.max(1, Number(fixedValueEl.value || 1));
-  const unit = fixedUnitEl.value || 'hours';
+  const days = Math.max(0, Number(fixedDaysEl.value || 0));
+  const hours = Math.max(0, Number(fixedHoursEl.value || 0));
+  const minutes = Math.max(0, Number(fixedMinutesEl.value || 0));
+  const totalMinutes = days * 24 * 60 + hours * 60 + minutes;
+  const safeMinutes = Math.max(1, totalMinutes);
+  if (safeMinutes % (24 * 60) === 0) {
+    return {
+      enabled: true,
+      cron_expr: '',
+      schedule_mode: 'fixed',
+      interval_min: safeMinutes / (24 * 60),
+      interval_max: safeMinutes / (24 * 60),
+      interval_unit: 'days',
+      next_run_at: null,
+    };
+  }
+  if (safeMinutes % 60 === 0) {
+    return {
+      enabled: true,
+      cron_expr: '',
+      schedule_mode: 'fixed',
+      interval_min: safeMinutes / 60,
+      interval_max: safeMinutes / 60,
+      interval_unit: 'hours',
+      next_run_at: null,
+    };
+  }
   return {
     enabled: true,
     cron_expr: '',
     schedule_mode: 'fixed',
-    interval_min: value,
-    interval_max: value,
-    interval_unit: unit,
+    interval_min: safeMinutes,
+    interval_max: safeMinutes,
+    interval_unit: 'minutes',
     next_run_at: null,
   };
 }
 
 function parseTaskSchedule(task) {
   if (!task || !task.enabled) {
-    return {
-      enabled: false,
-      mode: 'fixed',
-      fixedValue: '4',
-      fixedUnit: 'hours',
-      intervalMin: '10',
-      intervalMax: '12',
-      intervalUnit: 'days',
-    };
+    return { enabled: false, mode: 'fixed', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes' };
   }
-
   if (task.schedule_mode === 'interval') {
-    return {
-      enabled: true,
-      mode: 'interval',
-      fixedValue: '4',
-      fixedUnit: 'hours',
-      intervalMin: String(task.interval_min || 10),
-      intervalMax: String(task.interval_max || 12),
-      intervalUnit: task.interval_unit || 'days',
-    };
+    return { enabled: true, mode: 'interval', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: Number(task.interval_min || 5), intervalMax: Number(task.interval_max || 10), intervalUnit: task.interval_unit || 'minutes' };
   }
-
-  return {
-    enabled: true,
-    mode: 'fixed',
-    fixedValue: String(task.interval_min || task.interval_max || 4),
-    fixedUnit: task.interval_unit || 'hours',
-    intervalMin: '10',
-    intervalMax: '12',
-    intervalUnit: 'days',
-  };
-}
-
-function prettyUnit(unit) {
-  if (unit === 'minutes') return '分钟';
-  if (unit === 'days') return '天';
-  return '小时';
+  let totalMinutes = Number(task.interval_min || task.interval_max || 0);
+  if ((task.interval_unit || 'minutes') === 'days') totalMinutes *= 24 * 60;
+  else if ((task.interval_unit || 'minutes') === 'hours') totalMinutes *= 60;
+  const fixedDays = Math.floor(totalMinutes / (24 * 60));
+  totalMinutes -= fixedDays * 24 * 60;
+  const fixedHours = Math.floor(totalMinutes / 60);
+  totalMinutes -= fixedHours * 60;
+  return { enabled: true, mode: 'fixed', fixedDays, fixedHours, fixedMinutes: totalMinutes, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes' };
 }
 
 function describeTaskSchedule(task) {
   if (!task.enabled) return '未启用';
-  if (task.schedule_mode === 'interval') {
-    return `${task.interval_min} - ${task.interval_max} ${prettyUnit(task.interval_unit)}之间`;
-  }
-  return `固定 ${task.interval_min || task.interval_max} ${prettyUnit(task.interval_unit)}`;
+  if (task.schedule_mode === 'interval') return `${task.interval_min} - ${task.interval_max} ${prettyUnit(task.interval_unit)}之间`;
+  const parsed = parseTaskSchedule(task);
+  return `${parsed.fixedDays} 天 ${parsed.fixedHours} 小时 ${parsed.fixedMinutes} 分钟`;
 }
 
 function describeNextRun(task) {
   if (!task.enabled) return '未启用';
-  if (task.schedule_mode === 'interval') {
-    return task.next_run_at ? `下次：${shortTime(task.next_run_at)}` : '等待生成下次时间';
-  }
+  if (task.next_run_at) return `下次：${shortTime(task.next_run_at)}`;
   return describeTaskSchedule(task);
-}
-
-function setActiveTab(name) {
-  activeTab = name;
-  for (const btn of tabButtons) {
-    btn.classList.toggle('active', btn.dataset.tab === name);
-  }
-  for (const panel of tabPanels) {
-    panel.classList.toggle('active', panel.dataset.panel === name);
-  }
-}
-
-function openModal(mode = 'create') {
-  modal.classList.add('open');
-  modalMask.hidden = false;
-  modal.setAttribute('aria-hidden', 'false');
-  modalTitle.textContent = mode === 'edit' ? '编辑任务配置' : '新建任务';
-}
-
-function closeModal() {
-  modal.classList.remove('open');
-  modalMask.hidden = true;
-  modal.setAttribute('aria-hidden', 'true');
 }
 
 function resetTaskForm() {
@@ -222,20 +229,19 @@ function resetTaskForm() {
   selectedScriptPath = '';
   saveBtn.textContent = '保存任务';
   formTitle.textContent = '创建或编辑任务';
-  formHint.textContent = '只保留任务名称；脚本、类型和调度在下方配置。';
-  modalTitle.textContent = '新建任务';
+  formHint.textContent = '任务只保留名称；脚本与调度在下方配置。';
   form.elements.name.value = '';
   form.elements.type.value = 'javascript';
   form.elements.script_path.value = '';
   form.elements.timeout_sec.value = '300';
   form.elements.enabled.checked = false;
-  form.elements.schedule_mode.value = 'fixed';
-  fixedValueEl.value = '4';
-  fixedUnitEl.value = 'hours';
-  intervalMinEl.value = '10';
-  intervalMaxEl.value = '12';
-  intervalUnitEl.value = 'days';
-  form.elements.cron_expr.value = '';
+  scheduleModeSelect.value = 'fixed';
+  fixedDaysEl.value = '0';
+  fixedHoursEl.value = '4';
+  fixedMinutesEl.value = '0';
+  intervalMinEl.value = '5';
+  intervalMaxEl.value = '10';
+  intervalUnitEl.value = 'minutes';
   updateScheduleModeUI();
 }
 
@@ -251,11 +257,7 @@ function resetAllModalState() {
 
 function groupLastRuns(runs) {
   lastRunsByTask = new Map();
-  for (const run of runs) {
-    if (!lastRunsByTask.has(run.task_id)) {
-      lastRunsByTask.set(run.task_id, run);
-    }
-  }
+  for (const run of runs) if (!lastRunsByTask.has(run.task_id)) lastRunsByTask.set(run.task_id, run);
 }
 
 function runCard(run) {
@@ -276,8 +278,7 @@ function runCard(run) {
         ${run.screenshot_path ? `<a href="/${run.screenshot_path.replace(/^.*?(screenshots\/)/, '$1')}" target="_blank">查看截图</a>` : ''}
       </div>
       ${run.error_text ? `<pre>${escapeHtml(run.error_text)}</pre>` : ''}
-    </div>
-  `;
+    </div>`;
 }
 
 async function showTaskRuns(id) {
@@ -290,13 +291,7 @@ async function showTaskRuns(id) {
 
 function latestRunSummary(taskId) {
   const run = lastRunsByTask.get(taskId);
-  if (!run) {
-    return {
-      status: '未运行',
-      detail: '还没有运行记录',
-      className: 'idle',
-    };
-  }
+  if (!run) return { status: '未运行', detail: '还没有运行记录', className: 'idle' };
   return {
     status: prettyStatus(run.status),
     detail: run.error_code ? prettyErrorCode(run.error_code) : `最近运行：${shortTime(run.started_at)}`,
@@ -321,7 +316,6 @@ function taskCard(task) {
         </div>
         <button class="icon-btn" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''}>编辑</button>
       </div>
-
       <div class="task-metrics">
         <div class="metric-card ${latest.className}">
           <span class="metric-label">最新结果</span>
@@ -330,7 +324,7 @@ function taskCard(task) {
         </div>
         <div class="metric-card">
           <span class="metric-label">调度模式</span>
-          <strong>${task.enabled ? (task.schedule_mode === 'interval' ? '区间随机' : '固定时间') : '未启用'}</strong>
+          <strong>${task.enabled ? (task.schedule_mode === 'interval' ? '随机区间' : '固定周期') : '未启用'}</strong>
           <span class="metric-value">${escapeHtml(describeTaskSchedule(task))}</span>
         </div>
         <div class="metric-card">
@@ -339,17 +333,14 @@ function taskCard(task) {
           <span class="metric-value">浏览器：${task.use_browser ? '启用' : '关闭'} / 持久化：${task.use_persistent ? '是' : '否'} / 超时：${task.timeout_sec}秒</span>
         </div>
       </div>
-
       <div class="task-actions">
         <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''}>${isRunning ? '运行中…' : '启动'}</button>
         <button class="alt" onclick="stopTask(${task.id})" ${!isRunning ? 'disabled' : ''}>停止</button>
         <button class="alt" onclick="showTaskRuns(${task.id})">运行记录</button>
         <button class="alt danger" onclick="deleteTask(${task.id})" ${isRunning ? 'disabled' : ''}>删除</button>
       </div>
-
       <div id="task-runs-${task.id}" class="task-runs-inline"></div>
-    </article>
-  `;
+    </article>`;
 }
 
 function scriptCard(script) {
@@ -365,8 +356,7 @@ function scriptCard(script) {
         <button class="alt" onclick="useScript('${escapeHtml(script.path)}', '${escapeHtml(script.type)}')">填入任务配置</button>
         <button class="alt" onclick="loadScriptIntoEditor('${escapeHtml(script.path)}')">加载到编辑器</button>
       </div>
-    </article>
-  `;
+    </article>`;
 }
 
 async function loadMeta() {
@@ -382,8 +372,7 @@ async function loadMeta() {
       <div class="metric-card"><span class="metric-label">代理</span><strong>${escapeHtml(browser.proxy)}</strong></div>
       <div class="metric-card"><span class="metric-label">任务目录</span><strong>${escapeHtml(paths.tasksDir)}</strong></div>
       <div class="metric-card full"><span class="metric-label">运行数据目录</span><strong>${escapeHtml(paths.runtimeDataDir)}</strong></div>
-    </div>
-  `;
+    </div>`;
 }
 
 function renderScripts() {
@@ -459,16 +448,15 @@ function fillTaskForm(task) {
   form.timeout_sec.value = task.timeout_sec;
   form.use_browser.checked = Boolean(task.use_browser);
   form.use_persistent.checked = Boolean(task.use_persistent);
-
   const schedule = parseTaskSchedule(task);
   form.elements.enabled.checked = schedule.enabled;
-  form.elements.schedule_mode.value = schedule.mode;
-  fixedValueEl.value = schedule.fixedValue;
-  fixedUnitEl.value = schedule.fixedUnit;
+  scheduleModeSelect.value = schedule.mode;
+  fixedDaysEl.value = schedule.fixedDays;
+  fixedHoursEl.value = schedule.fixedHours;
+  fixedMinutesEl.value = schedule.fixedMinutes;
   intervalMinEl.value = schedule.intervalMin;
   intervalMaxEl.value = schedule.intervalMax;
   intervalUnitEl.value = schedule.intervalUnit;
-  form.elements.cron_expr.value = task.cron_expr || '';
   updateScheduleModeUI();
 }
 
@@ -480,7 +468,7 @@ function editTask(id) {
   selectedScriptPath = task.script_path;
   saveBtn.textContent = `保存修改 #${id}`;
   formTitle.textContent = `正在编辑任务 #${id}`;
-  formHint.textContent = `任务只保留名称；脚本和调度都在下面配置。`;
+  formHint.textContent = '任务只保留名称；脚本与调度在下方配置。';
   renderScripts();
   openModal('edit');
 }
@@ -489,9 +477,7 @@ function useScript(scriptPath, type) {
   selectedScriptPath = scriptPath;
   form.script_path.value = scriptPath;
   form.type.value = type;
-  if (!form.name.value.trim()) {
-    form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
-  }
+  if (!form.name.value.trim()) form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
   formHint.textContent = `已选择脚本：${scriptPath}`;
   renderScripts();
   openModal(editingId ? 'edit' : 'create');
@@ -518,27 +504,15 @@ form.addEventListener('submit', async (event) => {
     return;
   }
   const schedule = buildSchedulePayloadFromForm();
-  form.elements.cron_expr.value = schedule.cron_expr;
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
-  payload.enabled = schedule.enabled;
-  payload.cron_expr = schedule.cron_expr;
-  payload.schedule_mode = schedule.schedule_mode;
-  payload.interval_min = schedule.interval_min;
-  payload.interval_max = schedule.interval_max;
-  payload.interval_unit = schedule.interval_unit;
-  payload.next_run_at = schedule.next_run_at;
+  Object.assign(payload, schedule);
   payload.use_browser = formData.get('use_browser') === 'on';
   payload.use_persistent = formData.get('use_persistent') === 'on';
   payload.timeout_sec = Number(payload.timeout_sec || 300);
-
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
   const method = editingId ? 'PUT' : 'POST';
-  await fetchJson(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   resetAllModalState();
   closeModal();
   await refreshAll();
@@ -552,11 +526,7 @@ async function saveScriptFromForm(sourceForm) {
   if (!name) throw new Error('脚本名称不能为空');
   if (type === 'python' && !name.endsWith('.py')) name += '.py';
   if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
-  return fetchJson('/api/scripts/import', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, content }),
-  });
+  return fetchJson('/api/scripts/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, content }) });
 }
 
 pageImportForm.addEventListener('submit', async (event) => {
@@ -576,11 +546,7 @@ modalImportForm.addEventListener('submit', async (event) => {
   alert(`脚本已导入：${result.data.path}`);
 });
 
-resetBtn.addEventListener('click', () => {
-  resetAllModalState();
-  closeModal();
-});
-
+resetBtn.addEventListener('click', () => { resetAllModalState(); closeModal(); });
 modalCloseBtn.addEventListener('click', closeModal);
 modalMask.addEventListener('click', closeModal);
 refreshScriptsBtn.addEventListener('click', loadScripts);
@@ -588,32 +554,24 @@ refreshScriptsModalBtn.addEventListener('click', loadScripts);
 useScriptContentBtn.addEventListener('click', () => {
   const currentName = String(modalImportForm.elements.name.value || '').trim();
   const currentType = String(modalImportForm.elements.type.value || 'javascript');
-  if (!currentName) {
-    alert('请先填写脚本名称');
-    return;
-  }
+  if (!currentName) return alert('请先填写脚本名称');
   let target = currentName;
   if (currentType === 'python' && !target.endsWith('.py')) target += '.py';
   if (currentType === 'javascript' && !target.endsWith('.js')) target += '.js';
   useScript(`tasks/${target}`, currentType);
 });
-cleanupBtn.addEventListener('click', async () => {
-  await fetchJson('/api/runs/cleanup', { method: 'POST' });
-  await refreshAll();
-});
-addTaskBtn.addEventListener('click', () => {
-  resetAllModalState();
-  renderScripts();
-  openModal('create');
-});
+cleanupBtn.addEventListener('click', async () => { await fetchJson('/api/runs/cleanup', { method: 'POST' }); await refreshAll(); });
+addTaskBtn.addEventListener('click', () => { resetAllModalState(); renderScripts(); openModal('create'); });
 addScriptBtn.addEventListener('click', () => setActiveTab('scripts'));
 topSettingsBtn.addEventListener('click', () => setActiveTab('settings'));
-
-for (const btn of tabButtons) {
-  btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
-}
-
+for (const btn of tabButtons) btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
 scheduleModeSelect.addEventListener('change', updateScheduleModeUI);
+fixedDaysEl.addEventListener('input', updateFixedSummary);
+fixedHoursEl.addEventListener('input', updateFixedSummary);
+fixedMinutesEl.addEventListener('input', updateFixedSummary);
+intervalMinEl.addEventListener('input', updateIntervalSummary);
+intervalMaxEl.addEventListener('input', updateIntervalSummary);
+intervalUnitEl.addEventListener('change', updateIntervalSummary);
 
 window.runTask = runTask;
 window.stopTask = stopTask;

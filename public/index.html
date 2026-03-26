@@ -113,7 +113,7 @@
       <div class="modal-layout two-col-modal">
         <section class="modal-panel">
           <h3 id="form-title">创建或编辑任务</h3>
-          <p class="muted" id="form-hint">可使用 JS 或 Python 任务，共享同一浏览器持久化配置。</p>
+          <p class="muted" id="form-hint">任务只保留名称；脚本与调度在下方配置。</p>
           <form id="task-form" class="stack-form">
             <div class="grid single-col">
               <input name="name" placeholder="任务名称" required />
@@ -126,42 +126,58 @@
               <div class="section-header compact">
                 <div>
                   <h4>定时器配置</h4>
-                  <p>只支持固定间隔和随机区间两种最简单模式。</p>
+                  <p>两种模式：固定周期 / 随机区间。</p>
                 </div>
               </div>
 
               <label class="inline-check"><input type="checkbox" name="enabled" /> 启用定时</label>
 
               <div class="grid single-col schedule-mode-select-wrap">
-                <select name="schedule_mode">
-                  <option value="fixed">固定模式</option>
-                  <option value="interval">区间模式</option>
+                <select name="schedule_mode" id="schedule-mode-select">
+                  <option value="fixed">固定周期</option>
+                  <option value="interval">随机区间</option>
                 </select>
               </div>
 
               <div id="fixed-schedule-fields" class="schedule-pane">
-                <div class="grid two-col-tight">
-                  <input name="fixed_value" type="number" min="1" value="4" placeholder="固定值" />
-                  <select name="fixed_unit">
-                    <option value="minutes">分钟</option>
-                    <option value="hours" selected>小时</option>
-                    <option value="days">天</option>
-                  </select>
+                <div class="grid three-col-tight">
+                  <div>
+                    <label class="field-label">天</label>
+                    <input name="fixed_days" type="number" min="0" value="0" />
+                  </div>
+                  <div>
+                    <label class="field-label">时</label>
+                    <input name="fixed_hours" type="number" min="0" value="4" />
+                  </div>
+                  <div>
+                    <label class="field-label">分</label>
+                    <input name="fixed_minutes" type="number" min="0" value="0" />
+                  </div>
                 </div>
-                <div class="field-span-2 muted">示例：4小时、1天、30分钟。</div>
+                <div id="fixed-schedule-summary" class="field-span-2 muted">每隔 0 天 4 小时 0 分钟执行一次</div>
               </div>
 
               <div id="interval-schedule-fields" class="schedule-pane" hidden>
-                <div class="grid three-col-tight">
-                  <input name="interval_min" type="number" min="1" value="10" placeholder="最小值" />
-                  <input name="interval_max" type="number" min="1" value="12" placeholder="最大值" />
-                  <select name="interval_unit">
-                    <option value="minutes">分钟</option>
-                    <option value="hours" selected>小时</option>
-                    <option value="days">天</option>
-                  </select>
+                <div class="grid interval-range-grid">
+                  <div>
+                    <label class="field-label">最小值</label>
+                    <input name="interval_min" type="number" min="1" value="5" />
+                  </div>
+                  <div class="range-sep">至</div>
+                  <div>
+                    <label class="field-label">最大值</label>
+                    <input name="interval_max" type="number" min="1" value="10" />
+                  </div>
+                  <div>
+                    <label class="field-label">单位</label>
+                    <select name="interval_unit">
+                      <option value="minutes">分钟</option>
+                      <option value="hours">小时</option>
+                      <option value="days">天</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="field-span-2 muted">示例：10-12小时、8-9天、30-36小时。</div>
+                <div id="interval-schedule-summary" class="field-span-2 muted">每次检查将在 5 - 10 分钟内随机触发</div>
               </div>
 
               <input type="hidden" name="cron_expr" />
