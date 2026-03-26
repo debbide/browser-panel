@@ -7,17 +7,113 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>浏览器自动化面板</h1>
-      <p>基于共享有头浏览器环境运行 JavaScript 与 Python 自动化任务。</p>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Browser Automation</p>
+        <h1>浏览器自动化面板</h1>
+        <p class="subtitle">任务卡片化管理、脚本导入、运行记录与环境查看</p>
+      </div>
+      <div class="topbar-actions">
+        <button class="alt" id="add-script-btn" type="button">脚本区</button>
+        <button class="alt" id="top-settings-btn" type="button">环境设置</button>
+        <button id="add-task-btn" type="button">+ 添加任务</button>
+      </div>
     </header>
 
-    <section class="card">
-      <h2 id="form-title">创建或编辑任务</h2>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="tasks" type="button">任务</button>
+      <button class="tab-btn" data-tab="scripts" type="button">脚本</button>
+      <button class="tab-btn" data-tab="runs" type="button">运行记录</button>
+      <button class="tab-btn" data-tab="settings" type="button">环境</button>
+    </nav>
+
+    <main class="content">
+      <section class="tab-panel active" data-panel="tasks">
+        <div class="section-header">
+          <div>
+            <h2>任务卡片</h2>
+            <p>每个任务都展示状态、最近结果、调度与操作按钮。</p>
+          </div>
+          <button id="open-create-task-inline" type="button" onclick="document.getElementById('add-task-btn').click()">新建任务</button>
+        </div>
+        <div id="tasks" class="task-grid"></div>
+      </section>
+
+      <section class="tab-panel" data-panel="scripts">
+        <div class="panel-grid two-col">
+          <section class="panel-card">
+            <div class="section-header">
+              <div>
+                <h2>脚本导入</h2>
+                <p>粘贴 JS / Python 脚本后自动保存到 tasks 目录。</p>
+              </div>
+            </div>
+            <form id="import-form" class="stack-form">
+              <div class="grid two-col-tight">
+                <input name="name" placeholder="例如：my-task.js" required />
+                <select name="type">
+                  <option value="javascript">JavaScript</option>
+                  <option value="python">Python</option>
+                </select>
+              </div>
+              <textarea name="content" rows="14" placeholder="粘贴脚本内容" required></textarea>
+              <div class="row">
+                <button type="submit" id="import-btn">导入脚本</button>
+                <button type="button" class="alt" id="refresh-scripts-btn">刷新脚本列表</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel-card">
+            <div class="section-header">
+              <div>
+                <h2>脚本列表</h2>
+                <p>选择已有脚本可直接填入任务配置弹窗。</p>
+              </div>
+            </div>
+            <div id="scripts" class="task-grid compact"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="runs">
+        <div class="section-header">
+          <div>
+            <h2>最近运行记录</h2>
+            <p>查看任务执行结果、错误类型、日志与截图。</p>
+          </div>
+          <button id="cleanup-runs-btn" class="alt" type="button">每个任务仅保留最近一次成功记录</button>
+        </div>
+        <div id="runs" class="run-grid"></div>
+      </section>
+
+      <section class="tab-panel" data-panel="settings">
+        <div class="section-header">
+          <div>
+            <h2>浏览器环境</h2>
+            <p>当前共享浏览器环境、路径和代理配置。</p>
+          </div>
+        </div>
+        <div id="meta"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-mask" class="modal-mask" hidden></div>
+  <section id="task-modal" class="modal" aria-hidden="true">
+    <div class="modal-header">
+      <div>
+        <p class="eyebrow">Task Config</p>
+        <h2 id="modal-title">新建任务</h2>
+      </div>
+      <button id="modal-close-btn" class="icon-btn" type="button">关闭</button>
+    </div>
+    <div class="modal-body">
+      <h3 id="form-title">创建或编辑任务</h3>
       <p class="muted" id="form-hint">可使用 JS 或 Python 任务，共享同一浏览器持久化配置。</p>
-      <form id="task-form">
-        <div class="grid">
+      <form id="task-form" class="stack-form">
+        <div class="grid two-col-tight">
           <input name="name" placeholder="任务名称" required />
           <select name="type">
             <option value="javascript">JavaScript</option>
@@ -34,49 +130,12 @@
         </div>
         <div class="row">
           <button type="submit" id="save-btn">保存任务</button>
-          <button type="button" class="alt" id="reset-btn">重置</button>
+          <button type="button" class="alt" id="reset-btn">取消</button>
         </div>
       </form>
-    </section>
+    </div>
+  </section>
 
-    <section class="card">
-      <h2>脚本导入</h2>
-      <p class="muted">可直接把 JS / Python 脚本导入到 tasks 目录，并快速填入任务表单。</p>
-      <form id="import-form">
-        <div class="grid">
-          <input name="name" placeholder="例如：my-task.js" required />
-          <select name="type">
-            <option value="javascript">JavaScript</option>
-            <option value="python">Python</option>
-          </select>
-        </div>
-        <textarea name="content" rows="10" placeholder="粘贴脚本内容" required></textarea>
-        <div class="row">
-          <button type="submit" id="import-btn">导入脚本</button>
-          <button type="button" class="alt" id="refresh-scripts-btn">刷新脚本列表</button>
-        </div>
-      </form>
-      <div id="scripts" class="task-runs"></div>
-    </section>
-
-    <section class="card">
-      <h2>浏览器环境</h2>
-      <div id="meta"></div>
-    </section>
-
-    <section class="card">
-      <h2>任务列表</h2>
-      <div id="tasks"></div>
-    </section>
-
-    <section class="card">
-      <h2>最近运行记录</h2>
-      <div class="row">
-        <button id="cleanup-runs-btn" class="alt" type="button">每个任务仅保留最近一次成功记录</button>
-      </div>
-      <div id="runs"></div>
-    </section>
-  </div>
   <script src="/app.js"></script>
 </body>
 </html>
