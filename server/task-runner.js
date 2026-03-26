@@ -19,13 +19,25 @@ function makeScreenshotPath(taskId) {
   return path.join(config.paths.screenshotsDir, `task-${taskId}-${stamp()}.png`);
 }
 
+function getTempProfileDir(task) {
+  return path.join(config.paths.root, 'runtime-data', 'profiles', `task-${task.id}-tmp-profile`);
+}
+
+function classifyForegroundFailure(exitCode, stderrText) {
+  const text = String(stderrText || '').toLowerCase();
+  if (text.includes('task timeout exceeded')) return 'timeout';
+  if (text.includes('eacces') || text.includes('permission denied')) return 'permission_error';
+  if (text.includes('no such file') || text.includes('cannot find module') || text.includes('not found')) return 'script_error';
+  return exitCode === 0 ? null : 'script_error';
+}
+
 function buildEnv(task, screenshotPath) {
   const env = { ...process.env };
   if (task.use_browser) {
     env.BROWSER_DISPLAY = config.browser.display;
     env.BROWSER_XAUTHORITY = config.browser.xauthority;
     env.BROWSER_USER = config.browser.user;
-    env.BROWSER_USER_DATA_DIR = task.use_persistent ? config.browser.userDataDir : path.join(config.paths.dataDir, 'tmp-profile');
+    env.BROWSER_USER_DATA_DIR = task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task);
     env.BROWSER_CHROME_PATH = config.browser.chromePath;
     env.BROWSER_PROXY = config.browser.proxy;
     env.BROWSER_HEADLESS = 'false';
@@ -72,14 +84,16 @@ function runForegroundTask(task, screenshotPath) {
     child.on('close', (code) => {
       clearTimeout(timer);
       logStream.end();
+      const errorText = stderrText.trim() || null;
       resolve({
         status: code === 0 ? 'success' : 'failed',
+        errorCode: classifyForegroundFailure(code, errorText),
         startedAt,
         endedAt: new Date().toISOString(),
         exitCode: code,
         logPath,
         screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
-        errorText: stderrText.trim() || null,
+        errorText,
       });
     });
   });
@@ -97,14 +111,26 @@ async function runBrowserTask(task) {
   if (fs.existsSync(workerResultPath)) fs.unlinkSync(workerResultPath);
   if (fs.existsSync(workerScreenshotPath)) fs.copyFileSync(workerScreenshotPath, screenshotPath);
 
+  const hasScreenshot = fs.existsSync(screenshotPath);
+  const ok = Boolean(taskResult?.ok || hasScreenshot);
+  let errorCode = null;
+  if (!ok) {
+    if (/timed out/i.test(result.stderr || '')) errorCode = 'timeout';
+    else if ((result.stderr || '').includes('Permission denied')) errorCode = 'permission_error';
+    else if (taskResult?.error) errorCode = 'browser_task_error';
+    else if (!taskResult) errorCode = 'missing_result';
+    else errorCode = 'browser_launch_error';
+  }
+
   return {
-    status: taskResult?.ok || fs.existsSync(screenshotPath) ? 'success' : 'failed',
+    status: ok ? 'success' : 'failed',
+    errorCode,
     startedAt: result.startedAt,
     endedAt: result.endedAt,
     exitCode: result.exitCode,
     logPath,
-    screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
-    errorText: taskResult?.error || result.stderr || (fs.existsSync(screenshotPath) ? null : 'No result payload written'),
+    screenshotPath: hasScreenshot ? screenshotPath : null,
+    errorText: taskResult?.error || result.stderr || (hasScreenshot ? null : 'No result payload written'),
   };
 }
 

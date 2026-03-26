@@ -4,7 +4,7 @@ const express = require('express');
 const config = require('../config');
 const db = require('./db');
 const { runTask } = require('./task-runner');
-const { reloadJobs } = require('./scheduler');
+const { reloadJobs, isTaskRunning, runTaskSafely } = require('./scheduler');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
 fs.mkdirSync(config.paths.publicDir, { recursive: true });
@@ -32,6 +32,7 @@ async function executeTask(id) {
     log_path: result.logPath,
     screenshot_path: result.screenshotPath,
     error_text: result.errorText,
+    error_code: result.errorCode || null,
   });
 }
 
@@ -42,7 +43,8 @@ app.use('/logs', express.static(config.paths.logsDir));
 app.use('/screenshots', express.static(config.paths.screenshotsDir));
 
 app.get('/api/tasks', (req, res) => {
-  res.json({ data: db.listTasks() });
+  const tasks = db.listTasks().map(task => ({ ...task, is_running: isTaskRunning(task.id) }));
+  res.json({ data: tasks });
 });
 
 app.post('/api/tasks', (req, res) => {
@@ -86,8 +88,11 @@ app.delete('/api/tasks/:id', (req, res) => {
 
 app.post('/api/tasks/:id/run', async (req, res) => {
   try {
-    const run = await executeTask(Number(req.params.id));
-    res.json({ data: run });
+    const result = await runTaskSafely(Number(req.params.id), executeTask);
+    if (result?.skipped) {
+      return res.status(409).json({ message: 'Task is already running', code: result.reason });
+    }
+    res.json({ data: result });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -121,6 +126,7 @@ app.get('/api/meta', (req, res) => {
         tasksDir: config.paths.tasksDir,
         logsDir: config.paths.logsDir,
         screenshotsDir: config.paths.screenshotsDir,
+        runtimeDataDir: path.join(config.paths.root, 'runtime-data'),
       },
     },
   });

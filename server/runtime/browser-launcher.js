@@ -3,12 +3,21 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const config = require('../../config');
 
+function getRuntimeDataDir() {
+  return path.join(config.paths.root, 'runtime-data');
+}
+
+function getTempProfileDir(task) {
+  return path.join(getRuntimeDataDir(), 'profiles', `task-${task.id}-tmp-profile`);
+}
+
 function shellEscape(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
 function ensureRuntimeFiles(task) {
   fs.mkdirSync('/home/abc61154321/browser-work/node_modules', { recursive: true });
+  fs.mkdirSync(path.join(getRuntimeDataDir(), 'profiles'), { recursive: true });
   const files = [
     { from: path.join(config.paths.root, 'node_modules', 'playwright'), to: '/home/abc61154321/browser-work/node_modules/playwright' },
     { from: path.join(config.paths.root, 'node_modules', 'playwright-core'), to: '/home/abc61154321/browser-work/node_modules/playwright-core' },
@@ -41,7 +50,7 @@ async function launchBrowserTaskAndWait(task, runId) {
     'cd /home/abc61154321/browser-work &&',
     `DISPLAY=${shellEscape(config.browser.display)}`,
     `XAUTHORITY=${shellEscape(config.browser.xauthority)}`,
-    `BROWSER_USER_DATA_DIR=${shellEscape(task.use_persistent ? config.browser.userDataDir : path.join(config.paths.dataDir, 'tmp-profile'))}`,
+    `BROWSER_USER_DATA_DIR=${shellEscape(task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task))}`,
     `BROWSER_CHROME_PATH=${shellEscape(config.browser.chromePath)}`,
     `BROWSER_PROXY=${shellEscape(config.browser.proxy)}`,
     `TASK_SCREENSHOT_PATH=${shellEscape(workerScreenshotPath)}`,

@@ -16,6 +16,7 @@ const resetBtn = document.getElementById('reset-btn');
 const cleanupBtn = document.getElementById('cleanup-runs-btn');
 let editingId = null;
 let tasksCache = [];
+let runningTaskIds = new Set();
 
 function escapeHtml(input) {
   return String(input ?? '')
@@ -26,13 +27,27 @@ function escapeHtml(input) {
     .replace(/'/g, '&#39;');
 }
 
+function prettyErrorCode(code) {
+  const map = {
+    timeout: 'Timeout',
+    permission_error: 'Permission error',
+    script_error: 'Script error',
+    browser_task_error: 'Browser task error',
+    browser_launch_error: 'Browser launch error',
+    missing_result: 'Missing result',
+    already_running: 'Already running',
+  };
+  return map[code] || code || '';
+}
+
 function runCard(run) {
   return `
-    <div class="run">
+    <div class="run ${run.status === 'failed' ? 'run-failed' : 'run-success'}">
       <div><strong>Task #${run.task_id}</strong> | ${escapeHtml(run.status)}</div>
       <div>Started: ${escapeHtml(run.started_at)}</div>
       <div>Ended: ${escapeHtml(run.ended_at || '-')}</div>
       <div>Exit: ${run.exit_code ?? '-'}</div>
+      <div>Error type: ${escapeHtml(prettyErrorCode(run.error_code) || '-')}</div>
       <div class="row">
         ${run.log_path ? `<a href="/${run.log_path.replace(/^.*?(logs\/)/, '$1')}" target="_blank">Log</a>` : ''}
         ${run.screenshot_path ? `<a href="/${run.screenshot_path.replace(/^.*?(screenshots\/)/, '$1')}" target="_blank">Screenshot</a>` : ''}
@@ -50,17 +65,18 @@ async function showTaskRuns(id) {
 }
 
 function taskCard(task) {
+  const isRunning = runningTaskIds.has(task.id) || Boolean(task.is_running);
   return `
-    <div class="task">
-      <div><strong>${escapeHtml(task.name)}</strong> <small>#${task.id}</small></div>
+    <div class="task ${isRunning ? 'task-running' : ''}">
+      <div><strong>${escapeHtml(task.name)}</strong> <small>#${task.id}</small> ${isRunning ? '<span class="badge-running">Running</span>' : ''}</div>
       <div>Type: ${escapeHtml(task.type)} | Script: ${escapeHtml(task.script_path)}</div>
       <div>Cron: ${escapeHtml(task.cron_expr || '-')} | Enabled: ${task.enabled ? 'Yes' : 'No'}</div>
       <div>Browser: ${task.use_browser ? 'Yes' : 'No'} | Persistent: ${task.use_persistent ? 'Yes' : 'No'} | Timeout: ${task.timeout_sec}s</div>
       <div class="row">
-        <button onclick="runTask(${task.id})">Run</button>
-        <button class="alt" onclick="editTask(${task.id})">Edit</button>
+        <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''}>${isRunning ? 'Running…' : 'Run'}</button>
+        <button class="alt" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''}>Edit</button>
         <button class="alt" onclick="showTaskRuns(${task.id})">Runs</button>
-        <button class="alt" onclick="deleteTask(${task.id})">Delete</button>
+        <button class="alt" onclick="deleteTask(${task.id})" ${isRunning ? 'disabled' : ''}>Delete</button>
       </div>
       <div id="task-runs-${task.id}" class="task-runs"></div>
     </div>
@@ -88,6 +104,7 @@ async function loadMeta() {
       <div><strong>Chrome:</strong> ${escapeHtml(browser.chromePath)}</div>
       <div><strong>Proxy:</strong> ${escapeHtml(browser.proxy)}</div>
       <div><strong>Tasks dir:</strong> ${escapeHtml(paths.tasksDir)}</div>
+      <div><strong>Runtime data:</strong> ${escapeHtml(paths.runtimeDataDir)}</div>
     </div>
   `;
 }
@@ -104,9 +121,18 @@ async function loadRuns() {
 }
 
 async function runTask(id) {
-  await fetchJson(`/api/tasks/${id}/run`, { method: 'POST' });
-  await loadRuns();
-  await showTaskRuns(id);
+  try {
+    runningTaskIds.add(id);
+    await loadTasks();
+    await fetchJson(`/api/tasks/${id}/run`, { method: 'POST' });
+  } catch (error) {
+    alert(error.message || 'Run failed');
+  } finally {
+    runningTaskIds.delete(id);
+    await loadTasks();
+    await loadRuns();
+    await showTaskRuns(id);
+  }
 }
 
 async function deleteTask(id) {

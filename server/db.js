@@ -33,9 +33,15 @@ CREATE TABLE IF NOT EXISTS task_runs (
   log_path TEXT,
   screenshot_path TEXT,
   error_text TEXT,
+  error_code TEXT,
   FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 `);
+
+const taskRunColumns = db.prepare('PRAGMA table_info(task_runs)').all().map(row => row.name);
+if (!taskRunColumns.includes('error_code')) {
+  db.exec('ALTER TABLE task_runs ADD COLUMN error_code TEXT');
+}
 
 const taskColumns = ['name', 'type', 'script_path', 'cron_expr', 'enabled', 'use_browser', 'use_persistent', 'timeout_sec'];
 
@@ -70,10 +76,10 @@ function deleteTask(id) {
 
 function createRun(taskId, data) {
   const stmt = db.prepare(`
-    INSERT INTO task_runs (task_id, status, started_at, ended_at, exit_code, log_path, screenshot_path, error_text)
-    VALUES (@task_id, @status, @started_at, @ended_at, @exit_code, @log_path, @screenshot_path, @error_text)
+    INSERT INTO task_runs (task_id, status, started_at, ended_at, exit_code, log_path, screenshot_path, error_text, error_code)
+    VALUES (@task_id, @status, @started_at, @ended_at, @exit_code, @log_path, @screenshot_path, @error_text, @error_code)
   `);
-  const result = stmt.run({ task_id: taskId, ...data });
+  const result = stmt.run({ error_code: null, task_id: taskId, ...data });
   return getRun(result.lastInsertRowid);
 }
 
@@ -81,10 +87,11 @@ function updateRun(id, data) {
   const stmt = db.prepare(`
     UPDATE task_runs
     SET status = @status, ended_at = @ended_at, exit_code = @exit_code,
-        log_path = @log_path, screenshot_path = @screenshot_path, error_text = @error_text
+        log_path = @log_path, screenshot_path = @screenshot_path, error_text = @error_text,
+        error_code = @error_code
     WHERE id = @id
   `);
-  stmt.run({ id, ...data });
+  stmt.run({ error_code: null, id, ...data });
   return getRun(id);
 }
 
