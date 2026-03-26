@@ -119,8 +119,7 @@ a {
 .modal-header,
 .tabs,
 .modal-layout,
-.config-block,
-.timer-mode-group {
+.config-block {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -475,29 +474,8 @@ a {
   border: 1px solid #23314d;
 }
 
-.timer-mode-group {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.timer-mode-card {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 14px;
-  cursor: pointer;
-  background: #0f172a;
-}
-
-.timer-mode-card.active-mode {
-  border-color: rgba(96, 165, 250, 0.55);
-  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25);
-}
-
-.timer-mode-card strong {
-  display: block;
-  margin-bottom: 4px;
+.schedule-mode-select-wrap {
+  margin-top: 4px;
 }
 
 .schedule-fields {

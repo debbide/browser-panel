@@ -132,21 +132,11 @@
 
               <label class="inline-check"><input type="checkbox" name="enabled" /> 启用定时</label>
 
-              <div class="stack-form timer-mode-group">
-                <label class="timer-mode-card active-mode">
-                  <input type="radio" name="schedule_mode" value="fixed" checked />
-                  <div>
-                    <strong>固定模式</strong>
-                    <span>例如：4小时、1天、30分钟</span>
-                  </div>
-                </label>
-                <label class="timer-mode-card">
-                  <input type="radio" name="schedule_mode" value="interval" />
-                  <div>
-                    <strong>区间模式</strong>
-                    <span>例如：10-12小时、8-9天</span>
-                  </div>
-                </label>
+              <div class="grid single-col schedule-mode-select-wrap">
+                <select name="schedule_mode">
+                  <option value="fixed">固定模式</option>
+                  <option value="interval">区间模式</option>
+                </select>
               </div>
 
               <div id="fixed-schedule-fields" class="grid two-col-tight schedule-fields">

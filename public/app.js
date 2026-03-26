@@ -30,7 +30,7 @@ const addScriptBtn = document.getElementById('add-script-btn');
 const topSettingsBtn = document.getElementById('top-settings-btn');
 const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
-const scheduleModeInputs = Array.from(document.querySelectorAll('input[name="schedule_mode"]'));
+const scheduleModeSelect = form.elements.schedule_mode;
 const fixedFieldsEl = document.getElementById('fixed-schedule-fields');
 const intervalFieldsEl = document.getElementById('interval-schedule-fields');
 const fixedValueEl = form.elements.fixed_value;
@@ -91,10 +91,6 @@ function updateScheduleModeUI() {
   const mode = getScheduleMode();
   fixedFieldsEl.hidden = mode !== 'fixed';
   intervalFieldsEl.hidden = mode !== 'interval';
-  for (const label of document.querySelectorAll('.timer-mode-card')) {
-    const input = label.querySelector('input');
-    label.classList.toggle('active-mode', input.checked);
-  }
 }
 
 function buildSchedulePayloadFromForm() {
@@ -617,9 +613,7 @@ for (const btn of tabButtons) {
   btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
 }
 
-for (const input of scheduleModeInputs) {
-  input.addEventListener('change', updateScheduleModeUI);
-}
+scheduleModeSelect.addEventListener('change', updateScheduleModeUI);
 
 window.runTask = runTask;
 window.stopTask = stopTask;
