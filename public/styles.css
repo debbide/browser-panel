@@ -206,6 +206,47 @@ a:hover { text-decoration: underline; }
   letter-spacing: -0.5px;
 }
 
+.browser-launch-group {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.browser-launch-group select {
+  border: none;
+  border-right: 1px solid var(--border-color);
+  border-radius: 0;
+  background: var(--card-bg);
+  color: var(--text-color);
+  font-size: 13px;
+  padding: 0 8px;
+  height: 36px;
+  cursor: pointer;
+  min-width: 110px;
+  max-width: 160px;
+}
+
+.browser-launch-group button {
+  border: none;
+  border-radius: 0;
+  background: var(--card-bg);
+  color: var(--text-color);
+  font-size: 13px;
+  padding: 0 14px;
+  height: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.browser-launch-group button:hover {
+  background: var(--hover-bg, rgba(255,255,255,0.06));
+}
+
 .topbar-actions {
   display: flex;
   gap: 12px;

@@ -19,12 +19,14 @@
         <p class="subtitle">导入脚本，设定规则，直接运行。</p>
       </div>
       <div class="topbar-actions">
-        <select id="browser-profile-select" style="height:36px;padding:0 8px;border-radius:6px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:13px;">
-          <option value="">默认配置</option>
-        </select>
-        <button id="open-browser-btn" type="button" class="alt btn-with-icon" data-testid="open-browser-btn">
-          <i data-lucide="monitor-play" class="icon-sm"></i> 启动浏览器
-        </button>
+        <div class="browser-launch-group">
+          <select id="browser-profile-select">
+            <option value="">默认配置</option>
+          </select>
+          <button id="open-browser-btn" type="button" data-testid="open-browser-btn">
+            <i data-lucide="monitor-play" class="icon-sm"></i> 启动
+          </button>
+        </div>
         <button id="close-browser-btn" type="button" class="alt btn-with-icon" data-testid="close-browser-btn">
           <i data-lucide="monitor-stop" class="icon-sm"></i> 关闭浏览器
         </button>
