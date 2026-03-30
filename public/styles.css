@@ -218,14 +218,15 @@ a:hover { text-decoration: underline; }
   border: none;
   border-right: 1px solid var(--border-color);
   border-radius: 0;
-  background: var(--card-bg);
-  color: var(--text-color);
+  background: #1e293b;
+  color: #e2e8f0;
   font-size: 13px;
   padding: 0 8px;
   height: 36px;
   cursor: pointer;
   min-width: 110px;
   max-width: 160px;
+  color-scheme: dark;
 }
 
 .browser-launch-group button {
