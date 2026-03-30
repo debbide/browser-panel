@@ -5,3 +5,10 @@ screenshots/
 runtime-data/
 data/*.db*
 *.log
+.sisyphus/
+tasks/*.js
+tasks/*.py
+!tasks/template.js
+!tasks/example.js
+!tasks/template.py
+!tasks/example.py

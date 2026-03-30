@@ -1,13 +1,13 @@
 const { listTasks, updateTask } = require('./db');
 
-const jobs = new Map();
 const runningTasks = new Set();
+let mainLoopHandle = null;
 
 function stopAllJobs() {
-  for (const job of jobs.values()) {
-    clearTimeout(job.handle);
+  if (mainLoopHandle) {
+    clearInterval(mainLoopHandle);
+    mainLoopHandle = null;
   }
-  jobs.clear();
 }
 
 function isTaskRunning(taskId) {
@@ -45,47 +45,72 @@ function computeNextRun(task, fromDate = new Date()) {
   const max = Number(task.interval_max || 0);
   const unit = task.interval_unit || 'hours';
   if (!min || !max) return null;
+  
+  // 如果是随机模式则取区间，如果是固定模式（从Web UI传来的），min和max其实是一样的，这里直接取 min
   const value = task.schedule_mode === 'interval' ? randomIntInclusive(min, max) : min;
   return addInterval(fromDate, value, unit).toISOString();
 }
 
-function scheduleTask(task, runTaskById) {
-  if (!task.enabled) return;
-  const nextRunAt = task.next_run_at || computeNextRun(task);
-  if (!nextRunAt) return;
+function startMainLoop(runTaskById) {
+  stopAllJobs();
+  
+  const tick = () => {
+    const tasks = listTasks();
+    const now = Date.now();
 
-  if (!task.next_run_at) {
-    updateTask(task.id, { ...task, next_run_at: nextRunAt });
-  }
+    for (const task of tasks) {
+      if (!task.enabled) continue;
+      
+      const nextRunAtStr = task.next_run_at;
+      if (!nextRunAtStr) {
+         // 给新增任务赋初始运行时间
+         const nextRunAt = computeNextRun(task);
+         if (nextRunAt) {
+           updateTask(task.id, { ...task, next_run_at: nextRunAt });
+         }
+         continue;
+      }
 
-  const delayMs = Math.max(0, new Date(nextRunAt).getTime() - Date.now());
-  const handle = setTimeout(async () => {
-    const latestTask = listTasks().find(item => item.id === task.id);
-    if (!latestTask || !latestTask.enabled) return;
-
-    await runTaskSafely(task.id, runTaskById);
-
-    const nextScheduledAt = computeNextRun(latestTask, new Date());
-    const updated = updateTask(task.id, {
-      ...latestTask,
-      next_run_at: nextScheduledAt,
-    });
-    scheduleTask(updated, runTaskById);
-  }, delayMs);
-
-  jobs.set(task.id, { kind: 'timeout', handle });
+      const expectedTime = new Date(nextRunAtStr).getTime();
+      
+      // 时间到了，跑起来！
+      if (now >= expectedTime) {
+         if (!isTaskRunning(task.id)) {
+           // 异步运行，以免阻塞其他任务检查
+           runTaskSafely(task.id, runTaskById).catch(err => console.error('[scheduler] run error:', err)).finally(() => {
+             // 运行结束后，再次排期
+             const latestTask = listTasks().find(item => item.id === task.id);
+             if (latestTask && latestTask.enabled) {
+               const nextTime = computeNextRun(latestTask, new Date());
+               if (nextTime) updateTask(task.id, { ...latestTask, next_run_at: nextTime });
+             }
+           });
+         }
+      }
+    }
+  };
+  
+  // 服务启动时，或重载配置时，立刻做一次全盘扫描，把积压的过期任务扫掉
+  tick();
+  
+  // 每 10 秒轮询一次，规避原有 setTimeout 的所有副作用
+  mainLoopHandle = setInterval(tick, 10000); 
 }
 
 function reloadJobs(runTaskById) {
-  stopAllJobs();
+  // 补全所有缺失的初始时间
   const tasks = listTasks();
   for (const task of tasks) {
-    if (!task.enabled) continue;
-    scheduleTask(task, runTaskById);
+    if (task.enabled && !task.next_run_at) {
+       const nextTime = computeNextRun(task);
+       if (nextTime) updateTask(task.id, { ...task, next_run_at: nextTime });
+    }
   }
+  startMainLoop(runTaskById);
 }
 
 module.exports = {
+  computeNextRun,
   reloadJobs,
   stopAllJobs,
   isTaskRunning,

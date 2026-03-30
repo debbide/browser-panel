@@ -7,6 +7,7 @@ fs.mkdirSync(config.paths.dataDir, { recursive: true });
 
 const db = new Database(config.paths.dbFile);
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS tasks (
@@ -40,6 +41,11 @@ CREATE TABLE IF NOT EXISTS task_runs (
   error_text TEXT,
   error_code TEXT,
   FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
 );
 `);
 
@@ -81,9 +87,13 @@ function updateTask(id, payload) {
   return getTask(id);
 }
 
-function deleteTask(id) {
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+const deleteTaskTxn = db.transaction((id) => {
   db.prepare('DELETE FROM task_runs WHERE task_id = ?').run(id);
+  return db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+});
+
+function deleteTask(id) {
+  return deleteTaskTxn(id);
 }
 
 function createRun(taskId, data) {
@@ -119,6 +129,33 @@ function listRunsByTask(taskId, limit = 20) {
   return db.prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY id DESC LIMIT ?').all(taskId, limit);
 }
 
+function getSetting(key) {
+  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+function setSetting(key, value) {
+  if (value === null || value === undefined || value === '') {
+    db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
+    return null;
+  }
+
+  db.prepare(`
+    INSERT INTO app_settings (key, value)
+    VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, String(value));
+
+  return getSetting(key);
+}
+
+function getTelegramSettings() {
+  return {
+    botToken: getSetting('telegram_bot_token'),
+    chatId: getSetting('telegram_chat_id'),
+  };
+}
+
 module.exports = {
   db,
   listTasks,
@@ -131,4 +168,7 @@ module.exports = {
   getRun,
   listRuns,
   listRunsByTask,
+  getSetting,
+  setSetting,
+  getTelegramSettings,
 };

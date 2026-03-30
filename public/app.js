@@ -1,17 +1,77 @@
 async function fetchJson(url, options) {
   const res = await fetch(url, options);
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const text = await res.text();
+    const looksLikeHtml = /^\s*<!doctype html/i.test(text) || /^\s*<html/i.test(text);
+    if (looksLikeHtml) {
+      throw new Error(`接口 ${url} 返回了页面内容，后端路由可能异常`);
+    }
+    throw new Error(`接口 ${url} 返回了非 JSON 响应`);
+  }
+
   const data = await res.json();
   if (!res.ok) throw new Error(data.message || '请求失败');
   return data;
 }
 
+window.toast = function(msg, type = 'info') {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    document.body.appendChild(container);
+  }
+
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  let icon = 'info';
+  if (type === 'success') icon = 'check-circle';
+  if (type === 'error') icon = 'alert-triangle';
+  if (type === 'warn') icon = 'alert-circle';
+  
+  el.innerHTML = `<i data-lucide="${icon}" class="icon-sm"></i> <span>${escapeHtml(msg)}</span>`;
+  container.appendChild(el);
+  if (window.lucide) window.lucide.createIcons({ root: el });
+
+  setTimeout(() => {
+    el.classList.add('toast-fade-out');
+    el.addEventListener('animationend', () => el.remove());
+  }, 4000);
+};
+
+window.dialogConfirm = function(msg, onConfirm) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '9999';
+  
+  const dialog = document.createElement('div');
+  dialog.className = 'modal open';
+  dialog.style.alignItems = 'center';
+  dialog.style.justifyContent = 'center';
+  dialog.style.zIndex = '10000';
+  dialog.innerHTML = `
+    <div class="modal-panel" style="max-width: 320px; width: 100%; text-align: center; padding: 24px;">
+      <div style="color: var(--accent-color); margin-bottom: 16px;"><i data-lucide="help-circle" style="width: 48px; height: 48px;"></i></div>
+      <h3 style="margin-bottom: 8px;">操作确认</h3>
+      <p class="muted" style="margin-bottom: 24px;">${escapeHtml(msg)}</p>
+      <div class="row" style="justify-content: center;">
+        <button id="cd-cancel" class="alt">取消</button>
+        <button id="cd-confirm" style="background: #ef4444; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);">确定</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
+
+  const close = () => { mask.remove(); dialog.remove(); };
+  dialog.querySelector('#cd-cancel').addEventListener('click', close);
+  dialog.querySelector('#cd-confirm').addEventListener('click', () => { close(); onConfirm(); });
+};
+
 const tasksEl = document.getElementById('tasks');
-const runsEl = document.getElementById('runs');
-const metaEl = document.getElementById('meta');
-const scriptsPageEl = document.getElementById('scripts-page');
-const scriptsModalEl = document.getElementById('scripts-modal');
 const form = document.getElementById('task-form');
-const pageImportForm = document.getElementById('page-import-form');
 const modalImportForm = document.getElementById('modal-import-form');
 const modal = document.getElementById('task-modal');
 const modalMask = document.getElementById('modal-mask');
@@ -21,15 +81,14 @@ const formTitle = document.getElementById('form-title');
 const formHint = document.getElementById('form-hint');
 const saveBtn = document.getElementById('save-btn');
 const resetBtn = document.getElementById('reset-btn');
-const cleanupBtn = document.getElementById('cleanup-runs-btn');
-const refreshScriptsBtn = document.getElementById('refresh-scripts-btn');
+const modalImportBtn = document.getElementById('modal-import-btn');
 const refreshScriptsModalBtn = document.getElementById('refresh-scripts-modal-btn');
-const useScriptContentBtn = document.getElementById('use-script-content-btn');
 const addTaskBtn = document.getElementById('add-task-btn');
-const addScriptBtn = document.getElementById('add-script-btn');
-const topSettingsBtn = document.getElementById('top-settings-btn');
-const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
-const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+const openBrowserBtn = document.getElementById('open-browser-btn');
+const closeBrowserBtn = document.getElementById('close-browser-btn');
+const scriptSelectEl = document.getElementById('script-select');
+const useScriptBtn = document.getElementById('use-script-btn');
+const editScriptBtn = document.getElementById('edit-script-btn');
 
 const scheduleModeSelect = document.getElementById('schedule-mode-select');
 const fixedFieldsEl = document.getElementById('fixed-schedule-fields');
@@ -44,6 +103,40 @@ const intervalMinEl = form.elements.interval_min;
 const intervalMaxEl = form.elements.interval_max;
 const intervalUnitEl = form.elements.interval_unit;
 
+const tgForm = document.getElementById('tg-form');
+const tgStatusText = document.getElementById('tg-status-text');
+const tgBotToken = document.getElementById('tg-bot-token');
+const tgChatId = document.getElementById('tg-chat-id');
+const tgTokenHelp = document.getElementById('tg-token-help');
+const tgSaveBtn = document.getElementById('tg-save-btn');
+const tgTestBtn = document.getElementById('tg-test-btn');
+
+const tabBtns = document.querySelectorAll('.tab-btn');
+const tabContents = document.querySelectorAll('.tab-content');
+
+tabBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const targetId = btn.getAttribute('data-tab');
+    
+    tabBtns.forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+    });
+    tabContents.forEach(c => {
+      c.classList.remove('active');
+      c.hidden = true;
+      c.setAttribute('aria-hidden', 'true');
+    });
+    
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    const panel = document.getElementById(targetId);
+    panel.classList.add('active');
+    panel.hidden = false;
+    panel.setAttribute('aria-hidden', 'false');
+  });
+});
+
 let editingId = null;
 let tasksCache = [];
 let runsCache = [];
@@ -51,6 +144,8 @@ let runningTaskIds = new Set();
 let scriptsCache = [];
 let lastRunsByTask = new Map();
 let selectedScriptPath = '';
+let browserSessionOpen = false;
+let browserOpenedAt = null;
 
 function escapeHtml(input) {
   return String(input ?? '')
@@ -71,8 +166,48 @@ function prettyErrorCode(code) {
     missing_result: '缺少结果文件',
     already_running: '任务已在运行',
     stopped: '已停止',
+    browser_already_open: '浏览器已手动打开',
   };
   return map[code] || code || '';
+}
+
+function renderBrowserControls() {
+  if (openBrowserBtn) openBrowserBtn.disabled = browserSessionOpen;
+  if (closeBrowserBtn) closeBrowserBtn.disabled = !browserSessionOpen;
+  if (openBrowserBtn) openBrowserBtn.textContent = browserSessionOpen ? '浏览器已启动' : '启动浏览器';
+  if (closeBrowserBtn) closeBrowserBtn.textContent = browserSessionOpen ? '关闭浏览器' : '浏览器未启动';
+  if (browserSessionOpen && browserOpenedAt) {
+    addTaskBtn.title = `浏览器已打开：${shortTime(browserOpenedAt)}`;
+  } else {
+    addTaskBtn.title = '';
+  }
+}
+
+async function loadBrowserStatus() {
+  const data = await fetchJson('/api/browser');
+  browserSessionOpen = Boolean(data.data?.open);
+  browserOpenedAt = data.data?.openedAt || null;
+  renderBrowserControls();
+}
+
+async function openBrowserSession() {
+  try {
+    await fetchJson('/api/browser/open', { method: 'POST' });
+    await loadBrowserStatus();
+    toast('浏览器已成功启动', 'success');
+  } catch (error) {
+    toast(error.message || '浏览器启动失败', 'error');
+  }
+}
+
+async function closeBrowserSession() {
+  try {
+    await fetchJson('/api/browser/close', { method: 'POST' });
+    await loadBrowserStatus();
+    toast('浏览器会话已安全关闭', 'success');
+  } catch (error) {
+    toast(error.message || '浏览器关闭失败', 'error');
+  }
 }
 
 function prettyStatus(status) {
@@ -90,18 +225,16 @@ function prettyUnit(unit) {
 
 function shortTime(value) {
   if (!value) return '-';
-  return String(value).replace('T', ' ').slice(0, 19);
-}
-
-function setActiveTab(name) {
-  for (const btn of tabButtons) btn.classList.toggle('active', btn.dataset.tab === name);
-  for (const panel of tabPanels) panel.classList.toggle('active', panel.dataset.panel === name);
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value).replace('T', ' ').slice(0, 19);
+  const pad = n => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function openModal(mode = 'create') {
   modal.classList.add('open');
   modalMask.hidden = false;
-  modalTitle.textContent = mode === 'edit' ? '编辑任务配置' : '新建任务';
+  modalTitle.textContent = mode === 'edit' ? '编辑任务' : '新建任务';
 }
 
 function closeModal() {
@@ -131,6 +264,27 @@ function updateScheduleModeUI() {
   const mode = getScheduleMode();
   fixedFieldsEl.hidden = mode !== 'fixed';
   intervalFieldsEl.hidden = mode !== 'interval';
+  fixedFieldsEl.setAttribute('aria-hidden', mode === 'fixed' ? 'false' : 'true');
+  intervalFieldsEl.setAttribute('aria-hidden', mode === 'interval' ? 'false' : 'true');
+  fixedFieldsEl.classList.toggle('active-pane', mode === 'fixed');
+  intervalFieldsEl.classList.toggle('active-pane', mode === 'interval');
+
+  if (mode === 'fixed') {
+    intervalMinEl.disabled = true;
+    intervalMaxEl.disabled = true;
+    intervalUnitEl.disabled = true;
+    fixedDaysEl.disabled = false;
+    fixedHoursEl.disabled = false;
+    fixedMinutesEl.disabled = false;
+  } else {
+    intervalMinEl.disabled = false;
+    intervalMaxEl.disabled = false;
+    intervalUnitEl.disabled = false;
+    fixedDaysEl.disabled = true;
+    fixedHoursEl.disabled = true;
+    fixedMinutesEl.disabled = true;
+  }
+
   updateFixedSummary();
   updateIntervalSummary();
 }
@@ -214,7 +368,7 @@ function describeTaskSchedule(task) {
   if (!task.enabled) return '未启用';
   if (task.schedule_mode === 'interval') return `${task.interval_min} - ${task.interval_max} ${prettyUnit(task.interval_unit)}之间`;
   const parsed = parseTaskSchedule(task);
-  return `${parsed.fixedDays} 天 ${parsed.fixedHours} 小时 ${parsed.fixedMinutes} 分钟`;
+  return `${parsed.fixedDays}天 ${parsed.fixedHours}小时 ${parsed.fixedMinutes}分`;
 }
 
 function describeNextRun(task) {
@@ -228,8 +382,8 @@ function resetTaskForm() {
   editingId = null;
   selectedScriptPath = '';
   saveBtn.textContent = '保存任务';
-  formTitle.textContent = '创建或编辑任务';
-  formHint.textContent = '任务只保留名称；脚本与调度在下方配置。';
+  formTitle.textContent = '任务信息';
+  formHint.textContent = '只填任务名和定时规则。';
   form.elements.name.value = '';
   form.elements.type.value = 'javascript';
   form.elements.script_path.value = '';
@@ -248,6 +402,22 @@ function resetTaskForm() {
 function resetScriptEditor() {
   modalImportForm.reset();
   modalImportForm.elements.type.value = 'javascript';
+}
+
+function slugifyName(input) {
+  return String(input || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+}
+
+function getScriptLabel(scriptPath) {
+  const value = String(scriptPath || '').trim();
+  if (!value) return '未绑定脚本';
+  const parts = value.split('/');
+  return parts[parts.length - 1] || value;
 }
 
 function resetAllModalState() {
@@ -294,7 +464,7 @@ function latestRunSummary(taskId) {
   if (!run) return { status: '未运行', detail: '还没有运行记录', className: 'idle' };
   return {
     status: prettyStatus(run.status),
-    detail: run.error_code ? prettyErrorCode(run.error_code) : `最近运行：${shortTime(run.started_at)}`,
+    detail: run.error_code ? prettyErrorCode(run.error_code) : `最近：${shortTime(run.started_at)}`,
     className: run.status === 'success' ? 'success' : run.status === 'failed' ? 'failed' : 'idle',
   };
 }
@@ -302,83 +472,54 @@ function latestRunSummary(taskId) {
 function taskCard(task) {
   const isRunning = runningTaskIds.has(task.id) || Boolean(task.is_running);
   const latest = latestRunSummary(task.id);
+  const scriptLabel = task.script_path ? `已绑定脚本 · ${getScriptLabel(task.script_path)}` : '未绑定脚本';
   return `
-    <article class="task-card ${isRunning ? 'task-running' : ''}">
+    <article class="task-card ${isRunning ? 'task-running' : ''}" data-testid="task-card" data-task-id="${task.id}">
       <div class="task-card-top">
         <div>
           <div class="task-title-row">
             <h3>${escapeHtml(task.name)}</h3>
-            <span class="pill pill-id">#${task.id}</span>
             <span class="pill pill-type">${escapeHtml(task.type)}</span>
             ${isRunning ? '<span class="pill pill-running">运行中</span>' : ''}
           </div>
-          <div class="task-subtitle">${escapeHtml(task.script_path || '未绑定脚本')}</div>
+          <div class="task-subtitle">${escapeHtml(scriptLabel)}</div>
         </div>
-        <button class="icon-btn" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''}>编辑</button>
+        <button class="icon-btn" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="edit-task-btn">编辑</button>
       </div>
       <div class="task-metrics">
         <div class="metric-card ${latest.className}">
           <span class="metric-label">最新结果</span>
-          <strong>${escapeHtml(latest.status)}</strong>
+          <div class="status-indicator">
+            <span class="dot ${latest.className}"></span>
+            <span data-testid="task-status">${escapeHtml(latest.status)}</span>
+          </div>
           <span class="metric-value">${escapeHtml(latest.detail)}</span>
         </div>
         <div class="metric-card">
-          <span class="metric-label">调度模式</span>
-          <strong>${task.enabled ? (task.schedule_mode === 'interval' ? '随机区间' : '固定周期') : '未启用'}</strong>
-          <span class="metric-value">${escapeHtml(describeTaskSchedule(task))}</span>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">下次执行 / 浏览器</span>
-          <strong>${escapeHtml(describeNextRun(task))}</strong>
-          <span class="metric-value">浏览器：${task.use_browser ? '启用' : '关闭'} / 持久化：${task.use_persistent ? '是' : '否'} / 超时：${task.timeout_sec}秒</span>
+          <span class="metric-label">定时</span>
+          <div class="status-indicator">
+            <span class="dot ${task.enabled ? 'active' : 'idle'}"></span>
+            <span>${task.enabled ? (task.schedule_mode === 'interval' ? '随机区间' : '固定周期') : '未启用'}</span>
+          </div>
+          <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
         </div>
       </div>
       <div class="task-actions">
-        <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''}>${isRunning ? '运行中…' : '启动'}</button>
-        <button class="alt" onclick="stopTask(${task.id})" ${!isRunning ? 'disabled' : ''}>停止</button>
-        <button class="alt" onclick="showTaskRuns(${task.id})">运行记录</button>
-        <button class="alt danger" onclick="deleteTask(${task.id})" ${isRunning ? 'disabled' : ''}>删除</button>
-      </div>
-      <div id="task-runs-${task.id}" class="task-runs-inline"></div>
-    </article>`;
-}
-
-function scriptCard(script) {
-  const selected = selectedScriptPath === script.path;
-  return `
-    <article class="script-card ${selected ? 'selected-script' : ''}">
-      <div class="task-title-row">
-        <h3>${escapeHtml(script.name)}</h3>
-        <span class="pill pill-type">${escapeHtml(script.type)}</span>
-      </div>
-      <div class="task-subtitle">${escapeHtml(script.path)}</div>
-      <div class="task-actions">
-        <button class="alt" onclick="useScript('${escapeHtml(script.path)}', '${escapeHtml(script.type)}')">填入任务配置</button>
-        <button class="alt" onclick="loadScriptIntoEditor('${escapeHtml(script.path)}')">加载到编辑器</button>
+        <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>
+        <button class="alt" onclick="stopTask(${task.id})" ${!isRunning ? 'disabled' : ''} data-testid="stop-task-btn">停止</button>
+        <button class="alt danger" onclick="deleteTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="delete-task-btn">删除</button>
       </div>
     </article>`;
-}
-
-async function loadMeta() {
-  const data = await fetchJson('/api/meta');
-  const browser = data.data.browser;
-  const paths = data.data.paths;
-  metaEl.innerHTML = `
-    <div class="settings-grid">
-      <div class="metric-card"><span class="metric-label">显示器</span><strong>${escapeHtml(browser.display)}</strong></div>
-      <div class="metric-card"><span class="metric-label">运行用户</span><strong>${escapeHtml(browser.user)}</strong></div>
-      <div class="metric-card"><span class="metric-label">持久化配置</span><strong>${escapeHtml(browser.userDataDir)}</strong></div>
-      <div class="metric-card"><span class="metric-label">Chrome</span><strong>${escapeHtml(browser.chromePath)}</strong></div>
-      <div class="metric-card"><span class="metric-label">代理</span><strong>${escapeHtml(browser.proxy)}</strong></div>
-      <div class="metric-card"><span class="metric-label">任务目录</span><strong>${escapeHtml(paths.tasksDir)}</strong></div>
-      <div class="metric-card full"><span class="metric-label">运行数据目录</span><strong>${escapeHtml(paths.runtimeDataDir)}</strong></div>
-    </div>`;
 }
 
 function renderScripts() {
-  const html = scriptsCache.map(scriptCard).join('') || '<p class="empty">当前还没有脚本文件。</p>';
-  scriptsPageEl.innerHTML = html;
-  scriptsModalEl.innerHTML = html;
+  if (!scriptSelectEl) return;
+  const options = ['<option value="">请选择脚本</option>'];
+  for (const script of scriptsCache) {
+    const selected = selectedScriptPath === script.path ? ' selected' : '';
+    options.push(`<option value="${escapeHtml(script.path)}" data-type="${escapeHtml(script.type)}"${selected}>${escapeHtml(script.name)} (${escapeHtml(script.type)})</option>`);
+  }
+  scriptSelectEl.innerHTML = options.join('');
 }
 
 async function loadScripts() {
@@ -397,11 +538,33 @@ async function loadRuns() {
   const data = await fetchJson('/api/runs');
   runsCache = data.data;
   groupLastRuns(runsCache);
-  runsEl.innerHTML = runsCache.map(runCard).join('') || '<p class="empty">当前还没有运行记录。</p>';
+}
+
+async function loadTelegramSettings() {
+  try {
+    const res = await fetchJson('/api/settings/telegram');
+    const { configured, chatId, botTokenMasked } = res.data;
+    
+    tgStatusText.textContent = configured ? '状态：已配置' : '状态：未配置';
+    tgStatusText.style.color = configured ? '#86efac' : '#94a3b8';
+    
+    tgChatId.value = chatId || '';
+    tgBotToken.value = '';
+    tgBotToken.setAttribute('aria-describedby', 'tg-token-help');
+    
+    if (botTokenMasked) {
+      tgTokenHelp.textContent = `当前 Token: ${botTokenMasked}`;
+    } else {
+      tgTokenHelp.textContent = '未设置 Token';
+    }
+  } catch (error) {
+    tgStatusText.textContent = '状态：加载失败';
+    console.error('Failed to load Telegram settings:', error);
+  }
 }
 
 async function refreshAll() {
-  await Promise.all([loadMeta(), loadScripts(), loadRuns()]);
+  await Promise.all([loadScripts(), loadRuns(), loadBrowserStatus(), loadTelegramSettings()]);
   await loadTasks();
 }
 
@@ -410,35 +573,41 @@ async function runTask(id) {
     runningTaskIds.add(id);
     await loadTasks();
     await fetchJson(`/api/tasks/${id}/run`, { method: 'POST' });
+    toast(`任务 #${id} 已触发运行`, 'success');
   } catch (error) {
-    alert(error.message || '启动失败');
+    toast(error.message || '启动失败', 'error');
   } finally {
     runningTaskIds.delete(id);
     await refreshAll();
-    await showTaskRuns(id);
   }
 }
 
 async function stopTask(id) {
   try {
     await fetchJson(`/api/tasks/${id}/stop`, { method: 'POST' });
+    toast(`停止指令已发送至任务 #${id}`, 'success');
   } catch (error) {
-    alert(error.message || '停止失败');
+    toast(error.message || '停止失败', 'error');
   } finally {
     runningTaskIds.delete(id);
     await refreshAll();
-    await showTaskRuns(id);
   }
 }
 
-async function deleteTask(id) {
-  if (!confirm('确定要删除这个任务吗？')) return;
-  await fetchJson(`/api/tasks/${id}`, { method: 'DELETE' });
-  if (editingId === id) {
-    resetAllModalState();
-    closeModal();
-  }
-  await refreshAll();
+function deleteTask(id) {
+  dialogConfirm('确定要删除这个任务及其所有运行记录吗？', async () => {
+    try {
+      await fetchJson(`/api/tasks/${id}`, { method: 'DELETE' });
+      toast('任务已删除', 'success');
+      if (editingId === id) {
+        resetAllModalState();
+        closeModal();
+      }
+      await refreshAll();
+    } catch (e) {
+      toast(e.message || '删除失败', 'error');
+    }
+  });
 }
 
 function fillTaskForm(task) {
@@ -446,8 +615,6 @@ function fillTaskForm(task) {
   form.type.value = task.type;
   form.script_path.value = task.script_path;
   form.timeout_sec.value = task.timeout_sec;
-  form.use_browser.checked = Boolean(task.use_browser);
-  form.use_persistent.checked = Boolean(task.use_persistent);
   const schedule = parseTaskSchedule(task);
   form.elements.enabled.checked = schedule.enabled;
   scheduleModeSelect.value = schedule.mode;
@@ -460,7 +627,7 @@ function fillTaskForm(task) {
   updateScheduleModeUI();
 }
 
-function editTask(id) {
+async function editTask(id) {
   const task = tasksCache.find(item => item.id === id);
   if (!task) return;
   editingId = id;
@@ -468,9 +635,17 @@ function editTask(id) {
   selectedScriptPath = task.script_path;
   saveBtn.textContent = `保存修改 #${id}`;
   formTitle.textContent = `正在编辑任务 #${id}`;
-  formHint.textContent = '任务只保留名称；脚本与调度在下方配置。';
+  formHint.textContent = task.script_path ? `任务脚本：${getScriptLabel(task.script_path)}` : '只填任务名和定时规则。';
   renderScripts();
   openModal('edit');
+
+  if (task.script_path) {
+    try {
+      await loadScriptIntoEditor(task.script_path, { preserveHint: true, reopenModal: false });
+    } catch (error) {
+      toast(error.message || '脚本读取失败', 'error');
+    }
+  }
 }
 
 function useScript(scriptPath, type) {
@@ -478,41 +653,54 @@ function useScript(scriptPath, type) {
   form.script_path.value = scriptPath;
   form.type.value = type;
   if (!form.name.value.trim()) form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
-  formHint.textContent = `已选择脚本：${scriptPath}`;
+  formHint.textContent = `已选脚本：${getScriptLabel(scriptPath)}`;
   renderScripts();
   openModal(editingId ? 'edit' : 'create');
 }
 
-async function loadScriptIntoEditor(scriptPath) {
+function getSelectedScript() {
+  const scriptPath = scriptSelectEl?.value || '';
+  if (!scriptPath) {
+    toast('操作前请先在列表中选中一个脚本', 'warn');
+    return null;
+  }
+  return scriptsCache.find(item => item.path === scriptPath) || null;
+}
+
+async function loadScriptIntoEditor(scriptPath, options = {}) {
+  const { preserveHint = false, reopenModal = true } = options;
   const script = scriptsCache.find(item => item.path === scriptPath);
   if (!script) return;
-  const response = await fetch(scriptPath);
+  const response = await fetch(`/${scriptPath.replace(/^\/+/, '')}`);
+  if (!response.ok) throw new Error('脚本读取失败');
   const content = await response.text();
   selectedScriptPath = scriptPath;
-  modalImportForm.elements.name.value = script.name;
+  form.script_path.value = scriptPath;
+  form.type.value = script.type;
   modalImportForm.elements.type.value = script.type;
   modalImportForm.elements.content.value = content;
-  formHint.textContent = `已加载脚本到编辑器：${scriptPath}`;
+  if (!preserveHint) formHint.textContent = `正在编辑脚本：${getScriptLabel(scriptPath)}`;
   renderScripts();
-  openModal(editingId ? 'edit' : 'create');
+  if (reopenModal) openModal(editingId ? 'edit' : 'create');
 }
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!form.elements.script_path.value) {
-    alert('请先选择或导入脚本');
+    toast('请先在下方选择或导入要运行的脚本文件', 'warn');
     return;
   }
   const schedule = buildSchedulePayloadFromForm();
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
   Object.assign(payload, schedule);
-  payload.use_browser = formData.get('use_browser') === 'on';
-  payload.use_persistent = formData.get('use_persistent') === 'on';
+  payload.use_browser = true;
+  payload.use_persistent = true;
   payload.timeout_sec = Number(payload.timeout_sec || 300);
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
   const method = editingId ? 'PUT' : 'POST';
   await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  toast(editingId ? '任务已更新' : '任务已成功添加', 'success');
   resetAllModalState();
   closeModal();
   await refreshAll();
@@ -520,51 +708,73 @@ form.addEventListener('submit', async (event) => {
 
 async function saveScriptFromForm(sourceForm) {
   const formData = new FormData(sourceForm);
-  let name = String(formData.get('name') || '').trim();
   const type = String(formData.get('type') || 'javascript');
   const content = String(formData.get('content') || '');
-  if (!name) throw new Error('脚本名称不能为空');
+  const taskName = String(form.elements.name.value || '').trim();
+  if (!taskName) throw new Error('请先填写任务名，再导入脚本');
+  const baseName = slugifyName(taskName);
+  let name = baseName;
   if (type === 'python' && !name.endsWith('.py')) name += '.py';
   if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
   return fetchJson('/api/scripts/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, content }) });
 }
 
-pageImportForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const result = await saveScriptFromForm(pageImportForm);
-  pageImportForm.reset();
-  await loadScripts();
-  alert(`脚本已导入：${result.data.path}`);
-});
-
 modalImportForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const result = await saveScriptFromForm(modalImportForm);
-  selectedScriptPath = result.data.path;
-  await loadScripts();
-  useScript(result.data.path, result.data.type);
-  alert(`脚本已导入：${result.data.path}`);
+  if (modalImportBtn) {
+    modalImportBtn.disabled = true;
+    modalImportBtn.textContent = '导入中...';
+  }
+
+  try {
+    const result = await saveScriptFromForm(modalImportForm);
+    selectedScriptPath = result.data.path;
+    form.script_path.value = result.data.path;
+    form.type.value = result.data.type;
+    if (!form.name.value.trim()) form.name.value = result.data.name.replace(/\.(js|py)$/i, '');
+    openModal(editingId ? 'edit' : 'create');
+    formHint.textContent = `已导入脚本：${getScriptLabel(result.data.path)}`;
+    try {
+      await loadScripts();
+    } catch (error) {
+      scriptsCache = [
+        ...scriptsCache.filter(item => item.path !== result.data.path),
+        { name: result.data.name, path: result.data.path, type: result.data.type },
+      ];
+    }
+    renderScripts();
+    toast('脚本已导入，现在可以直接保存任务并运行', 'success');
+  } catch (error) {
+    toast(error.message || '脚本导入失败', 'error');
+  } finally {
+    if (modalImportBtn) {
+      modalImportBtn.disabled = false;
+      modalImportBtn.textContent = '导入脚本';
+    }
+  }
 });
 
 resetBtn.addEventListener('click', () => { resetAllModalState(); closeModal(); });
 modalCloseBtn.addEventListener('click', closeModal);
 modalMask.addEventListener('click', closeModal);
-refreshScriptsBtn.addEventListener('click', loadScripts);
 refreshScriptsModalBtn.addEventListener('click', loadScripts);
-useScriptContentBtn.addEventListener('click', () => {
-  const currentName = String(modalImportForm.elements.name.value || '').trim();
-  const currentType = String(modalImportForm.elements.type.value || 'javascript');
-  if (!currentName) return alert('请先填写脚本名称');
-  let target = currentName;
-  if (currentType === 'python' && !target.endsWith('.py')) target += '.py';
-  if (currentType === 'javascript' && !target.endsWith('.js')) target += '.js';
-  useScript(`tasks/${target}`, currentType);
-});
-cleanupBtn.addEventListener('click', async () => { await fetchJson('/api/runs/cleanup', { method: 'POST' }); await refreshAll(); });
 addTaskBtn.addEventListener('click', () => { resetAllModalState(); renderScripts(); openModal('create'); });
-addScriptBtn.addEventListener('click', () => setActiveTab('scripts'));
-topSettingsBtn.addEventListener('click', () => setActiveTab('settings'));
-for (const btn of tabButtons) btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+openBrowserBtn.addEventListener('click', openBrowserSession);
+closeBrowserBtn.addEventListener('click', closeBrowserSession);
+useScriptBtn.addEventListener('click', () => {
+  const script = getSelectedScript();
+  if (!script) return;
+  useScript(script.path, script.type);
+});
+editScriptBtn.addEventListener('click', async () => {
+  const script = getSelectedScript();
+  if (!script) return;
+  try {
+    await loadScriptIntoEditor(script.path);
+  } catch (error) {
+    toast(error.message || '脚本读取失败', 'error');
+  }
+});
 scheduleModeSelect.addEventListener('change', updateScheduleModeUI);
 fixedDaysEl.addEventListener('input', updateFixedSummary);
 fixedHoursEl.addEventListener('input', updateFixedSummary);
@@ -577,10 +787,52 @@ window.runTask = runTask;
 window.stopTask = stopTask;
 window.deleteTask = deleteTask;
 window.editTask = editTask;
-window.showTaskRuns = showTaskRuns;
 window.useScript = useScript;
 window.loadScriptIntoEditor = loadScriptIntoEditor;
 
-setActiveTab('tasks');
+if (tgForm) {
+  tgForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const botToken = tgBotToken.value.trim();
+    const chatId = tgChatId.value.trim();
+    
+    tgSaveBtn.disabled = true;
+    tgSaveBtn.textContent = '保存中...';
+    
+    try {
+      await fetchJson('/api/settings/telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botToken, chatId })
+      });
+      toast('Telegram 设置已成功保存', 'success');
+      await loadTelegramSettings();
+    } catch (error) {
+      toast(error.message || '保存设置遇到了错误', 'error');
+    } finally {
+      tgSaveBtn.disabled = false;
+      tgSaveBtn.textContent = '保存设置';
+    }
+  });
+}
+
+if (tgTestBtn) {
+  tgTestBtn.addEventListener('click', async () => {
+    tgTestBtn.disabled = true;
+    tgTestBtn.textContent = '发送中...';
+    
+    try {
+      await fetchJson('/api/settings/telegram/test', { method: 'POST' });
+      toast('一条测试用推送已发往你的 Telegram', 'success');
+    } catch (error) {
+      toast(error.message || '发送推送到 Telegram 失败', 'error');
+    } finally {
+      tgTestBtn.disabled = false;
+      tgTestBtn.textContent = '发送测试消息';
+    }
+  });
+}
+
 resetAllModalState();
+closeModal();
 refreshAll();

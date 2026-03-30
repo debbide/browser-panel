@@ -19,7 +19,7 @@ module.exports = {
   paths: {
     root: __dirname,
     dataDir: path.join(__dirname, 'data'),
-    dbFile: path.join(__dirname, 'runtime-data', 'app.db'),
+    dbFile: path.join(__dirname, 'data', 'app.db'),
     logsDir: path.join(__dirname, 'logs'),
     screenshotsDir: path.join(__dirname, 'screenshots'),
     tasksDir: path.join(__dirname, 'tasks'),

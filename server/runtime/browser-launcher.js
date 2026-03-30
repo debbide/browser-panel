@@ -22,6 +22,7 @@ function ensureRuntimeFiles(task) {
     { from: path.join(config.paths.root, 'node_modules', 'playwright'), to: '/home/abc61154321/browser-work/node_modules/playwright' },
     { from: path.join(config.paths.root, 'node_modules', 'playwright-core'), to: '/home/abc61154321/browser-work/node_modules/playwright-core' },
     { from: path.join(config.paths.root, 'server', 'runtime', 'browser-runtime.js'), to: '/home/abc61154321/browser-work/browser-runtime.js' },
+    { from: path.join(config.paths.root, 'server', 'runtime', 'js-task-wrapper.js'), to: '/home/abc61154321/browser-work/js-task-wrapper.js' },
     { from: path.resolve(config.paths.root, task.script_path), to: `/home/abc61154321/browser-work/${path.basename(task.script_path)}` },
   ];
   for (const file of files) {
@@ -40,11 +41,12 @@ async function launchBrowserTaskAndWait(task, runId) {
   ensureRuntimeFiles(task);
   const baseName = path.basename(task.script_path);
   const taskFile = `/home/abc61154321/browser-work/${baseName}`;
+  const wrapperFile = '/home/abc61154321/browser-work/js-task-wrapper.js';
   const workerScreenshotPath = `/home/abc61154321/browser-work/screenshots/task-${task.id}-${runId}.png`;
   const resultPath = `/home/abc61154321/browser-work/task-results/run-${runId}.json`;
   const runner = task.type === 'python'
     ? `${shellEscape('/usr/bin/python3')} ${shellEscape(taskFile)}`
-    : `${shellEscape('/tmp/node-openclaw')} ${shellEscape(taskFile)}`;
+    : `${shellEscape('/tmp/node-openclaw')} ${shellEscape(wrapperFile)} ${shellEscape(taskFile)}`;
 
   const cmd = [
     'cd /home/abc61154321/browser-work &&',
