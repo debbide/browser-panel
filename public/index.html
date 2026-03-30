@@ -19,6 +19,9 @@
         <p class="subtitle">导入脚本，设定规则，直接运行。</p>
       </div>
       <div class="topbar-actions">
+        <select id="browser-profile-select" style="height:36px;padding:0 8px;border-radius:6px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:13px;">
+          <option value="">默认配置</option>
+        </select>
         <button id="open-browser-btn" type="button" class="alt btn-with-icon" data-testid="open-browser-btn">
           <i data-lucide="monitor-play" class="icon-sm"></i> 启动浏览器
         </button>
@@ -27,6 +30,9 @@
         </button>
         <button id="tab-tasks" class="tab-btn active btn-with-icon" type="button" role="tab" data-tab="tasks-tab" aria-controls="tasks-tab" aria-selected="true" style="margin-left: 20px;">
           <i data-lucide="layout-dashboard" class="icon-sm"></i> 任务看板
+        </button>
+        <button id="tab-profiles" class="tab-btn btn-with-icon" type="button" role="tab" data-tab="profiles-tab" aria-controls="profiles-tab" aria-selected="false">
+          <i data-lucide="monitor-smartphone" class="icon-sm"></i> 浏览器配置
         </button>
         <button id="tab-config" class="tab-btn btn-with-icon" type="button" role="tab" data-tab="config-tab" aria-controls="config-tab" aria-selected="false">
           <i data-lucide="settings-2" class="icon-sm"></i> 全局配置
@@ -47,6 +53,21 @@
             </button>
           </div>
           <div id="tasks" class="task-grid"></div>
+        </section>
+      </div>
+
+      <div id="profiles-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-profiles" hidden>
+        <section class="modal-panel config-panel">
+          <div class="section-header compact">
+            <div>
+              <h2>浏览器配置</h2>
+              <p class="muted">每个配置对应一套独立的浏览器数据目录，可绑定不同代理。</p>
+            </div>
+            <button id="add-profile-btn" type="button" class="btn-primary btn-with-icon">
+              <i data-lucide="plus-circle" class="icon-sm"></i> 新建配置
+            </button>
+          </div>
+          <div id="profiles-list" class="stack-form" style="gap:12px;"></div>
         </section>
       </div>
 
@@ -100,9 +121,16 @@
           <form id="task-form" class="stack-form">
             <div class="grid single-col">
               <input name="name" placeholder="任务名称" required data-testid="task-name-input" />
+              <div>
+                <label class="field-label" for="task-profile-select">浏览器配置</label>
+                <select id="task-profile-select" style="width:100%;">
+                  <option value="">默认配置</option>
+                </select>
+              </div>
               <input type="hidden" name="type" value="javascript" />
               <input type="hidden" name="script_path" required />
               <input type="hidden" name="timeout_sec" value="300" />
+              <input type="hidden" name="browser_profile_id" id="task-profile-id" value="" />
             </div>
 
             <div class="config-block">

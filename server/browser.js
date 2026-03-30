@@ -47,7 +47,7 @@ function syncManualState() {
   }
 }
 
-async function openManualBrowser() {
+async function openManualBrowser(profile) {
   syncManualState();
   if (manualBrowserState.pid) {
     return { open: true, openedAt: manualBrowserState.openedAt, pid: manualBrowserState.pid };
@@ -65,9 +65,9 @@ async function openManualBrowser() {
     'cd /home/abc61154321/browser-work &&',
     `DISPLAY=${shellEscape(config.browser.display)}`,
     `XAUTHORITY=${shellEscape(config.browser.xauthority)}`,
-    `BROWSER_USER_DATA_DIR=${shellEscape(config.browser.userDataDir)}`,
+    `BROWSER_USER_DATA_DIR=${shellEscape(profile && profile.user_data_dir ? profile.user_data_dir : config.browser.userDataDir)}`,
     `BROWSER_CHROME_PATH=${shellEscape(config.browser.chromePath)}`,
-    `BROWSER_PROXY=${shellEscape(config.browser.proxy || '')}`,
+    `BROWSER_PROXY=${shellEscape(profile && profile.proxy ? profile.proxy : (config.browser.proxy || ''))}`,
     `BROWSER_HEADLESS='false'`,
     `exec ${shellEscape(workerNodePath)} ${shellEscape(runtimeScript)}`,
   ].join(' ');

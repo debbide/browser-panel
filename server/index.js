@@ -274,10 +274,48 @@ app.post('/api/telegram/webhook/:token', async (req, res) => {
 
 app.post('/api/browser/open', async (req, res) => {
   try {
-    const session = await openManualBrowser();
-    res.json({ data: { open: true, openedAt: session.openedAt } });
+    const profileId = req.body && req.body.profile_id ? Number(req.body.profile_id) : null;
+    const profile = profileId ? db.getBrowserProfile(profileId) : null;
+    const session = await openManualBrowser(profile);
+    res.json({ data: { open: true, openedAt: session.openedAt, profileId } });
   } catch (error) {
     res.status(500).json({ message: error.message || '浏览器启动失败' });
+  }
+});
+
+app.get('/api/browser-profiles', (req, res) => {
+  res.json({ data: db.listBrowserProfiles() });
+});
+
+app.post('/api/browser-profiles', (req, res) => {
+  try {
+    const { name, user_data_dir, proxy } = req.body || {};
+    if (!name) return res.status(400).json({ message: '请填写配置名称' });
+    const profile = db.createBrowserProfile({ name: String(name), user_data_dir: String(user_data_dir || ''), proxy: String(proxy || '') });
+    res.json({ data: profile });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+app.put('/api/browser-profiles/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, user_data_dir, proxy } = req.body || {};
+    if (!name) return res.status(400).json({ message: '请填写配置名称' });
+    const profile = db.updateBrowserProfile(id, { name: String(name), user_data_dir: String(user_data_dir || ''), proxy: String(proxy || '') });
+    res.json({ data: profile });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+app.delete('/api/browser-profiles/:id', (req, res) => {
+  try {
+    db.deleteBrowserProfile(Number(req.params.id));
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 });
 
@@ -309,6 +347,7 @@ app.post('/api/tasks', (req, res) => {
       use_browser: payload.use_browser === false ? 0 : 1,
       use_persistent: payload.use_persistent === false ? 0 : 1,
       timeout_sec: Number(payload.timeout_sec || 300),
+      browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
     });
     reloadJobs(executeTask);
     res.json({ data: task });
@@ -338,6 +377,7 @@ app.put('/api/tasks/:id', (req, res) => {
       use_browser: payload.use_browser === false ? 0 : 1,
       use_persistent: payload.use_persistent === false ? 0 : 1,
       timeout_sec: Number(payload.timeout_sec || 300),
+      browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
     });
     reloadJobs(executeTask);
     res.json({ data: task });

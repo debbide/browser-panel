@@ -85,6 +85,11 @@ const modalImportBtn = document.getElementById('modal-import-btn');
 const refreshScriptsModalBtn = document.getElementById('refresh-scripts-modal-btn');
 const addTaskBtn = document.getElementById('add-task-btn');
 const openBrowserBtn = document.getElementById('open-browser-btn');
+const browserProfileSelect = document.getElementById('browser-profile-select');
+const taskProfileSelect = document.getElementById('task-profile-select');
+const addProfileBtn = document.getElementById('add-profile-btn');
+const profilesList = document.getElementById('profiles-list');
+let profilesCache = [];
 const closeBrowserBtn = document.getElementById('close-browser-btn');
 const scriptSelectEl = document.getElementById('script-select');
 const useScriptBtn = document.getElementById('use-script-btn');
@@ -192,7 +197,8 @@ async function loadBrowserStatus() {
 
 async function openBrowserSession() {
   try {
-    await fetchJson('/api/browser/open', { method: 'POST' });
+    const profileId = browserProfileSelect ? browserProfileSelect.value : '';
+    await fetchJson('/api/browser/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile_id: profileId || null }) });
     await loadBrowserStatus();
     toast('浏览器已成功启动', 'success');
   } catch (error) {
@@ -388,6 +394,8 @@ function resetTaskForm() {
   form.elements.type.value = 'javascript';
   form.elements.script_path.value = '';
   form.elements.timeout_sec.value = '300';
+  if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = '';
+  if (taskProfileSelect) renderProfileOptions(taskProfileSelect, '');
   form.elements.enabled.checked = false;
   scheduleModeSelect.value = 'fixed';
   fixedDaysEl.value = '0';
@@ -563,8 +571,123 @@ async function loadTelegramSettings() {
   }
 }
 
+function renderProfileOptions(selectEl, selectedId) {
+  if (!selectEl) return;
+  const prev = selectedId !== undefined ? String(selectedId) : selectEl.value;
+  selectEl.innerHTML = '<option value="">\u9ed8\u8ba4\u914d\u7f6e</option>' +
+    profilesCache.map(p => `<option value="${p.id}" ${String(p.id) === prev ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+}
+
+function renderProfiles() {
+  renderProfileOptions(browserProfileSelect);
+  renderProfileOptions(taskProfileSelect);
+  if (!profilesList) return;
+  if (profilesCache.length === 0) {
+    profilesList.innerHTML = '<p class="muted" style="padding:8px 0;">\u6682\u65e0\u914d\u7f6e\uff0c\u70b9\u51fb\u4e0a\u65b9\u201c\u65b0\u5efa\u914d\u7f6e\u201d\u6dfb\u52a0</p>';
+    return;
+  }
+  profilesList.innerHTML = profilesCache.map(p => `
+    <div class="config-block" style="padding:12px 16px;">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong>${escapeHtml(p.name)}</strong>
+        <div class="row" style="gap:8px;">
+          <button class="alt btn-with-icon" onclick="editProfile(${p.id})"><i data-lucide="pencil" class="icon-sm"></i> \u7f16\u8f91</button>
+          <button class="alt btn-with-icon" style="color:#ef4444;" onclick="deleteProfile(${p.id})"><i data-lucide="trash-2" class="icon-sm"></i> \u5220\u9664</button>
+        </div>
+      </div>
+      <div class="schedule-note">\u76ee\u5f55: ${escapeHtml(p.user_data_dir || '\u672a\u8bbe\u7f6e')}</div>
+      <div class="schedule-note">\u4ee3\u7406: ${escapeHtml(p.proxy || '\u65e0')}</div>
+    </div>
+  `).join('');
+  if (window.lucide) window.lucide.createIcons({ root: profilesList });
+}
+
+async function loadProfiles() {
+  const res = await fetchJson('/api/browser-profiles');
+  profilesCache = res.data || [];
+  renderProfiles();
+}
+
+function openProfileModal(profile) {
+  const isEdit = Boolean(profile);
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '9999';
+  const dialog = document.createElement('div');
+  dialog.className = 'modal open';
+  dialog.style.cssText = 'align-items:center;justify-content:center;z-index:10000;';
+  dialog.innerHTML = `
+    <div class="modal-panel" style="max-width:420px;width:100%;padding:24px;">
+      <div class="section-header compact" style="margin-bottom:16px;">
+        <h3>${isEdit ? '\u7f16\u8f91\u914d\u7f6e' : '\u65b0\u5efa\u6d4f\u89c8\u5668\u914d\u7f6e'}</h3>
+        <button class="icon-btn" id="pmodal-close"><i data-lucide="x" class="icon-md"></i></button>
+      </div>
+      <form id="profile-form" class="stack-form">
+        <div>
+          <label class="field-label">\u914d\u7f6e\u540d\u79f0</label>
+          <input name="name" placeholder="\u4f8b\u5982\uff1a\u8d26\u53f7A" required value="${escapeHtml(profile?.name || '')}" />
+        </div>
+        <div>
+          <label class="field-label">USER_DATA_DIR \u76ee\u5f55</label>
+          <input name="user_data_dir" placeholder="/home/abc61154321/browser-work/profiles/account-a" value="${escapeHtml(profile?.user_data_dir || '')}" />
+        </div>
+        <div>
+          <label class="field-label">\u4ee3\u7406\u5730\u5740</label>
+          <input name="proxy" placeholder="socks5://127.0.0.1:7891" value="${escapeHtml(profile?.proxy || '')}" />
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button type="submit" class="btn-primary">${isEdit ? '\u4fdd\u5b58' : '\u521b\u5efa'}</button>
+          <button type="button" class="alt" id="pmodal-cancel">\u53d6\u6d88</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
+  const close = () => { mask.remove(); dialog.remove(); };
+  dialog.querySelector('#pmodal-close').addEventListener('click', close);
+  dialog.querySelector('#pmodal-cancel').addEventListener('click', close);
+  mask.addEventListener('click', close);
+  dialog.querySelector('#profile-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = { name: fd.get('name'), user_data_dir: fd.get('user_data_dir'), proxy: fd.get('proxy') };
+    try {
+      if (isEdit) {
+        await fetchJson(`/api/browser-profiles/${profile.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        toast('\u914d\u7f6e\u5df2\u66f4\u65b0', 'success');
+      } else {
+        await fetchJson('/api/browser-profiles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        toast('\u914d\u7f6e\u5df2\u521b\u5efa', 'success');
+      }
+      close();
+      await loadProfiles();
+    } catch (err) {
+      toast(err.message || '\u4fdd\u5b58\u5931\u8d25', 'error');
+    }
+  });
+}
+
+function editProfile(id) {
+  const p = profilesCache.find(x => x.id === id);
+  if (p) openProfileModal(p);
+}
+
+function deleteProfile(id) {
+  const p = profilesCache.find(x => x.id === id);
+  dialogConfirm(`\u786e\u5b9a\u8981\u5220\u9664\u914d\u7f6e\u300c${p?.name || id}\u300d\u5417\uff1f`, async () => {
+    try {
+      await fetchJson(`/api/browser-profiles/${id}`, { method: 'DELETE' });
+      toast('\u914d\u7f6e\u5df2\u5220\u9664', 'success');
+      await loadProfiles();
+    } catch (err) {
+      toast(err.message || '\u5220\u9664\u5931\u8d25', 'error');
+    }
+  });
+}
 async function refreshAll() {
-  await Promise.all([loadScripts(), loadRuns(), loadBrowserStatus(), loadTelegramSettings()]);
+  await Promise.all([loadScripts(), loadRuns(), loadBrowserStatus(), loadTelegramSettings(), loadProfiles()]);
   await loadTasks();
 }
 
@@ -625,6 +748,10 @@ function fillTaskForm(task) {
   intervalMaxEl.value = schedule.intervalMax;
   intervalUnitEl.value = schedule.intervalUnit;
   updateScheduleModeUI();
+  if (taskProfileSelect) {
+    renderProfileOptions(taskProfileSelect, task.browser_profile_id || '');
+  }
+  if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
 }
 
 async function editTask(id) {
@@ -697,6 +824,7 @@ form.addEventListener('submit', async (event) => {
   payload.use_browser = true;
   payload.use_persistent = true;
   payload.timeout_sec = Number(payload.timeout_sec || 300);
+  payload.browser_profile_id = taskProfileSelect && taskProfileSelect.value ? Number(taskProfileSelect.value) : null;
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
   const method = editingId ? 'PUT' : 'POST';
   await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -760,6 +888,7 @@ modalMask.addEventListener('click', closeModal);
 refreshScriptsModalBtn.addEventListener('click', loadScripts);
 addTaskBtn.addEventListener('click', () => { resetAllModalState(); renderScripts(); openModal('create'); });
 openBrowserBtn.addEventListener('click', openBrowserSession);
+if (addProfileBtn) addProfileBtn.addEventListener('click', () => openProfileModal(null));
 closeBrowserBtn.addEventListener('click', closeBrowserSession);
 useScriptBtn.addEventListener('click', () => {
   const script = getSelectedScript();

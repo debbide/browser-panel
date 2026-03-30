@@ -47,6 +47,14 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS browser_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  user_data_dir TEXT NOT NULL DEFAULT '',
+  proxy TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `);
 
 const taskRunColumns = db.prepare('PRAGMA table_info(task_runs)').all().map(row => row.name);
@@ -61,7 +69,9 @@ if (!taskTableColumns.includes('interval_max')) db.exec('ALTER TABLE tasks ADD C
 if (!taskTableColumns.includes('interval_unit')) db.exec('ALTER TABLE tasks ADD COLUMN interval_unit TEXT');
 if (!taskTableColumns.includes('next_run_at')) db.exec('ALTER TABLE tasks ADD COLUMN next_run_at TEXT');
 
-const taskColumns = ['name', 'type', 'script_path', 'cron_expr', 'schedule_mode', 'interval_min', 'interval_max', 'interval_unit', 'next_run_at', 'enabled', 'use_browser', 'use_persistent', 'timeout_sec'];
+if (!taskTableColumns.includes('browser_profile_id')) db.exec('ALTER TABLE tasks ADD COLUMN browser_profile_id INTEGER REFERENCES browser_profiles(id)');
+
+const taskColumns = ['name', 'type', 'script_path', 'cron_expr', 'schedule_mode', 'interval_min', 'interval_max', 'interval_unit', 'next_run_at', 'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'browser_profile_id'];
 
 function listTasks() {
   return db.prepare('SELECT * FROM tasks ORDER BY id DESC').all();
@@ -149,6 +159,35 @@ function setSetting(key, value) {
   return getSetting(key);
 }
 
+function listBrowserProfiles() {
+  return db.prepare('SELECT * FROM browser_profiles ORDER BY id ASC').all();
+}
+
+function getBrowserProfile(id) {
+  return db.prepare('SELECT * FROM browser_profiles WHERE id = ?').get(id);
+}
+
+function createBrowserProfile(payload) {
+  const stmt = db.prepare(`
+    INSERT INTO browser_profiles (name, user_data_dir, proxy)
+    VALUES (@name, @user_data_dir, @proxy)
+  `);
+  const result = stmt.run(payload);
+  return getBrowserProfile(result.lastInsertRowid);
+}
+
+function updateBrowserProfile(id, payload) {
+  db.prepare(`
+    UPDATE browser_profiles SET name = @name, user_data_dir = @user_data_dir, proxy = @proxy WHERE id = @id
+  `).run({ ...payload, id });
+  return getBrowserProfile(id);
+}
+
+function deleteBrowserProfile(id) {
+  db.prepare('UPDATE tasks SET browser_profile_id = NULL WHERE browser_profile_id = ?').run(id);
+  return db.prepare('DELETE FROM browser_profiles WHERE id = ?').run(id);
+}
+
 function getTelegramSettings() {
   return {
     botToken: getSetting('telegram_bot_token'),
@@ -171,4 +210,9 @@ module.exports = {
   getSetting,
   setSetting,
   getTelegramSettings,
+  listBrowserProfiles,
+  getBrowserProfile,
+  createBrowserProfile,
+  updateBrowserProfile,
+  deleteBrowserProfile,
 };

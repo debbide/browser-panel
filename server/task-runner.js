@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const config = require('../config');
 const { launchBrowserTaskAndWait } = require('./runtime/browser-launcher');
+const db = require('./db');
 
 const activeChildren = new Map();
 
@@ -108,6 +109,10 @@ function runForegroundTask(task, screenshotPath) {
 }
 
 async function runBrowserTask(task) {
+  if (task.browser_profile_id) {
+    const profile = db.getBrowserProfile(task.browser_profile_id);
+    if (profile) task = { ...task, _profile: profile };
+  }
   const screenshotPath = makeScreenshotPath(task.id);
   const logPath = makeLogPath(task.id);
   const runId = `${task.id}-${Date.now()}`;
