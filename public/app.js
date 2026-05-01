@@ -11,7 +11,11 @@ async function fetchJson(url, options) {
   }
 
   const data = await res.json();
-  if (!res.ok) throw new Error(data.message || '请求失败');
+  if (!res.ok) {
+    const message = String(data.message || '请求失败');
+    const output = data.output ? `\n${String(data.output).slice(-1200)}` : '';
+    throw new Error(`${message}${output}`);
+  }
   return data;
 }
 
@@ -115,6 +119,14 @@ const tgChatId = document.getElementById('tg-chat-id');
 const tgTokenHelp = document.getElementById('tg-token-help');
 const tgSaveBtn = document.getElementById('tg-save-btn');
 const tgTestBtn = document.getElementById('tg-test-btn');
+const browserRuntimeForm = document.getElementById('browser-runtime-form');
+const browserRuntimeStatus = document.getElementById('browser-runtime-status');
+const brRuntimeStack = document.getElementById('br-runtime-stack');
+const brUsePlaywrightExtra = document.getElementById('br-use-playwright-extra');
+const brPluginPackages = document.getElementById('br-plugin-packages');
+const brSaveBtn = document.getElementById('br-save-btn');
+const brInstallBtn = document.getElementById('br-install-btn');
+const brInstallBrowserBtn = document.getElementById('br-install-browser-btn');
 
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
@@ -220,6 +232,7 @@ function prettyStatus(status) {
   if (status === 'success') return '成功';
   if (status === 'failed') return '失败';
   if (status === 'running') return '运行中';
+  if (status === 'stopped') return '已停止';
   return status || '-';
 }
 
@@ -439,21 +452,23 @@ function groupLastRuns(runs) {
 }
 
 function runCard(run) {
+  const logHref = run.log_path ? `/${run.log_path.replace(/^.*?(logs\/)/, '$1')}` : '';
+  const screenshotHref = run.screenshot_path ? `/${run.screenshot_path.replace(/^.*?(screenshots\/)/, '$1')}` : '';
   return `
-    <div class="run-card ${run.status === 'failed' ? 'run-failed' : 'run-success'}">
+    <div class="run-card run-card-history ${run.status === 'failed' ? 'run-failed' : 'run-success'}">
       <div class="run-head">
-        <strong>任务 #${run.task_id}</strong>
+        <strong>\u4efb\u52a1 #${run.task_id}</strong>
         <span class="run-status ${run.status}">${escapeHtml(prettyStatus(run.status))}</span>
       </div>
       <div class="run-grid compact">
-        <div><span class="label">开始</span><span>${escapeHtml(shortTime(run.started_at))}</span></div>
-        <div><span class="label">结束</span><span>${escapeHtml(shortTime(run.ended_at))}</span></div>
-        <div><span class="label">退出码</span><span>${run.exit_code ?? '-'}</span></div>
-        <div><span class="label">错误类型</span><span>${escapeHtml(prettyErrorCode(run.error_code) || '-')}</span></div>
+        <div><span class="label">\u5f00\u59cb</span><span>${escapeHtml(shortTime(run.started_at))}</span></div>
+        <div><span class="label">\u7ed3\u675f</span><span>${escapeHtml(shortTime(run.ended_at))}</span></div>
+        <div><span class="label">\u9000\u51fa\u7801</span><span>${run.exit_code ?? '-'}</span></div>
+        <div><span class="label">\u9519\u8bef\u7c7b\u578b</span><span>${escapeHtml(prettyErrorCode(run.error_code) || '-')}</span></div>
       </div>
       <div class="row">
-        ${run.log_path ? `<a href="/${run.log_path.replace(/^.*?(logs\/)/, '$1')}" target="_blank">查看日志</a>` : ''}
-        ${run.screenshot_path ? `<a href="/${run.screenshot_path.replace(/^.*?(screenshots\/)/, '$1')}" target="_blank">查看截图</a>` : ''}
+        ${logHref ? `<a href="${logHref}" target="_blank">\u67e5\u770b\u65e5\u5fd7</a>` : ''}
+        ${screenshotHref ? `<a href="${screenshotHref}" target="_blank">\u67e5\u770b\u622a\u56fe</a>` : ''}
       </div>
       ${run.error_text ? `<pre>${escapeHtml(run.error_text)}</pre>` : ''}
     </div>`;
@@ -461,10 +476,49 @@ function runCard(run) {
 
 async function showTaskRuns(id) {
   const data = await fetchJson(`/api/tasks/${id}/runs`);
-  const target = document.getElementById(`task-runs-${id}`);
-  if (!target) return;
-  const html = data.data.map(runCard).join('') || '<p class="empty">这个任务还没有运行记录。</p>';
-  target.innerHTML = target.innerHTML ? '' : html;
+  openTaskRunsModal(id, data.data || []);
+}
+
+function openTaskRunsModal(id, runs) {
+  const task = tasksCache.find(item => Number(item.id) === Number(id));
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '9999';
+
+  const dialog = document.createElement('section');
+  dialog.className = 'modal modal-wide open runs-modal';
+  dialog.style.zIndex = '10000';
+  dialog.setAttribute('aria-hidden', 'false');
+
+  const bodyHtml = runs.length
+    ? runs.map(runCard).join('')
+    : '<p class="empty">\u8fd9\u4e2a\u4efb\u52a1\u8fd8\u6ca1\u6709\u8fd0\u884c\u8bb0\u5f55\u3002</p>';
+
+  dialog.innerHTML = `
+    <div class="modal-header">
+      <div>
+        <h2>\u8fd0\u884c\u8bb0\u5f55</h2>
+        <p class="muted">\u4efb\u52a1 #${id}${task?.name ? ` · ${escapeHtml(task.name)}` : ''}</p>
+      </div>
+      <button class="icon-btn" type="button" aria-label="\u5173\u95ed" data-close-runs-modal>
+        <i data-lucide="x" class="icon-md"></i>
+      </button>
+    </div>
+    <div class="modal-body runs-modal-body">
+      <div class="runs-modal-list">${bodyHtml}</div>
+    </div>
+  `;
+
+  const close = () => {
+    mask.remove();
+    dialog.remove();
+  };
+
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  mask.addEventListener('click', close);
+  dialog.querySelector('[data-close-runs-modal]').addEventListener('click', close);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
 }
 
 function latestRunSummary(taskId) {
@@ -515,6 +569,7 @@ function taskCard(task) {
       <div class="task-actions">
         <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>
         <button class="alt" onclick="stopTask(${task.id})" ${!isRunning ? 'disabled' : ''} data-testid="stop-task-btn">停止</button>
+        <button class="alt" onclick="showTaskRuns(${task.id})">记录</button>
         <button class="alt danger" onclick="deleteTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="delete-task-btn">删除</button>
       </div>
     </article>`;
@@ -571,11 +626,92 @@ async function loadTelegramSettings() {
   }
 }
 
+function normalizePluginPackagesForUi(value) {
+  return String(value || '')
+    .split(/[\r\n,;]+/g)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
+function setBrowserRuntimeStatus(text, color) {
+  if (!browserRuntimeStatus) return;
+  browserRuntimeStatus.textContent = text;
+  if (color) browserRuntimeStatus.style.color = color;
+}
+
+function collectBrowserRuntimeFormPayload() {
+  return {
+    runtimeStack: brRuntimeStack?.value || 'playwright',
+    usePlaywrightExtra: Boolean(brUsePlaywrightExtra?.checked),
+    pluginPackages: normalizePluginPackagesForUi(brPluginPackages?.value),
+  };
+}
+
+async function loadBrowserRuntimeSettings() {
+  if (!browserRuntimeForm) return;
+  try {
+    const res = await fetchJson('/api/settings/browser-runtime');
+    const data = res.data || {};
+    if (brRuntimeStack) brRuntimeStack.value = data.runtimeStack || 'playwright';
+    if (brUsePlaywrightExtra) brUsePlaywrightExtra.checked = Boolean(data.usePlaywrightExtra);
+    if (brPluginPackages) brPluginPackages.value = normalizePluginPackagesForUi(data.pluginPackages);
+    const packageCount = normalizePluginPackagesForUi(data.pluginPackages).split(',').map(s => s.trim()).filter(Boolean).length;
+    const runtimeStack = data.runtimeStack || 'playwright';
+    const stackLabel = runtimeStack === 'seleniumbase'
+      ? 'SeleniumBase + ChromeDriver'
+      : 'Playwright';
+    const pluginStatus = runtimeStack === 'seleniumbase'
+      ? 'Playwright 插件配置已保留'
+      : (data.usePlaywrightExtra ? '已启用 playwright-extra' : '使用原生 playwright');
+    setBrowserRuntimeStatus(`状态：${stackLabel}，${pluginStatus}，插件数：${packageCount}`, '#94a3b8');
+  } catch (error) {
+    setBrowserRuntimeStatus('状态：加载失败', '#ef4444');
+    console.error('Failed to load browser runtime settings:', error);
+  }
+}
+
+async function saveBrowserRuntimeSettings() {
+  const payload = collectBrowserRuntimeFormPayload();
+  await fetchJson('/api/settings/browser-runtime', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  await loadBrowserRuntimeSettings();
+}
+
+async function installBrowserRuntimePackages() {
+  const payload = collectBrowserRuntimeFormPayload();
+  const res = await fetchJson('/api/settings/browser-runtime/install', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  await loadBrowserRuntimeSettings();
+  return res.data || {};
+}
+
+async function installBrowserRuntimeEnvironment() {
+  const payload = collectBrowserRuntimeFormPayload();
+  const res = await fetchJson('/api/settings/browser-runtime/install-browser', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  await loadBrowserRuntimeSettings();
+  return res.data || {};
+}
+
 function renderProfileOptions(selectEl, selectedId) {
   if (!selectEl) return;
   const prev = selectedId !== undefined ? String(selectedId) : selectEl.value;
   selectEl.innerHTML = '<option value="">\u9ed8\u8ba4\u914d\u7f6e</option>' +
-    profilesCache.map(p => `<option value="${p.id}" ${String(p.id) === prev ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+    profilesCache.map((p) => {
+      const stack = String(p.runtime_stack || '').trim();
+      const stackText = stack ? ` [${stack}]` : '';
+      return `<option value="${p.id}" ${String(p.id) === prev ? 'selected' : ''}>${escapeHtml(`${p.name}${stackText}`)}</option>`;
+    }).join('');
 }
 
 function renderProfiles() {
@@ -597,6 +733,9 @@ function renderProfiles() {
       </div>
       <div class="schedule-note">\u76ee\u5f55: ${escapeHtml(p.user_data_dir || '\u672a\u8bbe\u7f6e')}</div>
       <div class="schedule-note">\u4ee3\u7406: ${escapeHtml(p.proxy || '\u65e0')}</div>
+      <div class="schedule-note">\u8fd0\u884c\u6808: ${escapeHtml((p.runtime_stack || '').trim() ? p.runtime_stack : 'default')}</div>
+      <div class="schedule-note">Locale: ${escapeHtml(p.locale || 'default')}</div>
+      <div class="schedule-note">Timezone: ${escapeHtml(p.timezone_id || 'default')}</div>
     </div>
   `).join('');
   if (window.lucide) window.lucide.createIcons({ root: profilesList });
@@ -635,6 +774,22 @@ function openProfileModal(profile) {
           <label class="field-label">\u4ee3\u7406\u5730\u5740</label>
           <input name="proxy" placeholder="socks5://127.0.0.1:7891" value="${escapeHtml(profile?.proxy || '')}" />
         </div>
+        <div>
+          <label class="field-label">\u8fd0\u884c\u6808</label>
+          <select name="runtime_stack">
+            <option value="" ${(profile?.runtime_stack || '') === '' ? 'selected' : ''}>\u8ddf\u968f\u5168\u5c40\u9ed8\u8ba4</option>
+            <option value="playwright" ${(profile?.runtime_stack || '') === 'playwright' ? 'selected' : ''}>Playwright</option>
+            <option value="seleniumbase" ${(profile?.runtime_stack || '') === 'seleniumbase' ? 'selected' : ''}>SeleniumBase + ChromeDriver</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-label">Locale</label>
+          <input name="locale" placeholder="zh-CN" value="${escapeHtml(profile?.locale || '')}" />
+        </div>
+        <div>
+          <label class="field-label">Timezone</label>
+          <input name="timezone_id" placeholder="Asia/Shanghai" value="${escapeHtml(profile?.timezone_id || '')}" />
+        </div>
         <div class="row" style="margin-top:8px;">
           <button type="submit" class="btn-primary">${isEdit ? '\u4fdd\u5b58' : '\u521b\u5efa'}</button>
           <button type="button" class="alt" id="pmodal-cancel">\u53d6\u6d88</button>
@@ -652,7 +807,14 @@ function openProfileModal(profile) {
   dialog.querySelector('#profile-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const body = { name: fd.get('name'), user_data_dir: fd.get('user_data_dir'), proxy: fd.get('proxy') };
+    const body = {
+      name: fd.get('name'),
+      user_data_dir: fd.get('user_data_dir'),
+      proxy: fd.get('proxy'),
+      runtime_stack: fd.get('runtime_stack'),
+      locale: fd.get('locale'),
+      timezone_id: fd.get('timezone_id'),
+    };
     try {
       if (isEdit) {
         await fetchJson(`/api/browser-profiles/${profile.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -695,7 +857,14 @@ async function runTask(id) {
   try {
     runningTaskIds.add(id);
     await loadTasks();
-    await fetchJson(`/api/tasks/${id}/run`, { method: 'POST' });
+    const profileId = taskProfileSelect && taskProfileSelect.value
+      ? Number(taskProfileSelect.value)
+      : (browserProfileSelect && browserProfileSelect.value ? Number(browserProfileSelect.value) : null);
+    await fetchJson(`/api/tasks/${id}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId || null }),
+    });
     toast(`任务 #${id} 已触发运行`, 'success');
   } catch (error) {
     toast(error.message || '启动失败', 'error');
@@ -918,6 +1087,7 @@ window.deleteTask = deleteTask;
 window.editTask = editTask;
 window.useScript = useScript;
 window.loadScriptIntoEditor = loadScriptIntoEditor;
+window.showTaskRuns = showTaskRuns;
 
 if (tgForm) {
   tgForm.addEventListener('submit', async (e) => {
@@ -940,7 +1110,7 @@ if (tgForm) {
       toast(error.message || '保存设置遇到了错误', 'error');
     } finally {
       tgSaveBtn.disabled = false;
-      tgSaveBtn.textContent = '保存设置';
+      tgSaveBtn.textContent = '淇濆瓨璁剧疆';
     }
   });
 }
@@ -962,6 +1132,72 @@ if (tgTestBtn) {
   });
 }
 
+if (browserRuntimeForm) {
+  browserRuntimeForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (brSaveBtn) {
+      brSaveBtn.disabled = true;
+      brSaveBtn.textContent = '保存中...';
+    }
+    try {
+      await saveBrowserRuntimeSettings();
+      toast('浏览器运行时配置已保存', 'success');
+    } catch (error) {
+      toast(error.message || '保存运行时配置失败', 'error');
+    } finally {
+      if (brSaveBtn) {
+        brSaveBtn.disabled = false;
+        brSaveBtn.textContent = '保存运行时配置';
+      }
+    }
+  });
+}
+
+if (brInstallBtn) {
+  brInstallBtn.addEventListener('click', async () => {
+    if (brInstallBtn.disabled) return;
+    if (brRuntimeStack && brRuntimeStack.value !== 'playwright') {
+      toast('当前运行栈不是 Playwright，请使用“安装浏览器环境”', 'warn');
+      return;
+    }
+    brInstallBtn.disabled = true;
+    brInstallBtn.textContent = '安装中...';
+    setBrowserRuntimeStatus('状态：正在安装插件...', '#facc15');
+    try {
+      await installBrowserRuntimePackages();
+      setBrowserRuntimeStatus('状态：插件安装完成，请重启服务生效', '#86efac');
+      toast('插件已安装完成，请重启服务后生效', 'success');
+    } catch (error) {
+      setBrowserRuntimeStatus('状态：安装失败', '#ef4444');
+      toast(error.message || '插件安装失败', 'error');
+    } finally {
+      brInstallBtn.disabled = false;
+      brInstallBtn.textContent = '一键安装插件';
+    }
+  });
+}
+
+if (brInstallBrowserBtn) {
+  brInstallBrowserBtn.addEventListener('click', async () => {
+    if (brInstallBrowserBtn.disabled) return;
+    brInstallBrowserBtn.disabled = true;
+    brInstallBrowserBtn.textContent = '安装中...';
+    setBrowserRuntimeStatus('状态：正在安装浏览器环境...', '#facc15');
+    try {
+      await installBrowserRuntimeEnvironment();
+      setBrowserRuntimeStatus('状态：浏览器环境安装完成，请重启服务生效', '#86efac');
+      toast('浏览器环境安装完成，请重启服务后生效', 'success');
+    } catch (error) {
+      setBrowserRuntimeStatus('状态：浏览器环境安装失败', '#ef4444');
+      toast(error.message || '浏览器环境安装失败', 'error');
+    } finally {
+      brInstallBrowserBtn.disabled = false;
+      brInstallBrowserBtn.textContent = '安装浏览器环境';
+    }
+  });
+}
+
 resetAllModalState();
 closeModal();
 refreshAll();
+loadBrowserRuntimeSettings();

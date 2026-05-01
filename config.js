@@ -12,6 +12,8 @@ module.exports = {
     userDataDir: process.env.BROWSER_USER_DATA_DIR || '/home/abc61154321/browser-work/persistent',
     chromePath: process.env.BROWSER_CHROME_PATH || '/usr/bin/google-chrome',
     proxy: process.env.BROWSER_PROXY || 'socks5://127.0.0.1:7891',
+    locale: process.env.BROWSER_LOCALE || 'zh-CN',
+    timezoneId: process.env.BROWSER_TIMEZONE || 'Asia/Shanghai',
     headless: false,
     viewport: { width: 1440, height: 900 },
     launchArgs: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],

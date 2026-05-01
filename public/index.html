@@ -101,6 +101,50 @@
             </div>
           </form>
         </section>
+        <section class="modal-panel config-panel" style="margin-top:16px;">
+          <div class="section-header compact">
+            <div>
+              <h2>浏览器运行时插件</h2>
+              <p class="muted" id="browser-runtime-status">状态：加载中...</p>
+            </div>
+          </div>
+          <form id="browser-runtime-form" class="grid single-col">
+            <div>
+              <label class="field-label" for="br-runtime-stack">运行栈</label>
+              <select id="br-runtime-stack" name="runtimeStack">
+                <option value="playwright">Playwright</option>
+                <option value="seleniumbase">SeleniumBase + ChromeDriver</option>
+              </select>
+            </div>
+            <label class="inline-check">
+              <input type="checkbox" id="br-use-playwright-extra" name="usePlaywrightExtra" />
+              启用 playwright-extra 运行时
+            </label>
+            <div>
+              <label class="field-label" for="br-plugin-packages">插件包名（逗号分隔）</label>
+              <input
+                type="text"
+                id="br-plugin-packages"
+                name="pluginPackages"
+                placeholder="例如：puppeteer-extra-plugin-stealth"
+              />
+              <div class="schedule-note" style="margin-top:4px;">
+                安装会更新本地 `node_modules` 和 `package.json`。
+              </div>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button type="submit" id="br-save-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> 保存运行时配置
+              </button>
+              <button type="button" class="alt btn-with-icon" id="br-install-btn">
+                <i data-lucide="download" class="icon-sm"></i> 一键安装插件
+              </button>
+              <button type="button" class="alt btn-with-icon" id="br-install-browser-btn">
+                <i data-lucide="package-check" class="icon-sm"></i> 安装浏览器环境
+              </button>
+            </div>
+          </form>
+        </section>
       </div>
     </main>
   </div>

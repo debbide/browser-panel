@@ -347,6 +347,7 @@ a:hover { text-decoration: underline; }
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
 }
 
 .task-card:hover, .script-card:hover {
@@ -491,6 +492,132 @@ a:hover { text-decoration: underline; }
   padding-top: 8px;
 }
 
+.task-runs-block {
+  margin-top: 12px;
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 12px;
+  padding-right: 4px;
+}
+
+.task-runs-block:empty {
+  margin-top: 0;
+  max-height: 0;
+  overflow: hidden;
+}
+
+.task-runs-block .run-card {
+  height: auto;
+  min-height: 0;
+  padding: 14px;
+  box-shadow: none;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.task-runs-block .run-head {
+  align-items: center;
+  gap: 8px;
+}
+
+.task-runs-block .run-head strong {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-runs-block .run-status {
+  flex-shrink: 0;
+}
+
+.task-runs-block .run-grid.compact {
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.task-runs-block .run-grid.compact > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.task-runs-block .run-grid.compact span:not(.label) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-runs-block .run-grid .label {
+  margin: 0;
+}
+
+.task-runs-block .row,
+.task-runs-block a {
+  min-width: 0;
+}
+
+.task-runs-block .row {
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.task-runs-block pre {
+  max-height: 120px;
+  overflow: auto;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.runs-modal {
+  width: min(900px, calc(100vw - 32px));
+}
+
+.runs-modal-body {
+  padding: 24px;
+}
+
+.runs-modal-list {
+  display: grid;
+  gap: 12px;
+  max-height: min(620px, calc(100vh - 180px));
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.runs-modal-list .run-card {
+  height: auto;
+  min-height: 0;
+}
+
+.runs-modal-list .run-grid.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.runs-modal-list .run-grid.compact > div {
+  min-width: 0;
+}
+
+.runs-modal-list .run-grid.compact span:not(.label) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runs-modal-list pre {
+  max-height: 160px;
+  overflow: auto;
+}
+
 /* Status */
 .run-status {
   padding: 4px 12px;
@@ -591,6 +718,7 @@ a:hover { text-decoration: underline; }
 pre {
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   background: #020617;
   border-radius: var(--radius-md);
   padding: 16px;

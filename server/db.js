@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   use_browser INTEGER NOT NULL DEFAULT 1,
   use_persistent INTEGER NOT NULL DEFAULT 1,
   timeout_sec INTEGER NOT NULL DEFAULT 300,
+  browser_profile_id INTEGER REFERENCES browser_profiles(id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -53,6 +54,9 @@ CREATE TABLE IF NOT EXISTS browser_profiles (
   name TEXT NOT NULL,
   user_data_dir TEXT NOT NULL DEFAULT '',
   proxy TEXT NOT NULL DEFAULT '',
+  runtime_stack TEXT NOT NULL DEFAULT '',
+  locale TEXT NOT NULL DEFAULT '',
+  timezone_id TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `);
@@ -71,6 +75,11 @@ if (!taskTableColumns.includes('next_run_at')) db.exec('ALTER TABLE tasks ADD CO
 
 if (!taskTableColumns.includes('browser_profile_id')) db.exec('ALTER TABLE tasks ADD COLUMN browser_profile_id INTEGER REFERENCES browser_profiles(id)');
 
+const browserProfileColumns = db.prepare('PRAGMA table_info(browser_profiles)').all().map(row => row.name);
+if (!browserProfileColumns.includes('runtime_stack')) db.exec("ALTER TABLE browser_profiles ADD COLUMN runtime_stack TEXT NOT NULL DEFAULT ''");
+if (!browserProfileColumns.includes('locale')) db.exec("ALTER TABLE browser_profiles ADD COLUMN locale TEXT NOT NULL DEFAULT ''");
+if (!browserProfileColumns.includes('timezone_id')) db.exec("ALTER TABLE browser_profiles ADD COLUMN timezone_id TEXT NOT NULL DEFAULT ''");
+
 const taskColumns = ['name', 'type', 'script_path', 'cron_expr', 'schedule_mode', 'interval_min', 'interval_max', 'interval_unit', 'next_run_at', 'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'browser_profile_id'];
 
 function listTasks() {
@@ -83,8 +92,8 @@ function getTask(id) {
 
 function createTask(payload) {
   const stmt = db.prepare(`
-    INSERT INTO tasks (name, type, script_path, cron_expr, schedule_mode, interval_min, interval_max, interval_unit, next_run_at, enabled, use_browser, use_persistent, timeout_sec, updated_at)
-    VALUES (@name, @type, @script_path, @cron_expr, @schedule_mode, @interval_min, @interval_max, @interval_unit, @next_run_at, @enabled, @use_browser, @use_persistent, @timeout_sec, CURRENT_TIMESTAMP)
+    INSERT INTO tasks (name, type, script_path, cron_expr, schedule_mode, interval_min, interval_max, interval_unit, next_run_at, enabled, use_browser, use_persistent, timeout_sec, browser_profile_id, updated_at)
+    VALUES (@name, @type, @script_path, @cron_expr, @schedule_mode, @interval_min, @interval_max, @interval_unit, @next_run_at, @enabled, @use_browser, @use_persistent, @timeout_sec, @browser_profile_id, CURRENT_TIMESTAMP)
   `);
   const result = stmt.run(payload);
   return getTask(result.lastInsertRowid);
@@ -169,8 +178,8 @@ function getBrowserProfile(id) {
 
 function createBrowserProfile(payload) {
   const stmt = db.prepare(`
-    INSERT INTO browser_profiles (name, user_data_dir, proxy)
-    VALUES (@name, @user_data_dir, @proxy)
+    INSERT INTO browser_profiles (name, user_data_dir, proxy, runtime_stack, locale, timezone_id)
+    VALUES (@name, @user_data_dir, @proxy, @runtime_stack, @locale, @timezone_id)
   `);
   const result = stmt.run(payload);
   return getBrowserProfile(result.lastInsertRowid);
@@ -178,7 +187,9 @@ function createBrowserProfile(payload) {
 
 function updateBrowserProfile(id, payload) {
   db.prepare(`
-    UPDATE browser_profiles SET name = @name, user_data_dir = @user_data_dir, proxy = @proxy WHERE id = @id
+    UPDATE browser_profiles
+    SET name = @name, user_data_dir = @user_data_dir, proxy = @proxy, runtime_stack = @runtime_stack, locale = @locale, timezone_id = @timezone_id
+    WHERE id = @id
   `).run({ ...payload, id });
   return getBrowserProfile(id);
 }
@@ -193,6 +204,48 @@ function getTelegramSettings() {
     botToken: getSetting('telegram_bot_token'),
     chatId: getSetting('telegram_chat_id'),
   };
+}
+
+function toBool(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+function normalizeRuntimeStack(value) {
+  const stack = String(value || '').trim().toLowerCase();
+  if (stack === 'seleniumbase') return 'seleniumbase';
+  return 'playwright';
+}
+
+function normalizePackageList(value) {
+  return String(value || '')
+    .split(/[\r\n,;]+/g)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .join(',');
+}
+
+function getBrowserRuntimeSettings() {
+  const pluginPackages = normalizePackageList(getSetting('browser_plugin_packages'));
+  const hasPluginPackages = pluginPackages.length > 0;
+  const runtimeStack = normalizeRuntimeStack(getSetting('browser_runtime_stack'));
+  const usePlaywrightExtra = runtimeStack === 'playwright'
+    && (toBool(getSetting('browser_use_playwright_extra')) || hasPluginPackages);
+  return {
+    runtimeStack,
+    usePlaywrightExtra,
+    pluginPackages,
+  };
+}
+
+function setBrowserRuntimeSettings(payload = {}) {
+  const usePlaywrightExtra = payload.usePlaywrightExtra ? '1' : '0';
+  const pluginPackages = normalizePackageList(payload.pluginPackages);
+  const runtimeStack = normalizeRuntimeStack(payload.runtimeStack);
+  setSetting('browser_runtime_stack', runtimeStack);
+  setSetting('browser_use_playwright_extra', usePlaywrightExtra);
+  setSetting('browser_plugin_packages', pluginPackages);
+  return getBrowserRuntimeSettings();
 }
 
 module.exports = {
@@ -210,6 +263,8 @@ module.exports = {
   getSetting,
   setSetting,
   getTelegramSettings,
+  getBrowserRuntimeSettings,
+  setBrowserRuntimeSettings,
   listBrowserProfiles,
   getBrowserProfile,
   createBrowserProfile,

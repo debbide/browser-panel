@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const { spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
-const { runTask, stopTask } = require('./task-runner');
+const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
 const { reloadJobs, isTaskRunning, runTaskSafely, computeNextRun } = require('./scheduler');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
@@ -28,23 +29,30 @@ function refreshNextRunAfterSuccessfulManualRun(task) {
 }
 
 async function executeTask(id, options = {}) {
-  const { refreshScheduleOnSuccess = false } = options;
+  const { refreshScheduleOnSuccess = false, profileId = null } = options;
   const task = db.getTask(id);
   if (!task) throw new Error('Task not found');
+  let effectiveTask = task;
+  if (profileId) {
+    const profile = db.getBrowserProfile(Number(profileId));
+    if (!profile) throw new Error('Browser profile not found');
+    effectiveTask = { ...task, browser_profile_id: Number(profileId) };
+  }
 
   const run = db.createRun(id, {
     status: 'running',
     started_at: new Date().toISOString(),
     ended_at: null,
     exit_code: null,
-    log_path: null,
+    log_path: prepareLogForTask(id),
     screenshot_path: null,
     error_text: null,
   });
 
-  const result = await runTask(task);
+  const result = await runTask(effectiveTask, { logPath: run.log_path });
+  const stoppedByUser = result.errorCode === 'stopped';
   const completedRun = db.updateRun(run.id, {
-    status: result.status,
+    status: stoppedByUser ? 'stopped' : result.status,
     ended_at: result.endedAt,
     exit_code: result.exitCode,
     log_path: result.logPath,
@@ -61,14 +69,19 @@ async function executeTask(id, options = {}) {
   return completedRun;
 }
 
-async function triggerTaskExecution(taskId) {
+async function triggerTaskExecution(taskId, options = {}) {
   if (getManualBrowserStatus().open) {
-    return { ok: false, status: 409, payload: { message: '浏览器已手动打开，请先关闭后再运行任务', code: 'browser_already_open' } };
+    return { ok: false, status: 409, payload: { message: 'Browser is open manually, close it before running tasks', code: 'browser_already_open' } };
   }
 
-  const result = await runTaskSafely(Number(taskId), (id) => executeTask(id, { refreshScheduleOnSuccess: true }));
+  const profileId = options && options.profileId ? Number(options.profileId) : null;
+  if (profileId && !db.getBrowserProfile(profileId)) {
+    return { ok: false, status: 400, payload: { message: 'Selected browser profile not found', code: 'invalid_browser_profile' } };
+  }
+
+  const result = await runTaskSafely(Number(taskId), (id) => executeTask(id, { refreshScheduleOnSuccess: true, profileId }));
   if (result?.skipped) {
-    return { ok: false, status: 409, payload: { message: '任务正在运行中', code: result.reason } };
+    return { ok: false, status: 409, payload: { message: 'Task is already running', code: result.reason } };
   }
 
   return { ok: true, status: 200, payload: { data: result } };
@@ -87,7 +100,7 @@ function parseRetryCallbackData(value) {
 
 async function triggerTaskExecutionInBackground(taskId) {
   if (getManualBrowserStatus().open) {
-    return { ok: false, message: '浏览器已手动打开，请先关闭后再运行任务' };
+    return { ok: false, message: 'Browser is open manually, close it before running tasks' };
   }
 
   const taskIdNum = Number(taskId);
@@ -103,10 +116,10 @@ async function triggerTaskExecutionInBackground(taskId) {
   });
 
   if (result?.skipped) {
-    return { ok: false, message: '任务正在运行中' };
+    return { ok: false, message: 'Task is already running' };
   }
 
-  return { ok: true, message: '已开始重试任务' };
+  return { ok: true, message: 'Retry started' };
 }
 
 function normalizeTelegramSettingsResponse() {
@@ -133,6 +146,111 @@ function slugifyScriptName(input) {
     .slice(0, 40);
 }
 
+function isValidTimeZone(value) {
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: String(value || '') });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeProfileLocale(value) {
+  return String(value || '').trim();
+}
+
+function normalizeProfileTimezone(value) {
+  const timezone = String(value || '').trim();
+  if (!timezone) return '';
+  if (!isValidTimeZone(timezone)) {
+    throw new Error('Invalid timezone, use IANA format like Asia/Shanghai');
+  }
+  return timezone;
+}
+
+function normalizeProfileRuntimeStack(value) {
+  const stack = String(value || '').trim().toLowerCase();
+  if (!stack) return '';
+  if (stack === 'playwright' || stack === 'seleniumbase') return stack;
+  throw new Error('Invalid runtime stack, only playwright or seleniumbase');
+}
+
+function parseBooleanFlag(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function normalizeRuntimeStack(value) {
+  const stack = String(value || '').trim().toLowerCase();
+  if (stack === 'seleniumbase') return 'seleniumbase';
+  return 'playwright';
+}
+
+function normalizePluginPackages(value) {
+  return String(value || '')
+    .split(/[\r\n,;]+/g)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .map((pkg) => {
+      if (pkg === 'playwright-extra-plugin-stealth') {
+        return 'puppeteer-extra-plugin-stealth';
+      }
+      return pkg;
+    });
+}
+
+function validatePluginPackageName(pkg) {
+  return /^(?:@[\w.-]+\/)?[\w.-]+$/.test(pkg);
+}
+
+function normalizeBrowserRuntimeSettingsPayload(payload = {}, fallback = null) {
+  const base = fallback || db.getBrowserRuntimeSettings();
+  const runtimeStack = normalizeRuntimeStack(payload.runtimeStack === undefined ? base.runtimeStack : payload.runtimeStack);
+  const usePlaywrightExtra = parseBooleanFlag(payload.usePlaywrightExtra, Boolean(base.usePlaywrightExtra));
+  const pluginPackages = normalizePluginPackages(payload.pluginPackages === undefined ? base.pluginPackages : payload.pluginPackages);
+
+  if (pluginPackages.includes('playwright-stealth')) {
+    throw new Error('playwright-stealth 这个包是占位包，请改用 puppeteer-extra-plugin-stealth');
+  }
+
+  const invalidPackage = pluginPackages.find(item => !validatePluginPackageName(item));
+  if (invalidPackage) {
+    throw new Error(`插件包名不合法: ${invalidPackage}`);
+  }
+
+  return {
+    runtimeStack,
+    usePlaywrightExtra: runtimeStack === 'playwright' && (usePlaywrightExtra || pluginPackages.length > 0),
+    pluginPackages: pluginPackages.join(','),
+  };
+}
+
+function resolveNpmCommand() {
+  const nodeDir = path.dirname(process.execPath);
+  const candidates = [
+    process.env.npm_execpath,
+    path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].filter(Boolean);
+
+  for (const cliPath of candidates) {
+    if (fs.existsSync(cliPath)) {
+      return { command: process.execPath, args: [cliPath], nodeDir };
+    }
+  }
+
+  return { command: 'npm', args: [], nodeDir };
+}
+
+function runBashCommand(command, timeout = 10 * 60 * 1000) {
+  return spawnSync('bash', ['-lc', command], {
+    encoding: 'utf8',
+    timeout,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+}
+
 function buildTaskScriptFilename(taskName, type) {
   const ext = type === 'python' ? '.py' : '.js';
   const base = slugifyScriptName(taskName) || 'task-script';
@@ -157,12 +275,21 @@ function reserveUniqueScriptFilename(taskName, type, ignoreTaskId = null, prefer
     }
   }
 
-  throw new Error('无法为任务分配可用的脚本文件名');
+  throw new Error('Unable to allocate an available script filename');
 }
 
 function resolveTaskScriptPath(taskName, type, currentScriptPath = '', existingTaskId = null) {
   const normalizedCurrent = String(currentScriptPath || '').replace(/\\/g, '/');
   if (!normalizedCurrent.startsWith('tasks/')) return normalizedCurrent;
+
+  if (existingTaskId) {
+    const existingTask = db.getTask(existingTaskId);
+    const existingScriptPath = String(existingTask?.script_path || '').replace(/\\/g, '/');
+    // Editing task name should not rename the bound script file.
+    if (existingScriptPath && existingScriptPath === normalizedCurrent) {
+      return normalizedCurrent;
+    }
+  }
 
   const sharedOwner = db.listTasks().find(task => task.script_path === normalizedCurrent && task.id !== existingTaskId);
   if (sharedOwner) return normalizedCurrent;
@@ -201,6 +328,165 @@ app.get('/api/settings/telegram', (req, res) => {
   res.json({ data: normalizeTelegramSettingsResponse() });
 });
 
+app.get('/api/settings/browser-runtime', (req, res) => {
+  res.json({ data: db.getBrowserRuntimeSettings() });
+});
+
+app.post('/api/settings/browser-runtime', (req, res) => {
+  try {
+    const settings = normalizeBrowserRuntimeSettingsPayload(req.body || {});
+    const updated = db.setBrowserRuntimeSettings(settings);
+    res.json({ data: updated });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '保存浏览器运行时配置失败' });
+  }
+});
+
+app.post('/api/settings/browser-runtime/install', (req, res) => {
+  try {
+    const settings = normalizeBrowserRuntimeSettingsPayload(req.body || {});
+    if (settings.runtimeStack !== 'playwright') {
+      return res.status(400).json({ message: '当前运行栈不是 Playwright，请使用“安装浏览器环境”按钮' });
+    }
+
+    const packageSet = new Set();
+    if (settings.usePlaywrightExtra) packageSet.add('playwright-extra');
+    for (const pkg of normalizePluginPackages(settings.pluginPackages)) {
+      packageSet.add(pkg);
+    }
+    const installList = Array.from(packageSet);
+    if (!installList.length) {
+      return res.status(400).json({ message: '请先配置至少一个插件包名' });
+    }
+
+    const npmCommand = resolveNpmCommand();
+    const env = { ...process.env };
+    if (npmCommand.nodeDir) {
+      env.PATH = `${npmCommand.nodeDir}:${env.PATH || ''}`;
+    }
+    const result = spawnSync(npmCommand.command, [...npmCommand.args, 'install', '--no-audit', '--no-fund', ...installList], {
+      cwd: config.paths.root,
+      encoding: 'utf8',
+      timeout: 5 * 60 * 1000,
+      env,
+    });
+
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      const output = `${result.stderr || ''}\n${result.stdout || ''}`.trim();
+      return res.status(500).json({
+        message: `npm 安装失败（退出码 ${result.status}）`,
+        output: output.slice(-3000),
+      });
+    }
+
+    const updated = db.setBrowserRuntimeSettings(settings);
+    res.json({
+      data: {
+        settings: updated,
+        installed: installList,
+        output: String(result.stdout || '').trim().slice(-3000),
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '安装插件包失败' });
+  }
+});
+
+app.post('/api/settings/browser-runtime/install-browser', (req, res) => {
+  try {
+    const settings = normalizeBrowserRuntimeSettingsPayload(req.body || {});
+    const steps = [];
+
+    if (settings.runtimeStack === 'seleniumbase') {
+      steps.push({
+        name: '检查 Chrome（缺失时自动安装）',
+        command: [
+          'if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then',
+          '  echo "google-chrome already installed";',
+          'else',
+          '  export DEBIAN_FRONTEND=noninteractive;',
+          '  apt-get update;',
+          '  apt-get install -y wget ca-certificates;',
+          '  wget -q -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb;',
+          '  apt-get install -y /tmp/google-chrome-stable_current_amd64.deb || apt-get -f install -y;',
+          'fi',
+        ].join('\n'),
+      });
+      steps.push({
+        name: '安装 xvfb',
+        command: 'if command -v xvfb-run >/dev/null 2>&1; then echo "xvfb already installed"; else apt-get update && apt-get install -y xvfb; fi',
+      });
+      steps.push({
+        name: '安装 pip3',
+        command: 'if command -v pip3 >/dev/null 2>&1; then echo "pip3 already installed"; else apt-get update && apt-get install -y python3-pip; fi',
+      });
+      steps.push({
+        name: '安装 SeleniumBase',
+        command: [
+          '/usr/bin/python3 -m pip install --break-system-packages --upgrade pip setuptools wheel',
+          '/usr/bin/python3 -m pip install --break-system-packages --upgrade --ignore-installed urllib3 requests selenium',
+          '/usr/bin/python3 -m pip install --break-system-packages --upgrade --ignore-installed seleniumbase',
+        ].join('\n'),
+      });
+      steps.push({
+        name: '安装 ChromeDriver',
+        command: '/usr/bin/python3 -m seleniumbase install chromedriver',
+      });
+      steps.push({
+        name: '验证 SeleniumBase',
+        command: '/usr/bin/python3 -c "import seleniumbase; print(seleniumbase.__version__)"',
+      });
+    } else {
+      steps.push({
+        name: '检查 Chrome（缺失时自动安装）',
+        command: [
+          'if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then',
+          '  echo "google-chrome already installed";',
+          'else',
+          '  export DEBIAN_FRONTEND=noninteractive;',
+          '  apt-get update;',
+          '  apt-get install -y wget ca-certificates;',
+          '  wget -q -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb;',
+          '  apt-get install -y /tmp/google-chrome-stable_current_amd64.deb || apt-get -f install -y;',
+          'fi',
+        ].join('\n'),
+      });
+    }
+
+    const logs = [];
+    for (const step of steps) {
+      const result = runBashCommand(step.command, 15 * 60 * 1000);
+      const output = `${result.stdout || ''}${result.stderr || ''}`.trim();
+      logs.push({
+        step: step.name,
+        exitCode: result.status ?? (result.error ? 1 : 0),
+        output: output.slice(-3000),
+      });
+
+      if (result.error || result.status !== 0) {
+        return res.status(500).json({
+          message: `安装失败：${step.name}`,
+          output: output.slice(-3000),
+          logs,
+        });
+      }
+    }
+
+    const updated = db.setBrowserRuntimeSettings(settings);
+    res.json({
+      data: {
+        settings: updated,
+        logs,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '安装浏览器环境失败' });
+  }
+});
+
 app.post('/api/settings/telegram', (req, res) => {
   const payload = req.body || {};
   const current = db.getTelegramSettings();
@@ -208,7 +494,7 @@ app.post('/api/settings/telegram', (req, res) => {
   const chatId = resolveTelegramSettingValue(payload.chatId, current.chatId);
 
   if (!botToken || !chatId) {
-    return res.status(400).json({ message: 'Bot Token 和 Chat ID 不能为空' });
+    return res.status(400).json({ message: 'Bot Token and Chat ID are required' });
   }
 
   db.setSetting('telegram_bot_token', botToken);
@@ -222,7 +508,7 @@ app.post('/api/settings/telegram/test', async (req, res) => {
     await sendTelegramTestMessage();
     res.json({ ok: true });
   } catch (error) {
-    res.status(400).json({ message: error.message || '测试消息发送失败' });
+    res.status(400).json({ message: error.message || 'Failed to send test message' });
   }
 });
 
@@ -243,19 +529,19 @@ app.post('/api/telegram/webhook/:token', async (req, res) => {
 
   try {
     if (!isConfiguredTelegramChat(chatId)) {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, '当前会话无权操作这个任务');
+      await answerTelegramCallback(settings.botToken, callbackQueryId, 'Current chat is not authorized for this task');
       return res.json({ ok: true });
     }
 
     if (!parsed) {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, '无法识别这个操作');
+      await answerTelegramCallback(settings.botToken, callbackQueryId, 'Unable to recognize this action');
       return res.json({ ok: true });
     }
 
     const task = db.getTask(parsed.taskId);
     const run = db.getRun(parsed.runId);
     if (!task || !run || run.task_id !== parsed.taskId || run.status !== 'failed') {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, '这次失败记录已失效，无法重试');
+      await answerTelegramCallback(settings.botToken, callbackQueryId, 'This failed run is no longer retryable');
       return res.json({ ok: true });
     }
 
@@ -264,7 +550,7 @@ app.post('/api/telegram/webhook/:token', async (req, res) => {
     return res.json({ ok: true });
   } catch (error) {
     try {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, error.message || '重试任务失败');
+      await answerTelegramCallback(settings.botToken, callbackQueryId, error.message || 'Retry task failed');
     } catch (answerError) {
       console.warn('[telegram] failed to answer callback query:', answerError.message);
     }
@@ -279,7 +565,7 @@ app.post('/api/browser/open', async (req, res) => {
     const session = await openManualBrowser(profile);
     res.json({ data: { open: true, openedAt: session.openedAt, profileId } });
   } catch (error) {
-    res.status(500).json({ message: error.message || '浏览器启动失败' });
+    res.status(500).json({ message: error.message || 'Failed to open browser' });
   }
 });
 
@@ -290,20 +576,39 @@ app.get('/api/browser-profiles', (req, res) => {
 app.post('/api/browser-profiles', (req, res) => {
   try {
     const { name, user_data_dir, proxy } = req.body || {};
-    if (!name) return res.status(400).json({ message: '请填写配置名称' });
-    const profile = db.createBrowserProfile({ name: String(name), user_data_dir: String(user_data_dir || ''), proxy: String(proxy || '') });
+    const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
+    const locale = normalizeProfileLocale(req.body?.locale);
+    const timezone_id = normalizeProfileTimezone(req.body?.timezone_id ?? req.body?.timezoneId);
+    if (!name) return res.status(400).json({ message: 'Profile name is required' });
+    const profile = db.createBrowserProfile({
+      name: String(name),
+      user_data_dir: String(user_data_dir || ''),
+      proxy: String(proxy || ''),
+      runtime_stack,
+      locale,
+      timezone_id,
+    });
     res.json({ data: profile });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 });
-
 app.put('/api/browser-profiles/:id', (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, user_data_dir, proxy } = req.body || {};
-    if (!name) return res.status(400).json({ message: '请填写配置名称' });
-    const profile = db.updateBrowserProfile(id, { name: String(name), user_data_dir: String(user_data_dir || ''), proxy: String(proxy || '') });
+    const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
+    const locale = normalizeProfileLocale(req.body?.locale);
+    const timezone_id = normalizeProfileTimezone(req.body?.timezone_id ?? req.body?.timezoneId);
+    if (!name) return res.status(400).json({ message: 'Profile name is required' });
+    const profile = db.updateBrowserProfile(id, {
+      name: String(name),
+      user_data_dir: String(user_data_dir || ''),
+      proxy: String(proxy || ''),
+      runtime_stack,
+      locale,
+      timezone_id,
+    });
     res.json({ data: profile });
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -324,7 +629,7 @@ app.post('/api/browser/close', async (req, res) => {
     const result = await closeManualBrowser();
     res.json({ data: result });
   } catch (error) {
-    res.status(500).json({ message: error.message || '浏览器关闭失败' });
+    res.status(500).json({ message: error.message || 'Failed to close browser' });
   }
 });
 
@@ -352,7 +657,7 @@ app.post('/api/tasks', (req, res) => {
     reloadJobs(executeTask);
     res.json({ data: task });
   } catch (error) {
-    res.status(400).json({ message: error.message || '保存任务失败' });
+    res.status(400).json({ message: error.message || 'Failed to save task' });
   }
 });
 
@@ -363,10 +668,11 @@ app.put('/api/tasks/:id', (req, res) => {
     const existing = db.getTask(id);
     const type = payload.type === 'python' ? 'python' : 'javascript';
     const name = String(payload.name || 'Untitled Task');
+    const requestedScriptPath = String(payload.script_path || existing?.script_path || '');
     const task = db.updateTask(id, {
       name,
       type,
-      script_path: resolveTaskScriptPath(name, type, String(payload.script_path || ''), id),
+      script_path: resolveTaskScriptPath(name, type, requestedScriptPath, id),
       cron_expr: String(payload.cron_expr || ''),
       schedule_mode: payload.schedule_mode === 'interval' ? 'interval' : 'fixed',
       interval_min: payload.interval_min ? Number(payload.interval_min) : null,
@@ -382,7 +688,7 @@ app.put('/api/tasks/:id', (req, res) => {
     reloadJobs(executeTask);
     res.json({ data: task });
   } catch (error) {
-    res.status(400).json({ message: error.message || '更新任务失败' });
+    res.status(400).json({ message: error.message || 'Failed to update task' });
   }
 });
 
@@ -390,12 +696,12 @@ app.delete('/api/tasks/:id', (req, res) => {
   try {
     const result = db.deleteTask(Number(req.params.id));
     if (!result.changes) {
-      return res.status(404).json({ message: '任务不存在或已删除' });
+      return res.status(404).json({ message: 'Task not found or already deleted' });
     }
     reloadJobs(executeTask);
     res.json({ ok: true });
   } catch (error) {
-    res.status(400).json({ message: error.message || '删除任务失败' });
+    res.status(400).json({ message: error.message || 'Failed to delete task' });
   }
 });
 
@@ -430,13 +736,14 @@ app.post('/api/scripts/import', (req, res) => {
     fs.writeFileSync(target, content, 'utf8');
     res.json({ data: { name: uniqueName, path: `tasks/${uniqueName}`, type: fileType } });
   } catch (error) {
-    res.status(500).json({ message: error.message || '脚本保存失败' });
+    res.status(500).json({ message: error.message || 'Failed to save script' });
   }
 });
 
 app.post('/api/tasks/:id/run', async (req, res) => {
   try {
-    const response = await triggerTaskExecution(Number(req.params.id));
+    const profileId = req.body && req.body.profile_id ? Number(req.body.profile_id) : null;
+    const response = await triggerTaskExecution(Number(req.params.id), { profileId });
     res.status(response.status).json(response.payload);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -447,9 +754,9 @@ app.post('/api/tasks/:id/stop', (req, res) => {
   const id = Number(req.params.id);
   const stopped = stopTask(id);
   if (!stopped) {
-    return res.status(404).json({ message: '当前没有可停止的运行任务' });
+    return res.status(404).json({ message: 'No running task can be stopped right now' });
   }
-  res.json({ ok: true });
+  res.json({ ok: true, stopped: true });
 });
 
 app.get('/api/tasks/:id/runs', (req, res) => {

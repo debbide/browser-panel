@@ -1,9 +1,8 @@
-const { launchDetached } = require('./browser-launcher');
+const { launchBrowserTaskAndWait } = require('./browser-launcher');
 
 async function runNodeBrowserTask(task) {
-  await launchDetached(task.script_path, {
-    TASK_SCREENSHOT_PATH: process.env.TASK_SCREENSHOT_PATH,
-  });
+  const runId = `${task?.id || 'task'}-${Date.now()}`;
+  return launchBrowserTaskAndWait(task, runId);
 }
 
 module.exports = {
