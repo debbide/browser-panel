@@ -134,6 +134,21 @@ function classifyForegroundFailure(exitCode, stderrText) {
   return exitCode === 0 ? null : 'script_error';
 }
 
+function normalizeRetryable(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'number') return value ? 1 : 0;
+  const text = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(text)) return 1;
+  if (['0', 'false', 'no', 'off'].includes(text)) return 0;
+  return null;
+}
+
+function defaultRetryableByErrorCode(errorCode) {
+  const retryableCodes = new Set(['timeout', 'browser_task_error', 'browser_launch_error', 'missing_result']);
+  return retryableCodes.has(String(errorCode || '')) ? 1 : 0;
+}
+
 function buildEnv(task, screenshotPath) {
   const env = { ...process.env };
   if (task.use_browser) {
@@ -225,6 +240,8 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
         logPath,
         screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
         errorText,
+        retryable: code === 0 ? 0 : defaultRetryableByErrorCode(errorCode),
+        retryReason: null,
       });
     });
   });
@@ -309,6 +326,8 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
       logPath,
       screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
       errorText: 'Stopped by user',
+      retryable: 0,
+      retryReason: null,
     };
   }
 
@@ -322,6 +341,10 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     else if (!taskResult) errorCode = 'missing_result';
     else errorCode = 'browser_launch_error';
   }
+  const scriptRetryable = normalizeRetryable(taskResult?.data?.retryable ?? taskResult?.retryable);
+  const retryable = ok ? 0 : (scriptRetryable ?? defaultRetryableByErrorCode(errorCode));
+  const retryReasonRaw = taskResult?.data?.retry_reason ?? taskResult?.retry_reason;
+  const retryReason = retryReasonRaw === null || retryReasonRaw === undefined ? null : String(retryReasonRaw).slice(0, 300);
 
   writeLogHeader(logPath, 'TASK SUMMARY', [
     ['ended_at', result.endedAt],
@@ -342,6 +365,8 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     logPath,
     screenshotPath: hasScreenshot ? screenshotPath : null,
     errorText: taskResult?.error || result.stderr || (hasScreenshot ? null : 'No result payload written'),
+    retryable,
+    retryReason,
   };
 }
 

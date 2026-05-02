@@ -723,20 +723,40 @@ function renderProfiles() {
     return;
   }
   profilesList.innerHTML = profilesCache.map(p => `
-    <div class="config-block" style="padding:12px 16px;">
-      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <strong>${escapeHtml(p.name)}</strong>
-        <div class="row" style="gap:8px;">
+    <article class="profile-card">
+      <div class="profile-card-head">
+        <div>
+          <strong class="profile-card-name">${escapeHtml(p.name)}</strong>
+          <div class="profile-card-id">#${p.id}</div>
+        </div>
+        <div class="row profile-card-actions" style="gap:8px;">
           <button class="alt btn-with-icon" onclick="editProfile(${p.id})"><i data-lucide="pencil" class="icon-sm"></i> \u7f16\u8f91</button>
-          <button class="alt btn-with-icon" style="color:#ef4444;" onclick="deleteProfile(${p.id})"><i data-lucide="trash-2" class="icon-sm"></i> \u5220\u9664</button>
+          <button class="alt btn-with-icon profile-btn-danger" onclick="deleteProfile(${p.id})"><i data-lucide="trash-2" class="icon-sm"></i> \u5220\u9664</button>
         </div>
       </div>
-      <div class="schedule-note">\u76ee\u5f55: ${escapeHtml(p.user_data_dir || '\u672a\u8bbe\u7f6e')}</div>
-      <div class="schedule-note">\u4ee3\u7406: ${escapeHtml(p.proxy || '\u65e0')}</div>
-      <div class="schedule-note">\u8fd0\u884c\u6808: ${escapeHtml((p.runtime_stack || '').trim() ? p.runtime_stack : 'default')}</div>
-      <div class="schedule-note">Locale: ${escapeHtml(p.locale || 'default')}</div>
-      <div class="schedule-note">Timezone: ${escapeHtml(p.timezone_id || 'default')}</div>
-    </div>
+      <div class="profile-kv-grid">
+        <div class="profile-kv">
+          <span class="profile-kv-label">\u8fd0\u884c\u6808</span>
+          <span class="profile-kv-value">${escapeHtml((p.runtime_stack || '').trim() ? p.runtime_stack : 'default')}</span>
+        </div>
+        <div class="profile-kv">
+          <span class="profile-kv-label">\u4ee3\u7406</span>
+          <span class="profile-kv-value">${escapeHtml(p.proxy || '\u65e0')}</span>
+        </div>
+        <div class="profile-kv">
+          <span class="profile-kv-label">Locale</span>
+          <span class="profile-kv-value">${escapeHtml(p.locale || 'default')}</span>
+        </div>
+        <div class="profile-kv">
+          <span class="profile-kv-label">Timezone</span>
+          <span class="profile-kv-value">${escapeHtml(p.timezone_id || 'default')}</span>
+        </div>
+      </div>
+      <div class="profile-path-block">
+        <span class="profile-kv-label">\u76ee\u5f55</span>
+        <code class="profile-path-value">${escapeHtml(p.user_data_dir || '\u672a\u8bbe\u7f6e')}</code>
+      </div>
+    </article>
   `).join('');
   if (window.lucide) window.lucide.createIcons({ root: profilesList });
 }
@@ -1094,23 +1114,23 @@ if (tgForm) {
     e.preventDefault();
     const botToken = tgBotToken.value.trim();
     const chatId = tgChatId.value.trim();
-    
+
     tgSaveBtn.disabled = true;
-    tgSaveBtn.textContent = '保存中...';
-    
+    tgSaveBtn.textContent = '\u4fdd\u5b58\u4e2d...';
+
     try {
       await fetchJson('/api/settings/telegram', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ botToken, chatId })
+        body: JSON.stringify({ botToken, chatId }),
       });
-      toast('Telegram 设置已成功保存', 'success');
+      toast('Telegram \u8bbe\u7f6e\u5df2\u6210\u529f\u4fdd\u5b58', 'success');
       await loadTelegramSettings();
     } catch (error) {
-      toast(error.message || '保存设置遇到了错误', 'error');
+      toast(error.message || '\u4fdd\u5b58\u8bbe\u7f6e\u9047\u5230\u4e86\u9519\u8bef', 'error');
     } finally {
       tgSaveBtn.disabled = false;
-      tgSaveBtn.textContent = '淇濆瓨璁剧疆';
+      tgSaveBtn.textContent = '\u4fdd\u5b58\u8bbe\u7f6e';
     }
   });
 }
@@ -1118,16 +1138,16 @@ if (tgForm) {
 if (tgTestBtn) {
   tgTestBtn.addEventListener('click', async () => {
     tgTestBtn.disabled = true;
-    tgTestBtn.textContent = '发送中...';
-    
+    tgTestBtn.textContent = '\u53d1\u9001\u4e2d...';
+
     try {
       await fetchJson('/api/settings/telegram/test', { method: 'POST' });
-      toast('一条测试用推送已发往你的 Telegram', 'success');
+      toast('\u4e00\u6761\u6d4b\u8bd5\u7528\u63a8\u9001\u5df2\u53d1\u5f80\u4f60\u7684 Telegram', 'success');
     } catch (error) {
-      toast(error.message || '发送推送到 Telegram 失败', 'error');
+      toast(error.message || '\u53d1\u9001\u63a8\u9001\u5230 Telegram \u5931\u8d25', 'error');
     } finally {
       tgTestBtn.disabled = false;
-      tgTestBtn.textContent = '发送测试消息';
+      tgTestBtn.textContent = '\u53d1\u9001\u6d4b\u8bd5\u6d88\u606f';
     }
   });
 }

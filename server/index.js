@@ -59,6 +59,8 @@ async function executeTask(id, options = {}) {
     screenshot_path: result.screenshotPath,
     error_text: result.errorText,
     error_code: result.errorCode || null,
+    retryable: result.retryable ?? null,
+    retry_reason: result.retryReason ?? null,
   });
 
   if (refreshScheduleOnSuccess && completedRun.status === 'success') {
@@ -282,30 +284,11 @@ function resolveTaskScriptPath(taskName, type, currentScriptPath = '', existingT
   const normalizedCurrent = String(currentScriptPath || '').replace(/\\/g, '/');
   if (!normalizedCurrent.startsWith('tasks/')) return normalizedCurrent;
 
-  if (existingTaskId) {
-    const existingTask = db.getTask(existingTaskId);
-    const existingScriptPath = String(existingTask?.script_path || '').replace(/\\/g, '/');
-    // Editing task name should not rename the bound script file.
-    if (existingScriptPath && existingScriptPath === normalizedCurrent) {
-      return normalizedCurrent;
-    }
-  }
-
-  const sharedOwner = db.listTasks().find(task => task.script_path === normalizedCurrent && task.id !== existingTaskId);
-  if (sharedOwner) return normalizedCurrent;
-
-  const currentFileName = path.basename(normalizedCurrent);
-  const sourcePath = path.join(config.paths.tasksDir, currentFileName);
-  if (!fs.existsSync(sourcePath)) return normalizedCurrent;
-
-  const candidateFileName = reserveUniqueScriptFilename(taskName, type, existingTaskId, normalizedCurrent);
-  const candidatePath = path.join(config.paths.tasksDir, candidateFileName);
-
-  if (candidateFileName !== currentFileName) {
-    fs.renameSync(sourcePath, candidatePath);
-  }
-
-  return `tasks/${candidateFileName}`;
+  // Task names are labels only. Binding a task to an existing script must never
+  // rename that script; otherwise editing/saving a task can unexpectedly move
+  // shared files such as tasks/agentrouter_checkin.py to tasks/<task-name>.py.
+  // Filename allocation belongs to /api/scripts/import.
+  return normalizedCurrent;
 }
 
 const app = express();
@@ -540,7 +523,7 @@ app.post('/api/telegram/webhook/:token', async (req, res) => {
 
     const task = db.getTask(parsed.taskId);
     const run = db.getRun(parsed.runId);
-    if (!task || !run || run.task_id !== parsed.taskId || run.status !== 'failed') {
+    if (!task || !run || run.task_id !== parsed.taskId || run.status !== 'failed' || Number(run.retryable || 0) !== 1) {
       await answerTelegramCallback(settings.botToken, callbackQueryId, 'This failed run is no longer retryable');
       return res.json({ ok: true });
     }

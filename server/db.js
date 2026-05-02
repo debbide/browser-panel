@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS task_runs (
   screenshot_path TEXT,
   error_text TEXT,
   error_code TEXT,
+  retryable INTEGER,
+  retry_reason TEXT,
   FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -64,6 +66,12 @@ CREATE TABLE IF NOT EXISTS browser_profiles (
 const taskRunColumns = db.prepare('PRAGMA table_info(task_runs)').all().map(row => row.name);
 if (!taskRunColumns.includes('error_code')) {
   db.exec('ALTER TABLE task_runs ADD COLUMN error_code TEXT');
+}
+if (!taskRunColumns.includes('retryable')) {
+  db.exec('ALTER TABLE task_runs ADD COLUMN retryable INTEGER');
+}
+if (!taskRunColumns.includes('retry_reason')) {
+  db.exec('ALTER TABLE task_runs ADD COLUMN retry_reason TEXT');
 }
 
 const taskTableColumns = db.prepare('PRAGMA table_info(tasks)').all().map(row => row.name);
@@ -117,10 +125,10 @@ function deleteTask(id) {
 
 function createRun(taskId, data) {
   const stmt = db.prepare(`
-    INSERT INTO task_runs (task_id, status, started_at, ended_at, exit_code, log_path, screenshot_path, error_text, error_code)
-    VALUES (@task_id, @status, @started_at, @ended_at, @exit_code, @log_path, @screenshot_path, @error_text, @error_code)
+    INSERT INTO task_runs (task_id, status, started_at, ended_at, exit_code, log_path, screenshot_path, error_text, error_code, retryable, retry_reason)
+    VALUES (@task_id, @status, @started_at, @ended_at, @exit_code, @log_path, @screenshot_path, @error_text, @error_code, @retryable, @retry_reason)
   `);
-  const result = stmt.run({ error_code: null, task_id: taskId, ...data });
+  const result = stmt.run({ error_code: null, retryable: null, retry_reason: null, task_id: taskId, ...data });
   return getRun(result.lastInsertRowid);
 }
 
@@ -129,10 +137,10 @@ function updateRun(id, data) {
     UPDATE task_runs
     SET status = @status, ended_at = @ended_at, exit_code = @exit_code,
         log_path = @log_path, screenshot_path = @screenshot_path, error_text = @error_text,
-        error_code = @error_code
+        error_code = @error_code, retryable = @retryable, retry_reason = @retry_reason
     WHERE id = @id
   `);
-  stmt.run({ error_code: null, id, ...data });
+  stmt.run({ error_code: null, retryable: null, retry_reason: null, id, ...data });
   return getRun(id);
 }
 
