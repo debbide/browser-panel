@@ -61,6 +61,14 @@ function resolveRuntimeStack(profile, settings) {
   return normalizeRuntimeStack(settings);
 }
 
+function pickNonEmptyString(...values) {
+  for (const value of values) {
+    const text = String(value === undefined || value === null ? '' : value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
 function getRuntimeNodeModules() {
   const settings = db.getBrowserRuntimeSettings();
   const modules = ['playwright', 'playwright-core'];
@@ -320,8 +328,21 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const runner = task.type === 'python'
     ? `${shellEscape('/usr/bin/python3')} ${shellEscape(taskFile)}`
     : `${shellEscape('/tmp/node-openclaw')} ${shellEscape(wrapperFile)} ${shellEscape(taskFile)}`;
-  const profileLocale = task._profile && task._profile.locale ? String(task._profile.locale).trim() : '';
-  const profileTimezone = task._profile && task._profile.timezone_id ? String(task._profile.timezone_id).trim() : '';
+  const profile = task && task._profile ? task._profile : null;
+  const effectiveUserDataDir = pickNonEmptyString(
+    profile && profile.user_data_dir,
+    task && task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task)
+  );
+  const effectiveProxy = pickNonEmptyString(
+    profile && profile.proxy,
+    config.browser.proxy || ''
+  );
+  const effectiveProfileName = pickNonEmptyString(
+    profile && profile.name,
+    ''
+  );
+  const profileLocale = profile && profile.locale ? String(profile.locale).trim() : '';
+  const profileTimezone = profile && profile.timezone_id ? String(profile.timezone_id).trim() : '';
   const effectiveLocale = profileLocale || config.browser.locale || 'zh-CN';
   const effectiveTimezone = profileTimezone || config.browser.timezoneId || 'Asia/Shanghai';
   const runtimeSettings = db.getBrowserRuntimeSettings();
@@ -342,10 +363,10 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     'cd /home/abc61154321/browser-work &&',
     `DISPLAY=${shellEscape(config.browser.display)}`,
     `XAUTHORITY=${shellEscape(config.browser.xauthority)}`,
-    `BROWSER_USER_DATA_DIR=${shellEscape(task._profile ? task._profile.user_data_dir : (task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task)))}`,
+    `BROWSER_USER_DATA_DIR=${shellEscape(effectiveUserDataDir)}`,
     `BROWSER_CHROME_PATH=${shellEscape(config.browser.chromePath)}`,
-    `BROWSER_PROXY=${shellEscape(task._profile && task._profile.proxy ? task._profile.proxy : (config.browser.proxy || ''))}`,
-    `BROWSER_PROFILE_NAME=${shellEscape(task._profile && task._profile.name ? task._profile.name : '')}`,
+    `BROWSER_PROXY=${shellEscape(effectiveProxy)}`,
+    `BROWSER_PROFILE_NAME=${shellEscape(effectiveProfileName)}`,
     `BROWSER_LOCALE=${shellEscape(effectiveLocale)}`,
     `BROWSER_TIMEZONE=${shellEscape(effectiveTimezone)}`,
     `BROWSER_RUNTIME_STACK=${shellEscape(runtimeStack)}`,

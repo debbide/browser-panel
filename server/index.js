@@ -161,6 +161,14 @@ function normalizeProfileLocale(value) {
   return String(value || '').trim();
 }
 
+function normalizeProfileUserDataDir(value) {
+  return String(value || '').trim();
+}
+
+function normalizeProfileProxy(value) {
+  return String(value || '').trim();
+}
+
 function normalizeProfileTimezone(value) {
   const timezone = String(value || '').trim();
   if (!timezone) return '';
@@ -565,8 +573,8 @@ app.post('/api/browser-profiles', (req, res) => {
     if (!name) return res.status(400).json({ message: 'Profile name is required' });
     const profile = db.createBrowserProfile({
       name: String(name),
-      user_data_dir: String(user_data_dir || ''),
-      proxy: String(proxy || ''),
+      user_data_dir: normalizeProfileUserDataDir(user_data_dir),
+      proxy: normalizeProfileProxy(proxy),
       runtime_stack,
       locale,
       timezone_id,
@@ -586,8 +594,8 @@ app.put('/api/browser-profiles/:id', (req, res) => {
     if (!name) return res.status(400).json({ message: 'Profile name is required' });
     const profile = db.updateBrowserProfile(id, {
       name: String(name),
-      user_data_dir: String(user_data_dir || ''),
-      proxy: String(proxy || ''),
+      user_data_dir: normalizeProfileUserDataDir(user_data_dir),
+      proxy: normalizeProfileProxy(proxy),
       runtime_stack,
       locale,
       timezone_id,

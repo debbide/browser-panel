@@ -877,9 +877,10 @@ async function runTask(id) {
   try {
     runningTaskIds.add(id);
     await loadTasks();
-    const profileId = taskProfileSelect && taskProfileSelect.value
-      ? Number(taskProfileSelect.value)
-      : (browserProfileSelect && browserProfileSelect.value ? Number(browserProfileSelect.value) : null);
+    const task = tasksCache.find(item => item.id === id);
+    const profileId = task && task.browser_profile_id
+      ? Number(task.browser_profile_id)
+      : null;
     await fetchJson(`/api/tasks/${id}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

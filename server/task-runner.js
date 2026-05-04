@@ -31,6 +31,14 @@ function safeString(value) {
   return String(value);
 }
 
+function pickNonEmptyString(...values) {
+  for (const value of values) {
+    const text = safeString(value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
 function maskProxy(value) {
   const raw = safeString(value).trim();
   if (!raw) return '';
@@ -86,6 +94,205 @@ function writeLogHeader(logPath, title, entries) {
   appendLog(logPath, lines.join(''));
 }
 
+function stripAnsi(text) {
+  return String(text || '').replace(
+    // eslint-disable-next-line no-control-regex
+    /[\u001B\u009B][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
+    ''
+  );
+}
+
+function isLikelyUrl(value) {
+  return /^https?:\/\/[^\s]+$/i.test(String(value || '').trim());
+}
+
+function createStepTimelineTracker() {
+  const buffers = {
+    stdout: '',
+    stderr: '',
+  };
+  const timeline = [];
+  let activeStep = null;
+  let lastUrl = '';
+  let lastTitle = '';
+  let finalStatusHint = 'open';
+
+  function toIso(ms) {
+    return new Date(ms).toISOString();
+  }
+
+  function closeActiveStep(status = 'auto') {
+    if (!activeStep) return;
+    const endedMs = Date.now();
+    timeline.push({
+      index: timeline.length + 1,
+      name: activeStep.name,
+      status,
+      started_at: toIso(activeStep.startedMs),
+      ended_at: toIso(endedMs),
+      duration_ms: Math.max(0, endedMs - activeStep.startedMs),
+      stream: activeStep.stream,
+    });
+    activeStep = null;
+  }
+
+  function beginStep(name, stream) {
+    if (!name) return;
+    closeActiveStep('switched');
+    activeStep = {
+      name: String(name).trim().slice(0, 200),
+      startedMs: Date.now(),
+      stream,
+    };
+  }
+
+  function captureContext(line) {
+    const text = String(line || '').trim();
+    if (!text) return;
+
+    const urlTag = text.match(/^\[(?:URL|url)\]\s*(.+)$/);
+    if (urlTag && isLikelyUrl(urlTag[1])) {
+      lastUrl = urlTag[1].trim().slice(0, 500);
+      return;
+    }
+
+    const titleTag = text.match(/^\[(?:TITLE|title)\]\s*(.+)$/);
+    if (titleTag) {
+      lastTitle = titleTag[1].trim().slice(0, 300);
+      return;
+    }
+
+    const colonContext = text.match(/(?:title|\u6807\u9898|url|\u5f53\u524durl)\s*[:\uFF1A]\s*(.+)$/i);
+    if (colonContext) {
+      const value = colonContext[1].trim();
+      if (isLikelyUrl(value)) {
+        lastUrl = value.slice(0, 500);
+      } else if (/(?:title|\u6807\u9898)/i.test(text)) {
+        lastTitle = value.slice(0, 300);
+      }
+    }
+
+    const anyUrl = text.match(/\bhttps?:\/\/[^\s"'<>\(\)]+/i);
+    if (anyUrl && /(url|navigate|goto|open|visit|redirect|page|current|当前|页面|跳转)/i.test(text)) {
+      lastUrl = anyUrl[0].trim().slice(0, 500);
+    }
+  }
+
+  function parseStepSignal(line, stream) {
+    const text = String(line || '').trim();
+    if (!text) return;
+
+    const stepStart = text.match(
+      /^(?:\[(?:STEP|Step|\u6b65\u9aa4)\]|(?:STEP|Step|\u6b65\u9aa4)\s*[:\uFF1A])\s*(.+)$/
+    );
+    if (stepStart) {
+      beginStep(stepStart[1], stream);
+      return;
+    }
+
+    if (
+      /^(?:\[(?:STEP(?:\s*OK|-OK)|Step(?:\s*OK|-OK)|\u6b65\u9aa4\u5b8c\u6210)\]|(?:STEP|Step)\s*OK\s*[:\uFF1A]|\u6b65\u9aa4\u5b8c\u6210\s*[:\uFF1A])/i.test(
+        text
+      )
+    ) {
+      closeActiveStep('ok');
+      return;
+    }
+
+    if (
+      /^(?:\[(?:STEP(?:\s*FAIL|-FAIL)|Step(?:\s*FAIL|-FAIL)|\u6b65\u9aa4\u5931\u8d25)\]|(?:STEP|Step)\s*FAIL\s*[:\uFF1A]|\u6b65\u9aa4\u5931\u8d25\s*[:\uFF1A])/i.test(
+        text
+      )
+    ) {
+      closeActiveStep('failed');
+      return;
+    }
+
+    const sbStart = text.match(/^\=+\s*\{(.+?:SB)\}\s*starts\s*\=+$/i);
+    if (sbStart) {
+      beginStep(`seleniumbase:${sbStart[1]}`, stream);
+      return;
+    }
+
+    const sbDone = text.match(/^\=+\s*\{(.+?:SB)\}\s*(passed|failed)\s+in\s+([0-9.]+s)\s*\=+$/i);
+    if (sbDone) {
+      closeActiveStep(sbDone[2].toLowerCase() === 'passed' ? 'ok' : 'failed');
+      return;
+    }
+
+    const infoAction = text.match(/^\[(?:INFO|info)\]\s*(.+)$/);
+    if (
+      infoAction &&
+      /(\u6253\u5f00|\u8bbf\u95ee|\u8fdb\u5165|\u52a0\u8f7d|\u70b9\u51fb|\u586b\u5199|\u8f93\u5165|\u63d0\u4ea4|\u7b49\u5f85|\u622a\u56fe|\u5904\u7406|\u5f00\u59cb|\u767b\u5f55|\u7b7e\u5230|open|goto|navigate|click|type|fill|submit|wait|login|signin)/i.test(
+        infoAction[1]
+      )
+    ) {
+      beginStep(infoAction[1], stream);
+    }
+  }
+
+  function parseLine(rawLine, stream) {
+    const cleanLine = stripAnsi(rawLine).trim();
+    if (!cleanLine) return;
+    captureContext(cleanLine);
+    parseStepSignal(cleanLine, stream);
+  }
+
+  function ingest(stream, chunk) {
+    const key = stream === 'stderr' ? 'stderr' : 'stdout';
+    buffers[key] += String(chunk || '');
+    const normalized = buffers[key].replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n');
+    buffers[key] = lines.pop() || '';
+    for (const line of lines) {
+      parseLine(line, key);
+    }
+  }
+
+  function finalize(statusHint = 'open') {
+    finalStatusHint = statusHint || 'open';
+    for (const key of Object.keys(buffers)) {
+      if (buffers[key]) parseLine(buffers[key], key);
+      buffers[key] = '';
+    }
+    closeActiveStep(finalStatusHint);
+  }
+
+  function render() {
+    if (!timeline.length) return '(no step markers found)\n';
+    const lines = [];
+    for (const item of timeline) {
+      lines.push(
+        `${item.index}. [${item.status}] ${item.name} | ${item.started_at} -> ${item.ended_at} | ${item.duration_ms}ms | ${item.stream}`
+      );
+    }
+    return `${lines.join('\n')}\n`;
+  }
+
+  return {
+    ingest,
+    finalize,
+    render,
+    getStepCount: () => timeline.length,
+    getLastUrl: () => lastUrl,
+    getLastTitle: () => lastTitle,
+  };
+}
+
+function appendTimelineSection(logPath, tracker) {
+  if (!tracker) return;
+  appendLog(logPath, section('STEP TIMELINE'));
+  appendLog(logPath, tracker.render());
+}
+
+function appendDebugSummarySection(logPath, tracker) {
+  if (!tracker) return;
+  writeLogHeader(logPath, 'DEBUG SUMMARY', [
+    ['timeline_steps', tracker.getStepCount()],
+    ['last_url', tracker.getLastUrl() || ''],
+    ['last_title', tracker.getLastTitle() || ''],
+  ]);
+}
 function resolveTaskProfile(task) {
   if (!task.browser_profile_id) return null;
   return db.getBrowserProfile(task.browser_profile_id) || null;
@@ -102,12 +309,22 @@ function resolveRuntimeStack(task, runtimeSettings) {
 function resolveBrowserContext(task) {
   const runtimeSettings = db.getBrowserRuntimeSettings();
   const profile = task._profile || null;
-  const effectiveProxy = profile && profile.proxy ? profile.proxy : (config.browser.proxy || '');
-  const effectiveUserDataDir = profile && profile.user_data_dir
-    ? profile.user_data_dir
-    : (task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task));
-  const effectiveLocale = profile && profile.locale ? profile.locale : config.browser.locale;
-  const effectiveTimezone = profile && profile.timezone_id ? profile.timezone_id : config.browser.timezoneId;
+  const effectiveProxy = pickNonEmptyString(
+    profile && profile.proxy,
+    config.browser.proxy || ''
+  );
+  const effectiveUserDataDir = pickNonEmptyString(
+    profile && profile.user_data_dir,
+    task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task)
+  );
+  const effectiveLocale = pickNonEmptyString(
+    profile && profile.locale,
+    config.browser.locale
+  );
+  const effectiveTimezone = pickNonEmptyString(
+    profile && profile.timezone_id,
+    config.browser.timezoneId
+  );
   const runtimeStack = resolveRuntimeStack(task, runtimeSettings);
 
   return {
@@ -192,6 +409,7 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
     appendLog(logPath, section('SUBPROCESS OUTPUT'));
 
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    const tracker = createStepTimelineTracker();
     const { cmd, args } = getCommand(task);
     const child = spawn(cmd, args, {
       cwd: config.paths.root,
@@ -206,42 +424,51 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
       child.kill('SIGTERM');
     }, task.timeout_sec * 1000);
 
-    child.stdout.on('data', chunk => logStream.write(chunk));
+    child.stdout.on('data', chunk => {
+      const text = chunk.toString();
+      tracker.ingest('stdout', text);
+      logStream.write(chunk);
+    });
     child.stderr.on('data', chunk => {
       const text = chunk.toString();
       stderrText += text;
+      tracker.ingest('stderr', text);
       logStream.write(chunk);
     });
 
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       activeChildren.delete(task.id);
-      logStream.end();
+      tracker.finalize(code === 0 ? 'ok' : 'failed');
       const errorText = stderrText.trim() || null;
       let errorCode = classifyForegroundFailure(code, errorText);
       if (signal === 'SIGTERM' && !errorText?.includes('Task timeout exceeded')) {
         errorCode = 'stopped';
       }
       const endedAt = new Date().toISOString();
-      writeLogHeader(logPath, 'TASK SUMMARY', [
-        ['ended_at', endedAt],
-        ['status', code === 0 ? 'success' : 'failed'],
-        ['error_code', errorCode || ''],
-        ['exit_code', code ?? ''],
-        ['signal', signal || ''],
-        ['screenshot_exists', fs.existsSync(screenshotPath) ? '1' : '0'],
-      ]);
-      resolve({
-        status: code === 0 ? 'success' : 'failed',
-        errorCode,
-        startedAt,
-        endedAt,
-        exitCode: code,
-        logPath,
-        screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
-        errorText,
-        retryable: code === 0 ? 0 : defaultRetryableByErrorCode(errorCode),
-        retryReason: null,
+      logStream.end(() => {
+        appendTimelineSection(logPath, tracker);
+        appendDebugSummarySection(logPath, tracker);
+        writeLogHeader(logPath, 'TASK SUMMARY', [
+          ['ended_at', endedAt],
+          ['status', code === 0 ? 'success' : 'failed'],
+          ['error_code', errorCode || ''],
+          ['exit_code', code ?? ''],
+          ['signal', signal || ''],
+          ['screenshot_exists', fs.existsSync(screenshotPath) ? '1' : '0'],
+        ]);
+        resolve({
+          status: code === 0 ? 'success' : 'failed',
+          errorCode,
+          startedAt,
+          endedAt,
+          exitCode: code,
+          logPath,
+          screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
+          errorText,
+          retryable: code === 0 ? 0 : defaultRetryableByErrorCode(errorCode),
+          retryReason: null,
+        });
       });
     });
   });
@@ -277,13 +504,21 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   ]);
 
   const realtimeWriter = createRealtimeLogWriter(logPath);
+  const tracker = createStepTimelineTracker();
   const result = await launchBrowserTaskAndWait(task, runId, {
-    onStdout: realtimeWriter.onStdout,
-    onStderr: realtimeWriter.onStderr,
+    onStdout: (text) => {
+      tracker.ingest('stdout', text);
+      realtimeWriter.onStdout(text);
+    },
+    onStderr: (text) => {
+      tracker.ingest('stderr', text);
+      realtimeWriter.onStderr(text);
+    },
   });
   const workerScreenshotPath = result.workerScreenshotPath;
   const workerResultPath = result.resultPath;
   realtimeWriter.finalizeHeadersIfMissing();
+  tracker.finalize(result.exitCode === 0 ? 'ok' : 'failed');
 
   let taskResult = null;
   let taskResultParseError = null;
@@ -296,6 +531,9 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   }
   if (fs.existsSync(workerResultPath)) fs.unlinkSync(workerResultPath);
   if (fs.existsSync(workerScreenshotPath)) fs.copyFileSync(workerScreenshotPath, screenshotPath);
+
+  appendTimelineSection(logPath, tracker);
+  appendDebugSummarySection(logPath, tracker);
 
   appendLog(logPath, section('WORKER RESULT PAYLOAD'));
   if (taskResult) {

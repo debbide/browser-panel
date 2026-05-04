@@ -39,6 +39,14 @@ function resolveRuntimeStack(profile, runtimeSettings) {
   return normalizeRuntimeStack(runtimeSettings);
 }
 
+function pickNonEmptyString(...values) {
+  for (const value of values) {
+    const text = String(value === undefined || value === null ? '' : value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
 function resolvePackageDir(packageName, searchPaths, rootNodeModules) {
   const pathsToTry = Array.from(new Set([
     ...(searchPaths || []),
@@ -248,6 +256,14 @@ async function openManualBrowser(profile) {
   const profileTimezone = profile && profile.timezone_id ? String(profile.timezone_id).trim() : '';
   const effectiveLocale = profileLocale || config.browser.locale || 'zh-CN';
   const effectiveTimezone = profileTimezone || config.browser.timezoneId || 'Asia/Shanghai';
+  const effectiveUserDataDir = pickNonEmptyString(
+    profile && profile.user_data_dir,
+    config.browser.userDataDir
+  );
+  const effectiveProxy = pickNonEmptyString(
+    profile && profile.proxy,
+    config.browser.proxy || ''
+  );
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);
   const launchCommand = runtimeStack === 'seleniumbase'
     ? `${shellEscape('/usr/bin/python3')} ${shellEscape(runtimeScript)}`
@@ -257,9 +273,9 @@ async function openManualBrowser(profile) {
     'cd /home/abc61154321/browser-work &&',
     `DISPLAY=${shellEscape(config.browser.display)}`,
     `XAUTHORITY=${shellEscape(config.browser.xauthority)}`,
-    `BROWSER_USER_DATA_DIR=${shellEscape(profile && profile.user_data_dir ? profile.user_data_dir : config.browser.userDataDir)}`,
+    `BROWSER_USER_DATA_DIR=${shellEscape(effectiveUserDataDir)}`,
     `BROWSER_CHROME_PATH=${shellEscape(config.browser.chromePath)}`,
-    `BROWSER_PROXY=${shellEscape(profile && profile.proxy ? profile.proxy : (config.browser.proxy || ''))}`,
+    `BROWSER_PROXY=${shellEscape(effectiveProxy)}`,
     `BROWSER_LOCALE=${shellEscape(effectiveLocale)}`,
     `BROWSER_TIMEZONE=${shellEscape(effectiveTimezone)}`,
     `BROWSER_RUNTIME_STACK=${shellEscape(runtimeStack)}`,
@@ -277,7 +293,7 @@ async function openManualBrowser(profile) {
 
   manualBrowserState.pid = child.pid;
   manualBrowserState.openedAt = new Date().toISOString();
-  manualBrowserState.userDataDir = profile && profile.user_data_dir ? profile.user_data_dir : config.browser.userDataDir;
+  manualBrowserState.userDataDir = effectiveUserDataDir;
 
   return { open: true, openedAt: manualBrowserState.openedAt, pid: manualBrowserState.pid };
 }
