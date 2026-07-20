@@ -671,10 +671,16 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   const hasScreenshot = fs.existsSync(screenshotPath);
   // Prefer explicit TASK_RESULT_PATH payload. For legacy GitHub-style scripts that
   // never write it: treat clean exit (code 0) as success so the panel matches reality.
-  const exitOk = result.exitCode === 0 || result.exitCode === '0';
+  const exitCodeNum = Number(result.exitCode);
+  const exitOk = result.exitCode === 0 || result.exitCode === '0' || exitCodeNum === 0;
   let ok = false;
-  if (taskResult && typeof taskResult === 'object') {
-    ok = taskResult.ok === true;
+  if (taskResult && typeof taskResult === 'object' && !Array.isArray(taskResult)) {
+    // Only trust payload when it explicitly sets ok
+    if (Object.prototype.hasOwnProperty.call(taskResult, 'ok')) {
+      ok = taskResult.ok === true || taskResult.ok === 1 || taskResult.ok === '1' || taskResult.ok === 'true';
+    } else if (exitOk) {
+      ok = true;
+    }
   } else if (exitOk) {
     ok = true;
   }
@@ -683,8 +689,10 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     if (/timed out/i.test(result.stderr || '')) errorCode = 'timeout';
     else if ((result.stderr || '').includes('Permission denied')) errorCode = 'permission_error';
     else if (taskResult?.error) errorCode = 'browser_task_error';
-    else if (!taskResult) errorCode = 'missing_result';
-    else errorCode = 'browser_launch_error';
+    else if (!taskResult && !exitOk) errorCode = 'missing_result';
+    else if (!taskResult && exitOk) errorCode = null; // success without payload
+    else if (!exitOk) errorCode = 'browser_launch_error';
+    else errorCode = 'browser_task_error';
   }
   const scriptRetryable = normalizeRetryable(taskResult?.data?.retryable ?? taskResult?.retryable);
   const retryable = ok ? 0 : (scriptRetryable ?? defaultRetryableByErrorCode(errorCode));
