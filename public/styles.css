@@ -977,35 +977,120 @@ pre {
   border: 1px solid rgba(251, 191, 36, 0.28);
 }
 
-/* Env key-value editor (GitHub-style secrets/vars) */
+/* Env editor — list + dialog (GitHub Secrets style) */
 .env-editor {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.4);
+  overflow: hidden;
 }
 
-.env-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.9fr) minmax(160px, 1.4fr) auto auto;
-  gap: 8px;
-  align-items: start;
-}
-
-.env-row .env-name,
-.env-row .env-value {
-  width: 100%;
-  font-family: var(--font-heading);
+.env-list-empty {
+  padding: 20px 16px;
+  text-align: center;
   font-size: 13px;
 }
 
-.env-row .env-value {
-  min-height: 36px;
-  resize: vertical;
+.env-list-head,
+.env-list-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.1fr) minmax(120px, 1.4fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
 }
 
-.env-secret-wrap {
+.env-list-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(30, 41, 59, 0.5);
+}
+
+.env-list-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.env-list-row:last-child {
+  border-bottom: none;
+}
+
+.env-list-row:hover {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.env-list-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.env-list-name code {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  color: #e2e8f0;
+  word-break: break-all;
+}
+
+.env-list-value {
+  font-size: 13px;
+  font-family: var(--font-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  padding-top: 8px;
+  min-width: 0;
+}
+
+.env-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.env-list-actions .alt {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.env-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.env-badge-secret {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+}
+
+.env-badge-var {
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+}
+
+.env-var-dialog .env-dlg-name[readonly] {
+  opacity: 0.85;
+  cursor: default;
+}
+
+.env-var-dialog .env-dlg-value {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  font-family: var(--font-heading);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .env-advanced {
@@ -1028,11 +1113,13 @@ pre {
 }
 
 @media (max-width: 720px) {
-  .env-row {
+  .env-list-head,
+  .env-list-row {
     grid-template-columns: 1fr;
+    gap: 6px;
   }
-  .env-secret-wrap {
-    padding-top: 0;
+  .env-list-actions {
+    justify-content: flex-start;
   }
 }
 
