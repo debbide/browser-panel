@@ -421,17 +421,38 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['TASK_RESULT_PATH', resultPath],
   ];
 
-  const cmdParts = [`cd ${shellEscape(workDir)} &&`];
+  // Ensure SB can create downloaded_files under cwd (Permission denied if root-owned 755)
+  try {
+    fs.mkdirSync(path.join(workDir, 'downloaded_files'), { recursive: true });
+    fs.mkdirSync(path.join(workDir, 'assets'), { recursive: true });
+    fs.mkdirSync(path.join(workDir, 'archived_files'), { recursive: true });
+    fs.mkdirSync(workerScreenshotDir, { recursive: true });
+    fs.chmodSync(workDir, 0o777);
+    fs.chmodSync(path.join(workDir, 'downloaded_files'), 0o777);
+    fs.chmodSync(path.join(workDir, 'assets'), 0o777);
+    fs.chmodSync(path.join(workDir, 'archived_files'), 0o777);
+  } catch (e) {
+    console.warn('[browser-launcher] chmod workDir:', e.message);
+  }
+  const browserUser = String((config.browser && config.browser.user) || 'browser').trim();
+  spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, workDir], { stdio: 'ignore' });
+  spawnSync('chmod', ['-R', 'a+rwX', workDir], { stdio: 'ignore' });
+
+  const cmdParts = [
+    `mkdir -p ${shellEscape(path.join(workDir, 'downloaded_files'))} ${shellEscape(path.join(workDir, 'assets'))} ${shellEscape(path.join(workDir, 'archived_files'))}`,
+    `chmod -R a+rwX ${shellEscape(workDir)} 2>/dev/null || true`,
+    `cd ${shellEscape(workDir)}`,
+  ];
   for (const [key, value] of userEnvPairs) {
     // Skip keys that will be forced by system layer
     if (systemPairs.some(([sk]) => sk === key)) continue;
-    cmdParts.push(`${key}=${shellEscape(value)}`);
+    cmdParts.push(`export ${key}=${shellEscape(value)}`);
   }
   for (const [key, value] of systemPairs) {
-    cmdParts.push(`${key}=${shellEscape(value)}`);
+    cmdParts.push(`export ${key}=${shellEscape(value)}`);
   }
   cmdParts.push(runner);
-  const cmd = cmdParts.join(' ');
+  const cmd = cmdParts.join(' && ');
 
   const startedAt = new Date().toISOString();
   return await new Promise((resolve) => {
@@ -441,7 +462,6 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     let runUid;
     let runGid;
     let runHome = process.env.HOME || '';
-    const browserUser = String((config.browser && config.browser.user) || '').trim();
     if (browserUser) {
       try {
         const out = spawnSync('getent', ['passwd', browserUser], { encoding: 'utf8' });
@@ -455,6 +475,26 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
         // keep current user
       }
     }
+    // Run shell as root so mkdir/chmod work, then the python/node process inherits cwd.
+    // Drop privileges only for the final runner via setpriv if available.
+    let finalCmd = cmd;
+    if (Number.isFinite(runUid) && Number.isFinite(runGid)) {
+      const hasSetpriv = spawnSync('bash', ['-lc', 'command -v setpriv'], { encoding: 'utf8' }).status === 0;
+      if (hasSetpriv) {
+        // mkdir as root, then re-run only the last segment as browser user
+        const prep = cmdParts.slice(0, -1).join(' && ');
+        const envExports = cmdParts.filter((p) => p.startsWith('export ')).join(' && ');
+        finalCmd = [
+          prep,
+          // run actual task as browser user with same env
+          `setpriv --reuid=${runUid} --regid=${runGid} --clear-groups --inh-caps=-all -- ` +
+            `/bin/bash -lc ${shellEscape(`${envExports} && cd ${shellEscape(workDir)} && ${runner}`)}`,
+        ].join(' && ');
+      } else {
+        // Fallback: whole command as browser user; dirs already chmod a+rwX
+        finalCmd = cmd;
+      }
+    }
     const spawnOpts = {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
@@ -464,14 +504,13 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
         USER: browserUser || process.env.USER,
         LOGNAME: browserUser || process.env.LOGNAME,
       },
-      shell: true,
     };
-    if (Number.isFinite(runUid) && Number.isFinite(runGid)) {
+    // If no setpriv, drop privileges on the bash process (dirs must be world-writable)
+    if ((!finalCmd.includes('setpriv')) && Number.isFinite(runUid) && Number.isFinite(runGid)) {
       spawnOpts.uid = runUid;
       spawnOpts.gid = runGid;
     }
-    // cmd is a full shell command string with env assignments; run via bash -c without su
-    const child = spawn('/bin/bash', ['-c', cmd], spawnOpts);
+    const child = spawn('/bin/bash', ['-c', finalCmd], spawnOpts);
     activeBrowserRuns.set(Number(task.id), {
       child,
       task: { ...task, _launcherPid: child.pid },
