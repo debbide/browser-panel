@@ -853,22 +853,32 @@ function syncTaskParamsUI(scriptPath, paramsOrEnv = {}) {
   if (taskEnvTemplateHost2playBtn) taskEnvTemplateHost2playBtn.hidden = !isHost2;
   if (taskParamsHint) {
     taskParamsHint.textContent = isHost2
-      ? 'Host2Play：常用 RENEW_URLS / MAX_RETRIES / USE_TEMP_PROFILE 等，可点模板预填'
+      ? 'Host2Play：常用 RENEW_URLS / MAX_RETRIES 等，可点模板预填'
       : '键值注入脚本 env；Secret 勾选后掩码保存';
   }
 
-  // Strip control keys from the visible table (managed by checkbox)
+  // Hide internal control keys from the visible list (managed by UI switches)
+  const HIDDEN_ENV_KEYS = new Set([
+    'USE_GLOBAL_TELEGRAM',
+    'USE_TEMP_PROFILE',
+    'use_temp_profile',
+    'use_global_telegram',
+  ]);
   let rows = paramsOrEnv;
   if (Array.isArray(paramsOrEnv)) {
+    rows = paramsOrEnv.filter((e) => !HIDDEN_ENV_KEYS.has(String(e?.name || '').toUpperCase()) && !HIDDEN_ENV_KEYS.has(String(e?.name || '')));
+    // also filter case-insensitively
     rows = paramsOrEnv.filter((e) => {
       const n = String(e?.name || '').toUpperCase();
-      return n !== 'USE_GLOBAL_TELEGRAM';
+      return n !== 'USE_GLOBAL_TELEGRAM' && n !== 'USE_TEMP_PROFILE';
     });
     taskEnvUI.setRows(rows);
   } else {
     const obj = { ...(paramsOrEnv || {}) };
     delete obj.USE_GLOBAL_TELEGRAM;
     delete obj.use_global_telegram;
+    delete obj.USE_TEMP_PROFILE;
+    delete obj.use_temp_profile;
     taskEnvUI.setRows(entriesFromParamsObject(obj));
   }
 
@@ -904,7 +914,6 @@ function applyHost2PlayTemplate() {
     { name: 'VISION_CALL_BUDGET', value: '200', is_secret: 0, has_value: true },
     { name: 'MAX_RETRIES', value: '8', is_secret: 0, has_value: true },
     { name: 'MAX_RENEW_RETRIES_PER_URL', value: '8', is_secret: 0, has_value: true },
-    { name: 'USE_TEMP_PROFILE', value: '1', is_secret: 0, has_value: true },
     { name: 'VISION_DEBUG', value: '0', is_secret: 0, has_value: true },
   ];
   for (const item of defaults) {
@@ -2046,14 +2055,12 @@ form.addEventListener('submit', async (event) => {
     payload.timeout_sec = 900;
   }
   payload.browser_profile_id = taskProfileSelect && taskProfileSelect.value ? Number(taskProfileSelect.value) : null;
-  // 与 env 侧 USE_TEMP_PROFILE / BROWSER_PROXY 对齐
+  // 临时/持久只走 use_persistent 字段，不再写入可见 env 列表
   const envByName = new Map(env.map((e) => [e.name, e]));
-  envByName.set('USE_TEMP_PROFILE', {
-    name: 'USE_TEMP_PROFILE',
-    value: wantPersistent ? '0' : '1',
-    is_secret: 0,
-  });
-  // 全局 Telegram 开关：默认开；关则脚本不自动带面板 TG（仍可手写 TG_*）
+  envByName.delete('USE_TEMP_PROFILE');
+  envByName.delete('use_temp_profile');
+
+  // 全局 Telegram 开关：只存内部键，列表展示时会过滤掉
   const useGlobalTg = taskUseGlobalTelegram ? taskUseGlobalTelegram.checked : true;
   envByName.set('USE_GLOBAL_TELEGRAM', {
     name: 'USE_GLOBAL_TELEGRAM',
@@ -2061,12 +2068,13 @@ form.addEventListener('submit', async (event) => {
     is_secret: 0,
   });
   if (useGlobalTg) {
-    // 避免任务里空的 TG_* 占位干扰（服务端也会 force 注入全局）
     for (const k of ['TG_TOKEN', 'TG_BOT_TOKEN', 'TG_CHAT_ID', 'CHAT_ID', 'TG_PROXY', 'TG_PROXY_URL']) {
       const cur = envByName.get(k);
       if (cur && !String(cur.value || '').trim()) envByName.delete(k);
     }
   }
+
+  // 任务代理单独输入框 → BROWSER_PROXY（业务需要，保留在 env）
   const taskProxy = getTaskProxyFromForm();
   if (taskProxy) {
     envByName.set('BROWSER_PROXY', {
@@ -2077,12 +2085,17 @@ form.addEventListener('submit', async (event) => {
   } else {
     envByName.delete('BROWSER_PROXY');
   }
-  payload.env = [...envByName.values()];
+
+  payload.env = [...envByName.values()].filter((e) => {
+    const n = String(e.name || '').toUpperCase();
+    return n !== 'USE_TEMP_PROFILE';
+  });
   payload.params = {
     ...params,
-    USE_TEMP_PROFILE: wantPersistent ? '0' : '1',
     USE_GLOBAL_TELEGRAM: useGlobalTg ? '1' : '0',
   };
+  delete payload.params.USE_TEMP_PROFILE;
+  delete payload.params.use_temp_profile;
   if (taskProxy) payload.params.BROWSER_PROXY = taskProxy;
   else delete payload.params.BROWSER_PROXY;
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
