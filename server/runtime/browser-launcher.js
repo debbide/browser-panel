@@ -429,6 +429,13 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     fs.mkdirSync(path.join(workDir, 'assets'), { recursive: true });
     fs.mkdirSync(path.join(workDir, 'archived_files'), { recursive: true });
     fs.mkdirSync(workerScreenshotDir, { recursive: true });
+    // Chrome user-data-dir must exist and be writable by browser user (temp or persistent)
+    if (effectiveUserDataDir) {
+      fs.mkdirSync(effectiveUserDataDir, { recursive: true });
+      fs.mkdirSync(path.dirname(effectiveUserDataDir), { recursive: true });
+    }
+    fs.mkdirSync(getRuntimeDataDir(), { recursive: true });
+    fs.mkdirSync(path.join(getRuntimeDataDir(), 'profiles'), { recursive: true });
     fs.chmodSync(workDir, 0o777);
     fs.chmodSync(path.join(workDir, 'downloaded_files'), 0o777);
     fs.chmodSync(path.join(workDir, 'assets'), 0o777);
@@ -438,6 +445,17 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   }
   spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, workDir], { stdio: 'ignore' });
   spawnSync('chmod', ['-R', 'a+rwX', workDir], { stdio: 'ignore' });
+  // Profile dirs under panel root are often root-owned; browser user needs write for Playwright/Chrome
+  if (effectiveUserDataDir) {
+    spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, effectiveUserDataDir], { stdio: 'ignore' });
+    spawnSync('chmod', ['-R', 'a+rwX', effectiveUserDataDir], { stdio: 'ignore' });
+    const parentProfiles = path.dirname(effectiveUserDataDir);
+    spawnSync('chown', [`${browserUser}:${browserUser}`, parentProfiles], { stdio: 'ignore' });
+    spawnSync('chmod', ['a+rwx', parentProfiles], { stdio: 'ignore' });
+  }
+  const runtimeDataDir = getRuntimeDataDir();
+  spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, runtimeDataDir], { stdio: 'ignore' });
+  spawnSync('chmod', ['-R', 'a+rwX', runtimeDataDir], { stdio: 'ignore' });
 
   // SeleniumBase UC downloads chromedriver into site-packages/.../drivers (often root-owned).
   // Make that dir writable for browser user, or fail loudly in logs.
