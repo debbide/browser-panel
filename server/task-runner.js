@@ -101,6 +101,13 @@ function isoNow() {
   return new Date().toISOString();
 }
 
+/** 子进程日志只用时分秒，避免 2026-07-20T09:15:07.286Z 这种过长前缀 */
+function logTimeNow() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /** 给子进程输出按行加时间戳（项目层统一，脚本不用改） */
 function createTimestampedLineWriter(writeLine) {
   let buffer = '';
@@ -113,12 +120,12 @@ function createTimestampedLineWriter(writeLine) {
       while ((idx = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, idx);
         buffer = buffer.slice(idx + 1);
-        writeLine(`${isoNow()} ${line}\n`);
+        writeLine(`${logTimeNow()} ${line}\n`);
       }
     },
     flush() {
       if (!buffer) return;
-      writeLine(`${isoNow()} ${buffer}\n`);
+      writeLine(`${logTimeNow()} ${buffer}\n`);
       buffer = '';
     },
   };
