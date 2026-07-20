@@ -419,10 +419,41 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   return await new Promise((resolve) => {
     const onStdout = hooks && typeof hooks.onStdout === 'function' ? hooks.onStdout : null;
     const onStderr = hooks && typeof hooks.onStderr === 'function' ? hooks.onStderr : null;
-    const child = spawn('su', ['-s', '/bin/bash', config.browser.user, '-c', cmd], {
+    // Prefer setuid over `su` — avoids pam/user-systemd failures in containers.
+    let runUid;
+    let runGid;
+    let runHome = process.env.HOME || '';
+    const browserUser = String((config.browser && config.browser.user) || '').trim();
+    if (browserUser) {
+      try {
+        const out = spawnSync('getent', ['passwd', browserUser], { encoding: 'utf8' });
+        const parts = String(out.stdout || '').trim().split(':');
+        if (parts.length >= 6) {
+          runUid = Number(parts[2]);
+          runGid = Number(parts[3]);
+          runHome = parts[5] || runHome;
+        }
+      } catch {
+        // keep current user
+      }
+    }
+    const spawnOpts = {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
-    });
+      env: {
+        ...process.env,
+        HOME: runHome || process.env.HOME,
+        USER: browserUser || process.env.USER,
+        LOGNAME: browserUser || process.env.LOGNAME,
+      },
+      shell: true,
+    };
+    if (Number.isFinite(runUid) && Number.isFinite(runGid)) {
+      spawnOpts.uid = runUid;
+      spawnOpts.gid = runGid;
+    }
+    // cmd is a full shell command string with env assignments; run via bash -c without su
+    const child = spawn('/bin/bash', ['-c', cmd], spawnOpts);
     activeBrowserRuns.set(Number(task.id), {
       child,
       task: { ...task, _launcherPid: child.pid },

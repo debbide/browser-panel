@@ -137,6 +137,35 @@ function getBrowserWorkDir() {
     : path.join('/home', config.browser.user || 'browser', 'browser-work');
 }
 
+/** Resolve unix user for browser processes without calling `su` (container-safe). */
+function resolveBrowserRunAs() {
+  const name = String((config.browser && config.browser.user) || 'browser').trim() || 'browser';
+  const home = String((config.browser && config.browser.home) || path.join('/home', name));
+  try {
+    const out = spawnSync('getent', ['passwd', name], { encoding: 'utf8' });
+    const line = String(out.stdout || '').trim();
+    // name:x:uid:gid:gecos:home:shell
+    const parts = line.split(':');
+    if (parts.length >= 4) {
+      const uid = Number(parts[2]);
+      const gid = Number(parts[3]);
+      const homeDir = parts[5] || home;
+      if (Number.isFinite(uid) && Number.isFinite(gid)) {
+        return { user: name, uid, gid, home: homeDir };
+      }
+    }
+  } catch {
+    // fall through
+  }
+  // Run as current process user (root on typical panel service) if target user missing
+  return {
+    user: process.env.USER || 'root',
+    uid: typeof process.getuid === 'function' ? process.getuid() : undefined,
+    gid: typeof process.getgid === 'function' ? process.getgid() : undefined,
+    home: process.env.HOME || home,
+  };
+}
+
 function ensureManualRuntimeFiles(runtimeSettings) {
   const workerRoot = getBrowserWorkDir();
   const browserUser = String((config.browser && config.browser.user) || 'browser');
@@ -329,30 +358,45 @@ async function openManualBrowser(profile) {
     config.browser.proxy || ''
   );
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);
-  const launchCommand = runtimeStack === 'seleniumbase'
-    ? `${shellEscape('/usr/bin/python3')} ${shellEscape(runtimeScript)}`
-    : `exec ${shellEscape(workerNodePath)} ${shellEscape(runtimeScript)}`;
+  // Avoid `su` (triggers user systemd / pam in many containers → Permission denied).
+  // Drop privileges with setuid/setgid when possible; otherwise run as current user.
+  const runAs = resolveBrowserRunAs();
+  const childEnv = {
+    ...process.env,
+    HOME: runAs.home,
+    USER: runAs.user,
+    LOGNAME: runAs.user,
+    DISPLAY: String(config.browser.display || ':1.0'),
+    XAUTHORITY: String(config.browser.xauthority || ''),
+    BROWSER_USER_DATA_DIR: effectiveUserDataDir,
+    BROWSER_CHROME_PATH: String(config.browser.chromePath || ''),
+    BROWSER_PROXY: effectiveProxy || '',
+    BROWSER_LOCALE: effectiveLocale,
+    BROWSER_TIMEZONE: effectiveTimezone,
+    BROWSER_RUNTIME_STACK: runtimeStack,
+    BROWSER_USE_PLAYWRIGHT_EXTRA: usePlaywrightExtra ? '1' : '0',
+    BROWSER_PLUGIN_PACKAGES: runtimeSettings.pluginPackages || '',
+    BROWSER_HEADLESS: 'false',
+    BROWSER_WORK_DIR: workDir,
+  };
 
-  const cmd = [
-    `cd ${shellEscape(workDir)} &&`,
-    `DISPLAY=${shellEscape(config.browser.display)}`,
-    `XAUTHORITY=${shellEscape(config.browser.xauthority)}`,
-    `BROWSER_USER_DATA_DIR=${shellEscape(effectiveUserDataDir)}`,
-    `BROWSER_CHROME_PATH=${shellEscape(config.browser.chromePath)}`,
-    `BROWSER_PROXY=${shellEscape(effectiveProxy)}`,
-    `BROWSER_LOCALE=${shellEscape(effectiveLocale)}`,
-    `BROWSER_TIMEZONE=${shellEscape(effectiveTimezone)}`,
-    `BROWSER_RUNTIME_STACK=${shellEscape(runtimeStack)}`,
-    `BROWSER_USE_PLAYWRIGHT_EXTRA=${shellEscape(usePlaywrightExtra ? '1' : '0')}`,
-    `BROWSER_PLUGIN_PACKAGES=${shellEscape(runtimeSettings.pluginPackages || '')}`,
-    `BROWSER_HEADLESS='false'`,
-    launchCommand,
-  ].join(' ');
-
-  const child = spawn('su', ['-s', '/bin/bash', config.browser.user, '-c', cmd], {
+  const spawnOpts = {
+    cwd: workDir,
+    env: childEnv,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  };
+  if (runAs.uid != null && runAs.gid != null) {
+    spawnOpts.uid = runAs.uid;
+    spawnOpts.gid = runAs.gid;
+  }
+
+  let child;
+  if (runtimeStack === 'seleniumbase') {
+    child = spawn('/usr/bin/python3', [runtimeScript], spawnOpts);
+  } else {
+    child = spawn(workerNodePath, [runtimeScript], spawnOpts);
+  }
   let launchLog = '';
   const onChunk = (buf) => {
     const text = buf.toString();
@@ -362,6 +406,9 @@ async function openManualBrowser(profile) {
   };
   if (child.stdout) child.stdout.on('data', onChunk);
   if (child.stderr) child.stderr.on('data', onChunk);
+  child.on('error', (err) => {
+    console.error(`[browser-launch] spawn error: ${err.message}`);
+  });
   child.on('exit', (code, signal) => {
     if (code || signal) {
       console.error(
@@ -379,6 +426,7 @@ async function openManualBrowser(profile) {
   manualBrowserState.pid = child.pid;
   manualBrowserState.openedAt = new Date().toISOString();
   manualBrowserState.userDataDir = effectiveUserDataDir;
+  console.log(`[browser-launch] started pid=${child.pid} as ${runAs.user} uid=${runAs.uid ?? 'same'}`);
 
   return { open: true, openedAt: manualBrowserState.openedAt, pid: manualBrowserState.pid };
 }
