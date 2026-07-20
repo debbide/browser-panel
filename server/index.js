@@ -6,7 +6,7 @@ const config = require('../config');
 const db = require('./db');
 const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
 const { reloadJobs, isTaskRunning, runTaskSafely, computeNextRun } = require('./scheduler');
-const { openManualBrowser, closeManualBrowser, getManualBrowserStatus } = require('./browser');
+const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
@@ -1136,5 +1136,10 @@ app.use((req, res) => {
 
 app.listen(config.server.port, config.server.host, () => {
   reloadJobs(executeTask);
+  try {
+    prepareBrowserWorkspace();
+  } catch (err) {
+    console.error('[boot] browser workspace not ready:', err.message || err);
+  }
   console.log(`Panel running on http://${config.server.host}:${config.server.port}`);
 });

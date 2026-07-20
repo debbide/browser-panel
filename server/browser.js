@@ -139,7 +139,12 @@ function getBrowserWorkDir() {
 
 function ensureManualRuntimeFiles(runtimeSettings) {
   const workerRoot = getBrowserWorkDir();
+  const browserUser = String((config.browser && config.browser.user) || 'browser');
   const workerNodeModules = path.join(workerRoot, 'node_modules');
+  fs.mkdirSync(workerRoot, { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'screenshots'), { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'task-results'), { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'persistent'), { recursive: true });
   fs.mkdirSync(workerNodeModules, { recursive: true });
 
   const effectiveRuntimeSettings = runtimeSettings || db.getBrowserRuntimeSettings();
@@ -157,10 +162,31 @@ function ensureManualRuntimeFiles(runtimeSettings) {
     { from: path.join(config.paths.root, 'server', 'runtime', 'manual-browser-session-sb.py'), to: path.join(workerRoot, 'manual-browser-session-sb.py') },
   ];
 
+  const missing = [];
   for (const file of files) {
-    if (!fs.existsSync(file.from)) continue;
+    if (!fs.existsSync(file.from)) {
+      missing.push(file.from);
+      continue;
+    }
     if (fs.existsSync(file.to)) fs.rmSync(file.to, { recursive: true, force: true });
     fs.cpSync(file.from, file.to, { recursive: true });
+  }
+  if (missing.length) {
+    console.warn('[browser] runtime sources missing:', missing.join(', '));
+  }
+
+  // Prefer symlink to panel node_modules when copies are empty/partial
+  const panelModules = path.join(config.paths.root, 'node_modules');
+  if (fs.existsSync(panelModules)) {
+    try {
+      const linked = path.join(workerRoot, 'node_modules');
+      if (!fs.existsSync(path.join(linked, 'playwright')) && !fs.existsSync(path.join(linked, 'playwright-core'))) {
+        fs.rmSync(linked, { recursive: true, force: true });
+        fs.symlinkSync(panelModules, linked, 'dir');
+      }
+    } catch (err) {
+      console.warn('[browser] node_modules link failed:', err.message);
+    }
   }
 
   // Portable worker node: use current process binary (no hard-coded nvm path).
@@ -171,6 +197,33 @@ function ensureManualRuntimeFiles(runtimeSettings) {
   }
   fs.copyFileSync(sourceNode, workerNodePath);
   fs.chmodSync(workerNodePath, 0o755);
+
+  // Best-effort ownership for su browser user
+  try {
+    spawnSync('bash', ['-lc', `chown -R ${shellEscape(browserUser)}:${shellEscape(browserUser)} ${shellEscape(workerRoot)} 2>/dev/null || true`], {
+      stdio: 'ignore',
+    });
+  } catch {
+    // ignore
+  }
+
+  const sessionJs = path.join(workerRoot, 'manual-browser-session.js');
+  if (!fs.existsSync(sessionJs)) {
+    throw new Error(`Browser runtime not prepared: missing ${sessionJs}`);
+  }
+  return workerRoot;
+}
+
+/** Call on panel boot so "open browser" works without manual VPS setup. */
+function prepareBrowserWorkspace() {
+  try {
+    const root = ensureManualRuntimeFiles(db.getBrowserRuntimeSettings());
+    console.log(`[browser] workspace ready: ${root}`);
+    return root;
+  } catch (err) {
+    console.error('[browser] workspace prepare failed:', err.message || err);
+    throw err;
+  }
 }
 
 function isPidAlive(pid) {
@@ -298,7 +351,28 @@ async function openManualBrowser(profile) {
 
   const child = spawn('su', ['-s', '/bin/bash', config.browser.user, '-c', cmd], {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let launchLog = '';
+  const onChunk = (buf) => {
+    const text = buf.toString();
+    launchLog += text;
+    if (launchLog.length > 4000) launchLog = launchLog.slice(-4000);
+    process.stderr.write(`[browser-launch] ${text}`);
+  };
+  if (child.stdout) child.stdout.on('data', onChunk);
+  if (child.stderr) child.stderr.on('data', onChunk);
+  child.on('exit', (code, signal) => {
+    if (code || signal) {
+      console.error(
+        `[browser-launch] exited code=${code} signal=${signal || ''} tail=${launchLog.slice(-500)}`
+      );
+    }
+    if (manualBrowserState.pid === child.pid) {
+      manualBrowserState.pid = null;
+      manualBrowserState.openedAt = null;
+      manualBrowserState.userDataDir = null;
+    }
   });
   child.unref();
 
@@ -352,4 +426,7 @@ module.exports = {
   closeManualBrowser,
   getManualBrowserStatus,
   createHelpers,
+  prepareBrowserWorkspace,
+  ensureManualRuntimeFiles,
+  getBrowserWorkDir,
 };
