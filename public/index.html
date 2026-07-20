@@ -518,6 +518,13 @@
                 <div>
                   <label class="field-label" for="condition-url">检测 URL</label>
                   <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
+                  <div class="schedule-note" style="margin-top:4px;">
+                    检测默认走<strong>任务代理</strong>（任务 BROWSER_PROXY → 浏览器配置代理 → 全局代理）。纯 IPv6 VPS 必须给任务配 HTTP 代理，否则直连会误报失败。SOCKS 暂不支持检测通道。
+                  </div>
+                </div>
+                <div>
+                  <label class="field-label" for="condition-proxy">检测代理覆盖（可选）</label>
+                  <input id="condition-proxy" name="condition_proxy" type="text" placeholder="留空=用任务代理；例 http://127.0.0.1:7890" />
                 </div>
                 <div class="grid interval-range-grid">
                   <div>

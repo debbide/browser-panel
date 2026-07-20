@@ -176,6 +176,7 @@ const conditionCheckUnitEl = document.getElementById('condition-check-unit');
 const conditionCooldownEl = document.getElementById('condition-cooldown');
 const conditionCooldownUnitEl = document.getElementById('condition-cooldown-unit');
 const conditionUrlEl = document.getElementById('condition-url');
+const conditionProxyEl = document.getElementById('condition-proxy');
 const conditionMethodEl = document.getElementById('condition-method');
 const conditionTimeoutEl = document.getElementById('condition-timeout');
 const conditionSuccessStatusesEl = document.getElementById('condition-success-statuses');
@@ -503,6 +504,7 @@ function buildConditionPayloadFromForm() {
         timeout_ms: Math.min(60000, Math.max(1000, (Number(conditionTimeoutEl?.value) || 10) * 1000)),
         success_statuses: String(conditionSuccessStatusesEl?.value || '200-399').trim() || '200-399',
         expect_body_includes: String(conditionExpectBodyEl?.value || '').trim(),
+        proxy: String(conditionProxyEl?.value || '').trim(),
       },
     },
   };
@@ -521,6 +523,7 @@ function fillConditionForm(task) {
   if (conditionCooldownEl) conditionCooldownEl.value = cool.value;
   if (conditionCooldownUnitEl) conditionCooldownUnitEl.value = cool.unit;
   if (conditionUrlEl) conditionUrlEl.value = cfg.url || '';
+  if (conditionProxyEl) conditionProxyEl.value = cfg.proxy || '';
   if (conditionMethodEl) conditionMethodEl.value = cfg.method || 'GET';
   if (conditionTimeoutEl) conditionTimeoutEl.value = Math.round((Number(cfg.timeout_ms) || 10000) / 1000);
   if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = cfg.success_statuses || '200-399';
@@ -537,6 +540,7 @@ function resetConditionForm() {
   if (conditionCooldownEl) conditionCooldownEl.value = 10;
   if (conditionCooldownUnitEl) conditionCooldownUnitEl.value = 'minutes';
   if (conditionUrlEl) conditionUrlEl.value = '';
+  if (conditionProxyEl) conditionProxyEl.value = '';
   if (conditionMethodEl) conditionMethodEl.value = 'GET';
   if (conditionTimeoutEl) conditionTimeoutEl.value = 10;
   if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = '200-399';
@@ -552,7 +556,7 @@ function updateConditionFieldsUI() {
   }
   const controls = [
     conditionTypeEl, conditionCheckIntervalEl, conditionCheckUnitEl,
-    conditionCooldownEl, conditionCooldownUnitEl, conditionUrlEl, conditionMethodEl,
+    conditionCooldownEl, conditionCooldownUnitEl, conditionUrlEl, conditionProxyEl, conditionMethodEl,
     conditionTimeoutEl, conditionSuccessStatusesEl, conditionExpectBodyEl, conditionTestBtn,
   ];
   for (const el of controls) {
@@ -2504,6 +2508,7 @@ if (conditionTestBtn) {
               timeout_ms: Math.min(60000, Math.max(1000, (Number(conditionTimeoutEl?.value) || 10) * 1000)),
               success_statuses: String(conditionSuccessStatusesEl?.value || '200-399').trim() || '200-399',
               expect_body_includes: String(conditionExpectBodyEl?.value || '').trim(),
+              proxy: String(conditionProxyEl?.value || '').trim(),
             },
           },
         };

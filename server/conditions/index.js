@@ -61,8 +61,18 @@ function conditionFromTask(task) {
   return parseConditionJson(task && task.condition_json);
 }
 
+function resolveTaskProxy(task) {
+  try {
+    const { resolveEffectiveProxy } = require('../runtime/env-builder');
+    return String(resolveEffectiveProxy(task) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Evaluate a task's condition.
+ * HTTP checks use: condition.config.proxy → task/profile/global BROWSER_PROXY → direct.
  * @returns {Promise<{ok:boolean, shouldTrigger:boolean, status:string, detail:string, meta?:object, type:string}>}
  */
 async function evaluateTaskCondition(task) {
@@ -78,7 +88,8 @@ async function evaluateTaskCondition(task) {
       type,
     };
   }
-  const result = await mod.evaluate(cond.config || {}, { task });
+  const proxy = resolveTaskProxy(task);
+  const result = await mod.evaluate(cond.config || {}, { task, proxy });
   return {
     ok: Boolean(result && result.ok),
     shouldTrigger: Boolean(result && result.shouldTrigger),
