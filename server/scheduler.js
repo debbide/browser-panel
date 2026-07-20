@@ -1,8 +1,15 @@
 const db = require('./db');
 const { listTasks, updateTask } = db;
+const {
+  evaluateTaskCondition,
+  conditionFromTask,
+} = require('./conditions');
 
 const runningTasks = new Set();
 let mainLoopHandle = null;
+let tickInFlight = false;
+
+const MAX_CONDITION_EVALS_PER_TICK = 3;
 
 function stopAllJobs() {
   if (mainLoopHandle) {
@@ -135,9 +142,66 @@ function computeNextRun(task, fromDate = new Date(), isReschedule = false) {
   const unit = task.interval_unit || 'hours';
   if (!min || !max) return null;
 
-  // 如果是随机模式则取区间，如果是固定模式（从Web UI传来的），min和max其实是一样的，这里直接取 min
   const value = task.schedule_mode === 'interval' ? randomIntInclusive(min, max) : min;
   return addInterval(fromDate, value, unit).toISOString();
+}
+
+function isConditionEnabled(task) {
+  return Boolean(Number(task && task.condition_enabled));
+}
+
+function isScheduleEnabled(task) {
+  return Boolean(Number(task && task.enabled));
+}
+
+function getCheckIntervalSec(task) {
+  const cond = conditionFromTask(task);
+  return Math.max(30, Number(cond.check_interval_sec) || 300);
+}
+
+function getCooldownSec(task) {
+  const cond = conditionFromTask(task);
+  return Math.max(0, Number(cond.cooldown_sec) || 600);
+}
+
+function parseIsoMs(value) {
+  if (!value) return NaN;
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? NaN : t;
+}
+
+function isInCooldown(task, nowMs = Date.now()) {
+  const until = parseIsoMs(task.condition_cooldown_until);
+  return Number.isFinite(until) && until > nowMs;
+}
+
+function patchTask(taskId, patch) {
+  const latest = listTasks().find((item) => item.id === taskId);
+  if (!latest) return null;
+  return updateTask(taskId, { ...latest, ...patch });
+}
+
+function recordConditionResult(taskId, result) {
+  return patchTask(taskId, {
+    condition_last_status: result.status || null,
+    condition_last_detail: String(result.detail || '').slice(0, 500) || null,
+    condition_last_checked_at: new Date().toISOString(),
+  });
+}
+
+function setConditionNextCheck(taskId, whenDate) {
+  return patchTask(taskId, {
+    condition_next_check_at: whenDate ? new Date(whenDate).toISOString() : null,
+  });
+}
+
+function applyCooldown(taskId, task) {
+  const sec = getCooldownSec(task);
+  if (sec <= 0) {
+    return patchTask(taskId, { condition_cooldown_until: null });
+  }
+  const until = new Date(Date.now() + sec * 1000).toISOString();
+  return patchTask(taskId, { condition_cooldown_until: until });
 }
 
 function rescheduleTask(taskId) {
@@ -148,87 +212,237 @@ function rescheduleTask(taskId) {
   }
 }
 
-function fireTask(task, runTaskById) {
+/**
+ * Fire a task. options.conditionTriggered: apply cooldown after successful start.
+ * options.onSkipped: called when runTaskSafely skips (serial busy etc.)
+ */
+function fireTask(task, runTaskById, options = {}) {
   const taskId = task.id;
+  const conditionTriggered = Boolean(options.conditionTriggered);
   runTaskSafely(taskId, runTaskById)
     .then((result) => {
-      // skipped (race / busy) must not rewrite next_run_at — keep due for later ticks
-      if (result?.skipped) return;
-      rescheduleTask(taskId);
+      if (result?.skipped) {
+        if (typeof options.onSkipped === 'function') options.onSkipped(result);
+        return;
+      }
+      if (isScheduleEnabled(task) || (listTasks().find((t) => t.id === taskId) || {}).enabled) {
+        rescheduleTask(taskId);
+      }
+      if (conditionTriggered) {
+        const latest = listTasks().find((t) => t.id === taskId) || task;
+        applyCooldown(taskId, latest);
+        // pure-condition: push next check past cooldown/interval
+        if (!isScheduleEnabled(latest) && isConditionEnabled(latest)) {
+          const intervalMs = getCheckIntervalSec(latest) * 1000;
+          const cooldownMs = getCooldownSec(latest) * 1000;
+          const delay = Math.max(intervalMs, cooldownMs);
+          setConditionNextCheck(taskId, new Date(Date.now() + delay));
+        }
+      }
     })
     .catch((err) => {
       console.error('[scheduler] run error:', err);
-      rescheduleTask(taskId);
+      if (isScheduleEnabled(task)) rescheduleTask(taskId);
     });
+}
+
+async function evaluateAndRecord(task) {
+  const result = await evaluateTaskCondition(task);
+  recordConditionResult(task.id, result);
+  console.log(
+    `[condition] task#${task.id} ${result.type || 'cond'} ${result.status}: ${result.detail || ''}`
+  );
+  return result;
+}
+
+async function processPureConditionTasks(tasks, runTaskById, now, evalBudget) {
+  let used = 0;
+  for (const task of tasks) {
+    if (used >= evalBudget) break;
+    if (!isConditionEnabled(task)) continue;
+    // pure condition only when schedule is off
+    if (isScheduleEnabled(task)) continue;
+    if (isTaskRunning(task.id)) continue;
+
+    let nextCheckMs = parseIsoMs(task.condition_next_check_at);
+    if (!Number.isFinite(nextCheckMs)) {
+      setConditionNextCheck(task.id, new Date(now));
+      nextCheckMs = now;
+    }
+    if (now < nextCheckMs) continue;
+
+    if (isInCooldown(task, now)) {
+      const until = parseIsoMs(task.condition_cooldown_until);
+      const intervalMs = getCheckIntervalSec(task) * 1000;
+      const next = Number.isFinite(until) ? Math.max(until, now + intervalMs) : now + intervalMs;
+      setConditionNextCheck(task.id, new Date(next));
+      continue;
+    }
+
+    used += 1;
+    let result;
+    try {
+      result = await evaluateAndRecord(task);
+    } catch (err) {
+      console.error('[condition] evaluate error:', err);
+      recordConditionResult(task.id, {
+        status: 'error',
+        detail: err.message || String(err),
+      });
+      setConditionNextCheck(task.id, new Date(now + getCheckIntervalSec(task) * 1000));
+      continue;
+    }
+
+    if (result.shouldTrigger) {
+      fireTask(task, runTaskById, {
+        conditionTriggered: true,
+        onSkipped: () => {
+          // keep next_check due so serial queue can pick it up next tick
+        },
+      });
+      // optimistically leave next_check as-is until success path advances it;
+      // if started, fireTask success sets next_check; if skipped, stays due.
+    } else {
+      setConditionNextCheck(task.id, new Date(now + getCheckIntervalSec(task) * 1000));
+    }
+  }
+  return used;
+}
+
+async function collectScheduleDue(tasks, now, evalBudget) {
+  const due = [];
+  let used = 0;
+
+  for (const task of tasks) {
+    if (!isScheduleEnabled(task)) continue;
+
+    const nextRunAtStr = task.next_run_at;
+    if (!nextRunAtStr) {
+      const nextRunAt = computeNextRun(task);
+      if (nextRunAt) {
+        updateTask(task.id, { ...task, next_run_at: nextRunAt });
+      }
+      continue;
+    }
+
+    const expectedTime = new Date(nextRunAtStr).getTime();
+    if (Number.isNaN(expectedTime)) continue;
+    if (now < expectedTime) continue;
+    if (isTaskRunning(task.id)) continue;
+
+    if (!isConditionEnabled(task)) {
+      due.push(task);
+      continue;
+    }
+
+    // schedule + condition
+    if (isInCooldown(task, now)) {
+      rescheduleTask(task.id);
+      continue;
+    }
+
+    if (used >= evalBudget) {
+      // leave next_run_at overdue for next tick
+      continue;
+    }
+
+    used += 1;
+    let result;
+    try {
+      result = await evaluateAndRecord(task);
+    } catch (err) {
+      console.error('[condition] evaluate error:', err);
+      recordConditionResult(task.id, {
+        status: 'error',
+        detail: err.message || String(err),
+      });
+      // treat evaluate crash as trigger-worthy? safer to reschedule and not fire
+      rescheduleTask(task.id);
+      continue;
+    }
+
+    if (result.shouldTrigger) {
+      due.push({ ...task, _conditionTriggered: true });
+    } else {
+      // healthy — skip this schedule slot
+      rescheduleTask(task.id);
+    }
+  }
+
+  return { due, used };
 }
 
 function startMainLoop(runTaskById) {
   stopAllJobs();
 
-  const tick = () => {
-    const tasks = listTasks();
-    const now = Date.now();
-    const allowParallel = db.isTaskParallelAllowed();
-    const due = [];
+  const tick = async () => {
+    if (tickInFlight) return;
+    tickInFlight = true;
+    try {
+      const tasks = listTasks();
+      const now = Date.now();
+      const allowParallel = db.isTaskParallelAllowed();
 
-    for (const task of tasks) {
-      if (!task.enabled) continue;
-
-      const nextRunAtStr = task.next_run_at;
-      if (!nextRunAtStr) {
-         // 给新增任务赋初始运行时间
-         const nextRunAt = computeNextRun(task);
-         if (nextRunAt) {
-           updateTask(task.id, { ...task, next_run_at: nextRunAt });
-         }
-         continue;
+      // Ensure pure-condition tasks have a next check time
+      for (const task of tasks) {
+        if (isConditionEnabled(task) && !isScheduleEnabled(task) && !task.condition_next_check_at) {
+          setConditionNextCheck(task.id, new Date(now));
+        }
       }
 
-      const expectedTime = new Date(nextRunAtStr).getTime();
-      if (Number.isNaN(expectedTime)) continue;
+      let budget = MAX_CONDITION_EVALS_PER_TICK;
+      const pureUsed = await processPureConditionTasks(tasks, runTaskById, now, budget);
+      budget -= pureUsed;
 
-      // 时间到了，且本任务未在跑 → 进入 due
-      if (now >= expectedTime && !isTaskRunning(task.id)) {
-        due.push(task);
+      // refresh tasks after pure path patches
+      const tasks2 = listTasks();
+      const { due } = await collectScheduleDue(tasks2, now, Math.max(0, budget));
+
+      if (!due.length) return;
+
+      if (allowParallel) {
+        for (const task of due) {
+          fireTask(task, runTaskById, {
+            conditionTriggered: Boolean(task._conditionTriggered),
+          });
+        }
+        return;
       }
+
+      if (isAnyTaskRunning()) return;
+
+      due.sort((a, b) => {
+        const ta = new Date(a.next_run_at).getTime();
+        const tb = new Date(b.next_run_at).getTime();
+        if (ta !== tb) return ta - tb;
+        return Number(a.id) - Number(b.id);
+      });
+      fireTask(due[0], runTaskById, {
+        conditionTriggered: Boolean(due[0]._conditionTriggered),
+      });
+    } catch (err) {
+      console.error('[scheduler] tick error:', err);
+    } finally {
+      tickInFlight = false;
     }
-
-    if (!due.length) return;
-
-    if (allowParallel) {
-      // 不同任务可同时跑；同任务仍由 runTaskSafely 互斥
-      for (const task of due) {
-        fireTask(task, runTaskById);
-      }
-      return;
-    }
-
-    // 串行：全局有任务在跑则本 tick 不启动；到期任务保持 next_run_at 等待
-    if (isAnyTaskRunning()) return;
-
-    due.sort((a, b) => {
-      const ta = new Date(a.next_run_at).getTime();
-      const tb = new Date(b.next_run_at).getTime();
-      if (ta !== tb) return ta - tb;
-      return Number(a.id) - Number(b.id);
-    });
-    fireTask(due[0], runTaskById);
   };
 
-  // 服务启动时，或重载配置时，立刻做一次全盘扫描，把积压的过期任务扫掉
   tick();
-
-  // 每 10 秒轮询一次，规避原有 setTimeout 的所有副作用
   mainLoopHandle = setInterval(tick, 10000);
 }
 
 function reloadJobs(runTaskById) {
-  // 补全所有缺失的初始时间
   const tasks = listTasks();
   for (const task of tasks) {
     if (task.enabled && !task.next_run_at) {
        const nextTime = computeNextRun(task);
        if (nextTime) updateTask(task.id, { ...task, next_run_at: nextTime });
+    }
+    if (isConditionEnabled(task) && !isScheduleEnabled(task) && !task.condition_next_check_at) {
+      updateTask(task.id, {
+        ...task,
+        condition_next_check_at: new Date().toISOString(),
+      });
     }
   }
   startMainLoop(runTaskById);
@@ -244,4 +458,5 @@ module.exports = {
   getRunningCount,
   canStartTask,
   runTaskSafely,
+  evaluateTaskCondition,
 };

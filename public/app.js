@@ -134,6 +134,13 @@ const schedulerForm = document.getElementById('scheduler-form');
 const schedulerStatusText = document.getElementById('scheduler-status-text');
 const schedulerAllowParallel = document.getElementById('scheduler-allow-parallel');
 const schedulerSaveBtn = document.getElementById('scheduler-save-btn');
+const successHeuristicsForm = document.getElementById('success-heuristics-form');
+const successHeuristicsStatus = document.getElementById('success-heuristics-status');
+const shEnabled = document.getElementById('sh-enabled');
+const shGraceSec = document.getElementById('sh-grace-sec');
+const shSuccessPatterns = document.getElementById('sh-success-patterns');
+const shFailurePatterns = document.getElementById('sh-failure-patterns');
+const shSaveBtn = document.getElementById('sh-save-btn');
 const browserRuntimeForm = document.getElementById('browser-runtime-form');
 const browserRuntimeStatus = document.getElementById('browser-runtime-status');
 const brRuntimeStack = document.getElementById('br-runtime-stack');
@@ -161,6 +168,20 @@ const globalEnvAddRowBtn = document.getElementById('global-env-add-row');
 const globalEnvImportBtn = document.getElementById('global-env-import');
 const globalEnvSaveBtn = document.getElementById('global-env-save');
 const githubCompatEnabled = document.getElementById('github-compat-enabled');
+const conditionEnabledEl = document.getElementById('condition-enabled');
+const conditionFieldsEl = document.getElementById('condition-fields');
+const conditionTypeEl = document.getElementById('condition-type');
+const conditionCheckIntervalEl = document.getElementById('condition-check-interval');
+const conditionCheckUnitEl = document.getElementById('condition-check-unit');
+const conditionCooldownEl = document.getElementById('condition-cooldown');
+const conditionCooldownUnitEl = document.getElementById('condition-cooldown-unit');
+const conditionUrlEl = document.getElementById('condition-url');
+const conditionMethodEl = document.getElementById('condition-method');
+const conditionTimeoutEl = document.getElementById('condition-timeout');
+const conditionSuccessStatusesEl = document.getElementById('condition-success-statuses');
+const conditionExpectBodyEl = document.getElementById('condition-expect-body');
+const conditionTestBtn = document.getElementById('condition-test-btn');
+const conditionLastStatusText = document.getElementById('condition-last-status-text');
 
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
@@ -444,8 +465,135 @@ function describeTaskSchedule(task) {
   return `${parsed.fixedDays}天 ${parsed.fixedHours}小时 ${parsed.fixedMinutes}分`;
 }
 
+function intervalToUnitValue(sec) {
+  const s = Math.max(0, Number(sec) || 0);
+  if (s === 0) return { value: 0, unit: 'minutes' };
+  if (s >= 3600 && s % 3600 === 0) return { value: s / 3600, unit: 'hours' };
+  return { value: Math.max(1, Math.round(s / 60)), unit: 'minutes' };
+}
+
+function unitValueToSec(value, unit, minSec = 0) {
+  const n = Math.max(0, Number(value) || 0);
+  const sec = unit === 'hours' ? n * 3600 : n * 60;
+  return Math.max(minSec, sec);
+}
+
+function buildConditionPayloadFromForm() {
+  const enabled = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
+  if (!enabled) {
+    return { condition_enabled: false };
+  }
+  const checkUnit = conditionCheckUnitEl?.value || 'minutes';
+  const coolUnit = conditionCooldownUnitEl?.value || 'minutes';
+  const checkSec = unitValueToSec(conditionCheckIntervalEl?.value || 5, checkUnit, 30);
+  const coolSec = unitValueToSec(conditionCooldownEl?.value || 10, coolUnit, 0);
+  const url = String(conditionUrlEl?.value || '').trim();
+  if (!url) {
+    throw new Error('启用条件触发时请填写检测 URL');
+  }
+  return {
+    condition_enabled: true,
+    condition: {
+      type: conditionTypeEl?.value || 'http_check',
+      check_interval_sec: checkSec,
+      cooldown_sec: coolSec,
+      config: {
+        url,
+        method: conditionMethodEl?.value || 'GET',
+        timeout_ms: Math.min(60000, Math.max(1000, (Number(conditionTimeoutEl?.value) || 10) * 1000)),
+        success_statuses: String(conditionSuccessStatusesEl?.value || '200-399').trim() || '200-399',
+        expect_body_includes: String(conditionExpectBodyEl?.value || '').trim(),
+      },
+    },
+  };
+}
+
+function fillConditionForm(task) {
+  const enabled = Boolean(Number(task && task.condition_enabled));
+  if (conditionEnabledEl) conditionEnabledEl.checked = enabled;
+  const cond = (task && task.condition) || {};
+  const cfg = cond.config || {};
+  if (conditionTypeEl) conditionTypeEl.value = cond.type || 'http_check';
+  const check = intervalToUnitValue(cond.check_interval_sec || 300);
+  const cool = intervalToUnitValue(cond.cooldown_sec || 600);
+  if (conditionCheckIntervalEl) conditionCheckIntervalEl.value = check.value;
+  if (conditionCheckUnitEl) conditionCheckUnitEl.value = check.unit;
+  if (conditionCooldownEl) conditionCooldownEl.value = cool.value;
+  if (conditionCooldownUnitEl) conditionCooldownUnitEl.value = cool.unit;
+  if (conditionUrlEl) conditionUrlEl.value = cfg.url || '';
+  if (conditionMethodEl) conditionMethodEl.value = cfg.method || 'GET';
+  if (conditionTimeoutEl) conditionTimeoutEl.value = Math.round((Number(cfg.timeout_ms) || 10000) / 1000);
+  if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = cfg.success_statuses || '200-399';
+  if (conditionExpectBodyEl) conditionExpectBodyEl.value = cfg.expect_body_includes || '';
+  updateConditionLastStatusText(task);
+  updateConditionFieldsUI();
+}
+
+function resetConditionForm() {
+  if (conditionEnabledEl) conditionEnabledEl.checked = false;
+  if (conditionTypeEl) conditionTypeEl.value = 'http_check';
+  if (conditionCheckIntervalEl) conditionCheckIntervalEl.value = 5;
+  if (conditionCheckUnitEl) conditionCheckUnitEl.value = 'minutes';
+  if (conditionCooldownEl) conditionCooldownEl.value = 10;
+  if (conditionCooldownUnitEl) conditionCooldownUnitEl.value = 'minutes';
+  if (conditionUrlEl) conditionUrlEl.value = '';
+  if (conditionMethodEl) conditionMethodEl.value = 'GET';
+  if (conditionTimeoutEl) conditionTimeoutEl.value = 10;
+  if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = '200-399';
+  if (conditionExpectBodyEl) conditionExpectBodyEl.value = '';
+  updateConditionLastStatusText(null);
+  updateConditionFieldsUI();
+}
+
+function updateConditionFieldsUI() {
+  const on = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
+  if (conditionFieldsEl) {
+    conditionFieldsEl.style.opacity = on ? '1' : '0.55';
+  }
+  const controls = [
+    conditionTypeEl, conditionCheckIntervalEl, conditionCheckUnitEl,
+    conditionCooldownEl, conditionCooldownUnitEl, conditionUrlEl, conditionMethodEl,
+    conditionTimeoutEl, conditionSuccessStatusesEl, conditionExpectBodyEl, conditionTestBtn,
+  ];
+  for (const el of controls) {
+    if (el) el.disabled = false; // keep editable even when off so user can prefill
+  }
+}
+
+function updateConditionLastStatusText(task) {
+  if (!conditionLastStatusText) return;
+  if (!task || !task.condition_last_status) {
+    conditionLastStatusText.textContent = '最近：—';
+    return;
+  }
+  const when = task.condition_last_checked_at ? shortTime(task.condition_last_checked_at) : '';
+  const detail = task.condition_last_detail || '';
+  conditionLastStatusText.textContent = `最近：${task.condition_last_status}${detail ? ` · ${detail}` : ''}${when ? ` · ${when}` : ''}`;
+}
+
+function describeCondition(task) {
+  if (!task || !Number(task.condition_enabled)) return '';
+  const cond = task.condition || {};
+  const check = intervalToUnitValue(cond.check_interval_sec || 300);
+  const unitLabel = check.unit === 'hours' ? '小时' : '分';
+  return `HTTP失败检测 / ${check.value}${unitLabel}`;
+}
+
+function conditionStatusClass(task) {
+  const s = task && task.condition_last_status;
+  if (s === 'ok') return 'active';
+  if (s === 'fail' || s === 'error') return 'failed';
+  return 'idle';
+}
+
 function describeNextRun(task) {
-  if (!task.enabled) return '未启用';
+  if (!task.enabled) {
+    if (Number(task.condition_enabled)) {
+      if (task.condition_next_check_at) return `条件检测：${shortTime(task.condition_next_check_at)}`;
+      return '条件检测已启用';
+    }
+    return '未启用';
+  }
   if (task.next_run_at) return `下次：${shortTime(task.next_run_at)}`;
   return describeTaskSchedule(task);
 }
@@ -1059,6 +1207,7 @@ function resetTaskForm() {
   if (dailyTimeStartEl) dailyTimeStartEl.value = '08:00';
   if (dailyTimeEndEl) dailyTimeEndEl.value = '12:00';
   updateScheduleModeUI();
+  resetConditionForm();
   syncTaskParamsUI('', {});
 }
 
@@ -1424,6 +1573,18 @@ function taskCard(task) {
           </div>
           <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
         </div>
+        <div class="metric-card">
+          <span class="metric-label">条件</span>
+          <div class="status-indicator">
+            <span class="dot ${Number(task.condition_enabled) ? conditionStatusClass(task) : 'idle'}"></span>
+            <span>${Number(task.condition_enabled) ? escapeHtml(describeCondition(task) || '已启用') : '未启用'}</span>
+          </div>
+          <span class="metric-value">${Number(task.condition_enabled)
+            ? escapeHtml(task.condition_last_status
+              ? `${task.condition_last_status}${task.condition_last_detail ? ' · ' + task.condition_last_detail : ''}`
+              : (task.condition_next_check_at ? `下次检测 ${shortTime(task.condition_next_check_at)}` : '等待检测'))
+            : '—'}</span>
+        </div>
       </div>
       <div class="task-actions">
         <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>
@@ -1526,6 +1687,43 @@ async function saveSchedulerSettings() {
     body: JSON.stringify({ allowParallel }),
   });
   await loadSchedulerSettings();
+}
+
+function setSuccessHeuristicsStatus(text, color) {
+  if (!successHeuristicsStatus) return;
+  successHeuristicsStatus.textContent = text;
+  if (color) successHeuristicsStatus.style.color = color;
+}
+
+async function loadSuccessHeuristicsSettings() {
+  if (!successHeuristicsForm) return;
+  try {
+    const res = await fetchJson('/api/settings/success-heuristics');
+    const data = res.data || {};
+    if (shEnabled) shEnabled.checked = data.enabled !== false;
+    if (shGraceSec) shGraceSec.value = data.graceSec ?? 45;
+    if (shSuccessPatterns) shSuccessPatterns.value = data.successPatternsText || '';
+    if (shFailurePatterns) shFailurePatterns.value = data.failurePatternsText || '';
+    const mode = data.enabled === false ? '已关闭' : '已启用';
+    setSuccessHeuristicsStatus(`状态：${mode} · grace ${data.graceSec ?? 45}s`, '#94a3b8');
+  } catch (error) {
+    setSuccessHeuristicsStatus('状态：加载失败', '#ef4444');
+    console.error('Failed to load success heuristics:', error);
+  }
+}
+
+async function saveSuccessHeuristicsSettings() {
+  await fetchJson('/api/settings/success-heuristics', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: Boolean(shEnabled && shEnabled.checked),
+      graceSec: Number(shGraceSec?.value || 45),
+      successPatternsText: shSuccessPatterns?.value || '',
+      failurePatternsText: shFailurePatterns?.value || '',
+    }),
+  });
+  await loadSuccessHeuristicsSettings();
 }
 
 function setBrowserRuntimeStatus(text, color) {
@@ -1967,6 +2165,7 @@ function fillTaskForm(task) {
   if (dailyTimeStartEl) dailyTimeStartEl.value = schedule.dailyTimeStart;
   if (dailyTimeEndEl) dailyTimeEndEl.value = schedule.dailyTimeEnd;
   updateScheduleModeUI();
+  fillConditionForm(task);
   // use_persistent=1 → 持久；否则默认临时（含历史任务字段缺失）
   setTaskProfileMode(Number(task.use_persistent) ? 'persistent' : 'temp');
   if (taskProfileSelect) {
@@ -2078,9 +2277,19 @@ form.addEventListener('submit', async (event) => {
   }
 
   const schedule = buildSchedulePayloadFromForm();
+  let conditionPayload;
+  try {
+    conditionPayload = buildConditionPayloadFromForm();
+  } catch (error) {
+    toast(error.message || '条件配置无效', 'error');
+    return;
+  }
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
-  Object.assign(payload, schedule);
+  Object.assign(payload, schedule, conditionPayload);
+  // FormData may stringify checkboxes; force boolean flags from builders
+  payload.enabled = Boolean(schedule.enabled);
+  payload.condition_enabled = Boolean(conditionPayload.condition_enabled);
   if (String(payload.script_path || '').toLowerCase().endsWith('.py')) {
     payload.type = 'python';
   }
@@ -2268,6 +2477,74 @@ if (deleteScriptBtn) {
   });
 }
 scheduleModeSelect.addEventListener('change', updateScheduleModeUI);
+
+if (conditionEnabledEl) {
+  conditionEnabledEl.addEventListener('change', updateConditionFieldsUI);
+}
+
+if (conditionTestBtn) {
+  conditionTestBtn.addEventListener('click', async () => {
+    try {
+      let conditionPayload;
+      try {
+        conditionPayload = buildConditionPayloadFromForm();
+      } catch (err) {
+        // allow test with URL even if checkbox off
+        const url = String(conditionUrlEl?.value || '').trim();
+        if (!url) throw err;
+        conditionPayload = {
+          condition_enabled: true,
+          condition: {
+            type: conditionTypeEl?.value || 'http_check',
+            check_interval_sec: unitValueToSec(conditionCheckIntervalEl?.value || 5, conditionCheckUnitEl?.value || 'minutes', 30),
+            cooldown_sec: unitValueToSec(conditionCooldownEl?.value || 10, conditionCooldownUnitEl?.value || 'minutes', 0),
+            config: {
+              url,
+              method: conditionMethodEl?.value || 'GET',
+              timeout_ms: Math.min(60000, Math.max(1000, (Number(conditionTimeoutEl?.value) || 10) * 1000)),
+              success_statuses: String(conditionSuccessStatusesEl?.value || '200-399').trim() || '200-399',
+              expect_body_includes: String(conditionExpectBodyEl?.value || '').trim(),
+            },
+          },
+        };
+      }
+      if (!conditionPayload.condition) {
+        toast('请先填写检测 URL', 'warn');
+        return;
+      }
+      conditionTestBtn.disabled = true;
+      conditionTestBtn.textContent = '检测中...';
+      const body = { condition: conditionPayload.condition };
+      let result;
+      if (editingId) {
+        const res = await fetchJson(`/api/tasks/${editingId}/condition/test`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        result = res.data;
+      } else {
+        // create mode: temporary evaluate via a lightweight path — call types not available;
+        // reuse test endpoint requires id; fall back to fetch probe message
+        toast('请先保存任务后再测试，或保存后编辑里点测试', 'warn');
+        return;
+      }
+      const triggerHint = result.shouldTrigger ? '（将触发任务）' : '（不触发）';
+      toast(`${result.status}: ${result.detail || ''} ${triggerHint}`, result.shouldTrigger ? 'warn' : 'success');
+      if (conditionLastStatusText) {
+        conditionLastStatusText.textContent = `最近：${result.status}${result.detail ? ` · ${result.detail}` : ''}`;
+      }
+    } catch (error) {
+      toast(error.message || '检测失败', 'error');
+    } finally {
+      if (conditionTestBtn) {
+        conditionTestBtn.disabled = false;
+        conditionTestBtn.innerHTML = '<i data-lucide="radar" class="icon-sm"></i> 测试检测';
+        if (window.lucide) window.lucide.createIcons();
+      }
+    }
+  });
+}
 fixedDaysEl.addEventListener('input', updateFixedSummary);
 fixedHoursEl.addEventListener('input', updateFixedSummary);
 fixedMinutesEl.addEventListener('input', updateFixedSummary);
@@ -2392,6 +2669,28 @@ if (schedulerForm) {
       if (schedulerSaveBtn) {
         schedulerSaveBtn.disabled = false;
         schedulerSaveBtn.innerHTML = '<i data-lucide="save" class="icon-sm"></i> 保存调度设置';
+        if (window.lucide) window.lucide.createIcons();
+      }
+    }
+  });
+}
+
+if (successHeuristicsForm) {
+  successHeuristicsForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (shSaveBtn) {
+      shSaveBtn.disabled = true;
+      shSaveBtn.textContent = '保存中...';
+    }
+    try {
+      await saveSuccessHeuristicsSettings();
+      toast('GitHub 兼容设置已保存', 'success');
+    } catch (error) {
+      toast(error.message || '保存失败', 'error');
+    } finally {
+      if (shSaveBtn) {
+        shSaveBtn.disabled = false;
+        shSaveBtn.innerHTML = '<i data-lucide="save" class="icon-sm"></i> 保存兼容设置';
         if (window.lucide) window.lucide.createIcons();
       }
     }
@@ -2825,6 +3124,7 @@ function wireTasksFsUi() {
     configTabBtn.addEventListener('click', () => {
       loadTasksFs(fsCurrentPath);
       loadSchedulerSettings();
+      loadSuccessHeuristicsSettings();
     });
   }
 }
@@ -2835,6 +3135,7 @@ resetAllModalState();
 closeModal();
 refreshAll();
 loadSchedulerSettings();
+loadSuccessHeuristicsSettings();
 loadBrowserRuntimeSettings();
 loadVisionSettings();
 loadGlobalEnvSettings();

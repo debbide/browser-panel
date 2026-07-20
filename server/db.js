@@ -101,13 +101,26 @@ if (!taskTableColumns.includes('daily_time_end')) db.exec('ALTER TABLE tasks ADD
 
 if (!taskTableColumns.includes('browser_profile_id')) db.exec('ALTER TABLE tasks ADD COLUMN browser_profile_id INTEGER REFERENCES browser_profiles(id)');
 if (!taskTableColumns.includes('params_json')) db.exec("ALTER TABLE tasks ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}'");
+if (!taskTableColumns.includes('condition_enabled')) db.exec('ALTER TABLE tasks ADD COLUMN condition_enabled INTEGER NOT NULL DEFAULT 0');
+if (!taskTableColumns.includes('condition_json')) db.exec("ALTER TABLE tasks ADD COLUMN condition_json TEXT NOT NULL DEFAULT '{}'");
+if (!taskTableColumns.includes('condition_next_check_at')) db.exec('ALTER TABLE tasks ADD COLUMN condition_next_check_at TEXT');
+if (!taskTableColumns.includes('condition_last_status')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_status TEXT');
+if (!taskTableColumns.includes('condition_last_detail')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_detail TEXT');
+if (!taskTableColumns.includes('condition_last_checked_at')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_checked_at TEXT');
+if (!taskTableColumns.includes('condition_cooldown_until')) db.exec('ALTER TABLE tasks ADD COLUMN condition_cooldown_until TEXT');
 
 const browserProfileColumns = db.prepare('PRAGMA table_info(browser_profiles)').all().map(row => row.name);
 if (!browserProfileColumns.includes('runtime_stack')) db.exec("ALTER TABLE browser_profiles ADD COLUMN runtime_stack TEXT NOT NULL DEFAULT ''");
 if (!browserProfileColumns.includes('locale')) db.exec("ALTER TABLE browser_profiles ADD COLUMN locale TEXT NOT NULL DEFAULT ''");
 if (!browserProfileColumns.includes('timezone_id')) db.exec("ALTER TABLE browser_profiles ADD COLUMN timezone_id TEXT NOT NULL DEFAULT ''");
 
-const taskColumns = ['name', 'type', 'script_path', 'cron_expr', 'schedule_mode', 'interval_min', 'interval_max', 'interval_unit', 'daily_time_start', 'daily_time_end', 'next_run_at', 'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id'];
+const taskColumns = [
+  'name', 'type', 'script_path', 'cron_expr', 'schedule_mode',
+  'interval_min', 'interval_max', 'interval_unit', 'daily_time_start', 'daily_time_end', 'next_run_at',
+  'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id',
+  'condition_enabled', 'condition_json', 'condition_next_check_at',
+  'condition_last_status', 'condition_last_detail', 'condition_last_checked_at', 'condition_cooldown_until',
+];
 
 function listTasks() {
   return db.prepare('SELECT * FROM tasks ORDER BY id DESC').all();
@@ -119,10 +132,33 @@ function getTask(id) {
 
 function createTask(payload) {
   const stmt = db.prepare(`
-    INSERT INTO tasks (name, type, script_path, cron_expr, schedule_mode, interval_min, interval_max, interval_unit, daily_time_start, daily_time_end, next_run_at, enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id, updated_at)
-    VALUES (@name, @type, @script_path, @cron_expr, @schedule_mode, @interval_min, @interval_max, @interval_unit, @daily_time_start, @daily_time_end, @next_run_at, @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id, CURRENT_TIMESTAMP)
+    INSERT INTO tasks (
+      name, type, script_path, cron_expr, schedule_mode,
+      interval_min, interval_max, interval_unit, daily_time_start, daily_time_end, next_run_at,
+      enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id,
+      condition_enabled, condition_json, condition_next_check_at,
+      condition_last_status, condition_last_detail, condition_last_checked_at, condition_cooldown_until,
+      updated_at
+    )
+    VALUES (
+      @name, @type, @script_path, @cron_expr, @schedule_mode,
+      @interval_min, @interval_max, @interval_unit, @daily_time_start, @daily_time_end, @next_run_at,
+      @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id,
+      @condition_enabled, @condition_json, @condition_next_check_at,
+      @condition_last_status, @condition_last_detail, @condition_last_checked_at, @condition_cooldown_until,
+      CURRENT_TIMESTAMP
+    )
   `);
-  const result = stmt.run(payload);
+  const result = stmt.run({
+    condition_enabled: 0,
+    condition_json: '{}',
+    condition_next_check_at: null,
+    condition_last_status: null,
+    condition_last_detail: null,
+    condition_last_checked_at: null,
+    condition_cooldown_until: null,
+    ...payload,
+  });
   return getTask(result.lastInsertRowid);
 }
 
@@ -383,6 +419,9 @@ function setTaskParallelAllowed(enabled) {
   setSetting('task_allow_parallel', enabled ? '1' : '0');
   return isTaskParallelAllowed();
 }
+
+// Success-log soft success settings live in runtime/success-heuristics.js
+// (getSuccessHeuristicSettings / setSuccessHeuristicSettings) using getSetting/setSetting.
 
 function createRun(taskId, data) {
   const stmt = db.prepare(`

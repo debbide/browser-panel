@@ -12,7 +12,13 @@ const {
   getRunningTaskIds,
   runTaskSafely,
   computeNextRun,
+  evaluateTaskCondition,
 } = require('./scheduler');
+const {
+  normalizeConditionPayload,
+  parseConditionJson,
+  listTypes: listConditionTypes,
+} = require('./conditions');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
@@ -251,11 +257,54 @@ function decorateTaskForApi(task) {
   }
   const env = db.listEnvEntriesPublic('task', task.id);
   const params = db.getTaskEnvMap(task);
+  const condition = parseConditionJson(task.condition_json);
   return {
     ...task,
     env,
     params,
     params_json: JSON.stringify(params),
+    condition_enabled: Number(task.condition_enabled) ? 1 : 0,
+    condition,
+    condition_last_status: task.condition_last_status || null,
+    condition_last_detail: task.condition_last_detail || null,
+    condition_last_checked_at: task.condition_last_checked_at || null,
+    condition_next_check_at: task.condition_next_check_at || null,
+    condition_cooldown_until: task.condition_cooldown_until || null,
+  };
+}
+
+function buildConditionFieldsFromPayload(payload = {}, existing = null) {
+  const enabled = payload.condition_enabled ? 1 : 0;
+  if (!enabled) {
+    return {
+      condition_enabled: 0,
+      condition_json: existing?.condition_json || '{}',
+      condition_next_check_at: null,
+      condition_last_status: existing?.condition_last_status || null,
+      condition_last_detail: existing?.condition_last_detail || null,
+      condition_last_checked_at: existing?.condition_last_checked_at || null,
+      condition_cooldown_until: null,
+    };
+  }
+
+  const raw = payload.condition !== undefined
+    ? payload.condition
+    : (payload.condition_json !== undefined
+      ? (typeof payload.condition_json === 'string'
+        ? parseConditionJson(payload.condition_json)
+        : payload.condition_json)
+      : parseConditionJson(existing?.condition_json));
+
+  const normalized = normalizeConditionPayload(raw || {});
+  const nextCheck = existing?.condition_next_check_at || new Date().toISOString();
+  return {
+    condition_enabled: 1,
+    condition_json: JSON.stringify(normalized),
+    condition_next_check_at: nextCheck,
+    condition_last_status: existing?.condition_last_status || null,
+    condition_last_detail: existing?.condition_last_detail || null,
+    condition_last_checked_at: existing?.condition_last_checked_at || null,
+    condition_cooldown_until: existing?.condition_cooldown_until || null,
   };
 }
 
@@ -666,6 +715,27 @@ app.post('/api/settings/scheduler', (req, res) => {
   }
 });
 
+app.get('/api/settings/success-heuristics', (req, res) => {
+  const { getSuccessHeuristicSettings } = require('./runtime/success-heuristics');
+  res.json({ data: getSuccessHeuristicSettings() });
+});
+
+app.post('/api/settings/success-heuristics', (req, res) => {
+  try {
+    const { setSuccessHeuristicSettings } = require('./runtime/success-heuristics');
+    const body = req.body || {};
+    const updated = setSuccessHeuristicSettings({
+      enabled: body.enabled,
+      successPatternsText: body.successPatternsText,
+      failurePatternsText: body.failurePatternsText,
+      graceSec: body.graceSec,
+    });
+    res.json({ data: updated });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to save success heuristics' });
+  }
+});
+
 app.get('/api/settings/vision', (req, res) => {
   res.json({ data: db.getVisionSettingsPublic() });
 });
@@ -883,6 +953,7 @@ app.post('/api/tasks', (req, res) => {
     const payload = req.body || {};
     const type = payload.type === 'python' ? 'python' : 'javascript';
     const name = String(payload.name || 'Untitled Task');
+    const conditionFields = buildConditionFieldsFromPayload(payload, null);
     let task = db.createTask({
       name,
       type,
@@ -901,6 +972,7 @@ app.post('/api/tasks', (req, res) => {
       timeout_sec: Number(payload.timeout_sec || 300),
       params_json: '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
+      ...conditionFields,
     });
     task = applyTaskEnvPayload(task.id, payload) || task;
     reloadJobs(executeTask);
@@ -919,6 +991,7 @@ app.put('/api/tasks/:id', (req, res) => {
     const type = payload.type === 'python' ? 'python' : 'javascript';
     const name = String(payload.name || 'Untitled Task');
     const requestedScriptPath = String(payload.script_path || existing?.script_path || '');
+    const conditionFields = buildConditionFieldsFromPayload(payload, existing);
     let task = db.updateTask(id, {
       name,
       type,
@@ -940,6 +1013,7 @@ app.put('/api/tasks/:id', (req, res) => {
       timeout_sec: Number(payload.timeout_sec || 300),
       params_json: existing.params_json || '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
+      ...conditionFields,
     });
     if (payload.env !== undefined || payload.params !== undefined || payload.params_json !== undefined) {
       task = applyTaskEnvPayload(id, payload) || task;
@@ -948,6 +1022,49 @@ app.put('/api/tasks/:id', (req, res) => {
     res.json({ data: decorateTaskForApi(task) });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to update task' });
+  }
+});
+
+app.get('/api/conditions/types', (req, res) => {
+  res.json({ data: listConditionTypes() });
+});
+
+app.post('/api/tasks/:id/condition/test', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const task = db.getTask(id);
+    if (!task) return res.status(404).json({ message: 'Task not found' });
+
+    // Optional body.condition overrides stored config for dry-run without save
+    let evalTask = task;
+    if (req.body && (req.body.condition || req.body.condition_json)) {
+      const raw = req.body.condition || req.body.condition_json;
+      const normalized = normalizeConditionPayload(
+        typeof raw === 'string' ? parseConditionJson(raw) : raw
+      );
+      evalTask = { ...task, condition_enabled: 1, condition_json: JSON.stringify(normalized) };
+    } else if (!Number(task.condition_enabled)) {
+      // allow test using form draft even if not yet enabled — require condition in body
+      if (req.body && req.body.condition) {
+        const normalized = normalizeConditionPayload(req.body.condition);
+        evalTask = { ...task, condition_enabled: 1, condition_json: JSON.stringify(normalized) };
+      }
+    }
+
+    const result = await evaluateTaskCondition(evalTask);
+    // Persist last_* only when testing the task's currently saved condition
+    const testingSaved = !req.body?.condition && !req.body?.condition_json;
+    if (testingSaved && Number(task.condition_enabled)) {
+      db.updateTask(id, {
+        ...task,
+        condition_last_status: result.status || null,
+        condition_last_detail: String(result.detail || '').slice(0, 500) || null,
+        condition_last_checked_at: new Date().toISOString(),
+      });
+    }
+    res.json({ data: result });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Condition test failed' });
   }
 });
 

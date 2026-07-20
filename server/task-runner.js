@@ -10,6 +10,7 @@ const {
   resolveEffectiveProxy,
   buildForegroundEnv,
 } = require('./runtime/env-builder');
+const { evaluateLogSuccess } = require('./runtime/success-heuristics');
 
 const activeChildren = new Map();
 
@@ -521,14 +522,18 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
     });
     activeChildren.set(task.id, child);
 
+    let stdoutText = '';
     let stderrText = '';
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       stderrText += '\nTask timeout exceeded';
       child.kill('SIGTERM');
     }, task.timeout_sec * 1000);
 
     child.stdout.on('data', chunk => {
       const text = chunk.toString();
+      stdoutText += text;
       tracker.ingest('stdout', text);
       lineWriter.write(text);
     });
@@ -543,37 +548,52 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
       clearTimeout(timer);
       activeChildren.delete(task.id);
       lineWriter.flush();
-      tracker.finalize(code === 0 ? 'ok' : 'failed');
-      const errorText = stderrText.trim() || null;
-      let errorCode = classifyForegroundFailure(code, errorText);
-      if (signal === 'SIGTERM' && !errorText?.includes('Task timeout exceeded')) {
-        errorCode = 'stopped';
+      const logVerdict = evaluateLogSuccess(`${stdoutText}\n${stderrText}`, task);
+      let ok = code === 0;
+      let softSuccess = false;
+      if (!ok && logVerdict.softSuccess) {
+        ok = true;
+        softSuccess = true;
+        appendLog(logPath, `\n[panel] soft success via log match: ${logVerdict.successHit}\n`);
+      }
+      tracker.finalize(ok ? 'ok' : 'failed');
+      const errorText = ok ? null : (stderrText.trim() || null);
+      let errorCode = null;
+      if (!ok) {
+        errorCode = classifyForegroundFailure(code, stderrText);
+        if (signal === 'SIGTERM' && !stderrText.includes('Task timeout exceeded')) {
+          errorCode = 'stopped';
+        }
       }
       const endedAt = new Date().toISOString();
       appendTimelineSection(logPath, tracker);
       appendDebugSummarySection(logPath, tracker, {
-        status: code === 0 ? 'success' : 'failed',
+        status: ok ? 'success' : 'failed',
         errorCode: errorCode || '',
         exitCode: code ?? '',
+        softSuccess: softSuccess ? 1 : 0,
       });
       writeLogHeader(logPath, 'TASK SUMMARY', [
         ['ended_at', endedAt],
-        ['status', code === 0 ? 'success' : 'failed'],
+        ['status', ok ? 'success' : 'failed'],
         ['error_code', errorCode || ''],
-        ['exit_code', code ?? ''],
+        ['exit_code', ok ? 0 : (code ?? '')],
+        ['soft_success', softSuccess ? '1' : '0'],
+        ['success_log_hit', logVerdict.successHit || ''],
         ['signal', signal || ''],
+        ['timed_out', timedOut ? '1' : '0'],
         ['screenshot_exists', fs.existsSync(screenshotPath) ? '1' : '0'],
       ]);
       resolve({
-        status: code === 0 ? 'success' : 'failed',
+        status: ok ? 'success' : 'failed',
         errorCode,
         startedAt,
         endedAt,
-        exitCode: code,
+        exitCode: ok ? 0 : code,
         logPath,
         screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
         errorText,
-        retryable: code === 0 ? 0 : defaultRetryableByErrorCode(errorCode),
+        retryable: ok ? 0 : defaultRetryableByErrorCode(errorCode),
         retryReason: null,
       });
     });
@@ -694,8 +714,12 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   const hasScreenshot = fs.existsSync(screenshotPath);
   // Prefer explicit TASK_RESULT_PATH payload. For legacy GitHub-style scripts that
   // never write it: treat clean exit (code 0) as success so the panel matches reality.
+  // Soft success: success-looking logs even if process hung until timeout / grace kill.
   const exitCodeNum = Number(result.exitCode);
   const exitOk = result.exitCode === 0 || result.exitCode === '0' || exitCodeNum === 0;
+  const combinedLog = `${result.stdout || ''}\n${result.stderr || ''}`;
+  const logVerdict = evaluateLogSuccess(combinedLog, task);
+  let softSuccess = false;
   let ok = false;
   if (taskResult && typeof taskResult === 'object' && !Array.isArray(taskResult)) {
     // Only trust payload when it explicitly sets ok
@@ -707,15 +731,29 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   } else if (exitOk) {
     ok = true;
   }
+  if (!ok && logVerdict.softSuccess) {
+    // Allow soft success on timeout, grace kill, or other non-zero exits without TASK_RESULT
+    softSuccess = true;
+    ok = true;
+    appendLog(
+      logPath,
+      `\n[panel] soft success via log match: ${logVerdict.successHit}` +
+        `${result.timedOut ? ' (after timeout)' : ''}` +
+        `${result.graceKilled ? ' (grace kill)' : ''}\n`
+    );
+  }
   let errorCode = null;
   if (!ok) {
-    if (/timed out/i.test(result.stderr || '')) errorCode = 'timeout';
+    if (/timed out/i.test(result.stderr || '') || result.timedOut) errorCode = 'timeout';
     else if ((result.stderr || '').includes('Permission denied')) errorCode = 'permission_error';
     else if (taskResult?.error) errorCode = 'browser_task_error';
     else if (!taskResult && !exitOk) errorCode = 'missing_result';
     else if (!taskResult && exitOk) errorCode = null; // success without payload
     else if (!exitOk) errorCode = 'browser_launch_error';
     else errorCode = 'browser_task_error';
+  } else if (softSuccess && (result.timedOut || /timed out/i.test(result.stderr || ''))) {
+    // Still success, but annotate that we recovered from a hang
+    errorCode = null;
   }
   const scriptRetryable = normalizeRetryable(taskResult?.data?.retryable ?? taskResult?.retryable);
   const retryable = ok ? 0 : (scriptRetryable ?? defaultRetryableByErrorCode(errorCode));
@@ -727,6 +765,8 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     errorCode: errorCode || '',
     exitCode: result.exitCode ?? '',
     ok,
+    softSuccess: softSuccess ? 1 : 0,
+    successLogHit: logVerdict.successHit || '',
     retryable,
   });
   writeLogHeader(logPath, 'TASK SUMMARY', [
@@ -734,6 +774,8 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     ['status', ok ? 'success' : 'failed'],
     ['error_code', errorCode || ''],
     ['exit_code', result.exitCode ?? ''],
+    ['soft_success', softSuccess ? '1' : '0'],
+    ['success_log_hit', logVerdict.successHit || ''],
     ['worker_result_path', workerResultPath],
     ['worker_screenshot_path', workerScreenshotPath],
     ['worker_screenshots_dir', workerScreenshotDir || ''],
@@ -746,11 +788,14 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     errorCode,
     startedAt: result.startedAt,
     endedAt: result.endedAt,
-    exitCode: result.exitCode,
+    // Soft success: report exit 0 so UI/history match "succeeded" for GitHub-style scripts
+    exitCode: ok ? 0 : result.exitCode,
     logPath,
     screenshotPath: hasScreenshot ? screenshotPath : null,
     screenshotsDir: screenshotsDirPath,
-    errorText: taskResult?.error || result.stderr || (hasScreenshot ? null : 'No result payload written'),
+    errorText: ok
+      ? null
+      : (taskResult?.error || result.stderr || (hasScreenshot ? null : 'No result payload written')),
     retryable,
     retryReason,
   };

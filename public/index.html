@@ -132,6 +132,43 @@
         <section class="modal-panel config-panel" style="margin-top:16px;">
           <div class="section-header compact">
             <div>
+              <h2>GitHub 脚本兼容</h2>
+              <p class="muted" id="success-heuristics-status">状态：加载中...</p>
+            </div>
+          </div>
+          <form id="success-heuristics-form" class="grid single-col">
+            <label class="inline-check">
+              <input type="checkbox" id="sh-enabled" checked />
+              启用日志软成功（脚本打印成功后卡住/超时仍记成功）
+            </label>
+            <div class="schedule-note">
+              适合 GitHub Actions 风格脚本：不写 TASK_RESULT、业务成功后浏览器不退出。
+              匹配成功日志且无失败关键字时：超时或 grace 强退后仍记成功。
+            </div>
+            <div>
+              <label class="field-label" for="sh-grace-sec">成功后宽限强退（秒）</label>
+              <input id="sh-grace-sec" type="number" min="0" max="600" value="45" />
+              <div class="schedule-note" style="margin-top:4px;">命中成功日志后等待该秒数，进程仍在则 SIGTERM（仍记成功）。0=不提前强退，只靠总超时。</div>
+            </div>
+            <div>
+              <label class="field-label" for="sh-success-patterns">成功日志正则（每行一条）</label>
+              <textarea id="sh-success-patterns" rows="5" placeholder="续期后剩余&#10;✅&#10;SUCCESS"></textarea>
+            </div>
+            <div>
+              <label class="field-label" for="sh-failure-patterns">失败日志正则（命中则不作软成功）</label>
+              <textarea id="sh-failure-patterns" rows="4" placeholder="Traceback&#10;FAILED&#10;❌"></textarea>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button type="submit" id="sh-save-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> 保存兼容设置
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section class="modal-panel config-panel" style="margin-top:16px;">
+          <div class="section-header compact">
+            <div>
               <h2>浏览器运行时插件</h2>
               <p class="muted" id="browser-runtime-status">状态：加载中...</p>
             </div>
@@ -362,6 +399,7 @@
               </div>
 
               <label class="inline-check"><input type="checkbox" name="enabled" data-testid="schedule-enabled-checkbox" /> 启用定时</label>
+              <p class="schedule-note" style="margin:4px 0 8px;">不启用则仅手动运行；可与下方「条件触发」叠加（到点后再检测）。</p>
 
               <div class="grid single-col schedule-mode-select-wrap">
                 <select name="schedule_mode" id="schedule-mode-select" data-testid="schedule-mode-select">
@@ -430,6 +468,86 @@
               </div>
 
               <input type="hidden" name="cron_expr" />
+            </div>
+
+            <div class="config-block" style="margin-top:16px;">
+              <div class="section-header compact">
+                <div>
+                  <h4>条件触发</h4>
+                  <p>HTTP 检测失败时自动启动任务；可与定时叠加。</p>
+                </div>
+              </div>
+
+              <label class="inline-check">
+                <input type="checkbox" name="condition_enabled" id="condition-enabled" data-testid="condition-enabled-checkbox" />
+                启用条件触发
+              </label>
+
+              <div id="condition-fields" class="grid single-col" style="margin-top:8px;">
+                <div>
+                  <label class="field-label" for="condition-type">类型</label>
+                  <select id="condition-type" name="condition_type">
+                    <option value="http_check">HTTP 检测（失败触发）</option>
+                  </select>
+                </div>
+                <div class="grid interval-range-grid">
+                  <div>
+                    <label class="field-label" for="condition-check-interval">检测间隔</label>
+                    <input id="condition-check-interval" name="condition_check_interval" type="number" min="1" value="5" />
+                  </div>
+                  <div>
+                    <label class="field-label" for="condition-check-unit">单位</label>
+                    <select id="condition-check-unit" name="condition_check_unit">
+                      <option value="minutes">分钟</option>
+                      <option value="hours">小时</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label" for="condition-cooldown">冷却</label>
+                    <input id="condition-cooldown" name="condition_cooldown" type="number" min="0" value="10" />
+                  </div>
+                  <div>
+                    <label class="field-label" for="condition-cooldown-unit">单位</label>
+                    <select id="condition-cooldown-unit" name="condition_cooldown_unit">
+                      <option value="minutes">分钟</option>
+                      <option value="hours">小时</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="schedule-note">冷却：失败触发任务后，多久内不再因条件重复启动。定时「到点但检测正常」跳过不占用冷却。</div>
+                <div>
+                  <label class="field-label" for="condition-url">检测 URL</label>
+                  <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
+                </div>
+                <div class="grid interval-range-grid">
+                  <div>
+                    <label class="field-label" for="condition-method">方法</label>
+                    <select id="condition-method" name="condition_method">
+                      <option value="GET">GET</option>
+                      <option value="HEAD">HEAD</option>
+                      <option value="POST">POST</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label" for="condition-timeout">超时（秒）</label>
+                    <input id="condition-timeout" name="condition_timeout" type="number" min="1" max="60" value="10" />
+                  </div>
+                  <div>
+                    <label class="field-label" for="condition-success-statuses">成功状态码</label>
+                    <input id="condition-success-statuses" name="condition_success_statuses" type="text" value="200-399" placeholder="200-399" />
+                  </div>
+                </div>
+                <div>
+                  <label class="field-label" for="condition-expect-body">响应须包含（可选）</label>
+                  <input id="condition-expect-body" name="condition_expect_body" type="text" placeholder="留空则只看状态码" />
+                </div>
+                <div class="row" style="margin-top:4px; gap:8px; align-items:center; flex-wrap:wrap;">
+                  <button type="button" id="condition-test-btn" class="alt btn-with-icon">
+                    <i data-lucide="radar" class="icon-sm"></i> 测试检测
+                  </button>
+                  <span class="muted" id="condition-last-status-text">最近：—</span>
+                </div>
+              </div>
             </div>
 
             <div class="row">

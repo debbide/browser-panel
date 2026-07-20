@@ -10,6 +10,7 @@ const {
   buildBrowserUserEnvPairs,
   summarizeEnvPairs,
 } = require('./env-builder');
+const { evaluateLogSuccess, resolveHeuristicsForTask } = require('./success-heuristics');
 const activeBrowserRuns = new Map();
 
 function getRuntimeDataDir() {
@@ -538,19 +539,64 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let graceKilled = false;
+    let graceTimer = null;
+    let hardKillTimer = null;
+    let timer = null;
+    const heuristics = resolveHeuristicsForTask(task);
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      stderr += `\nTask timed out after ${task.timeout_sec}s`;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    const clearRunTimers = () => {
+      if (timer) clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
+      if (hardKillTimer) clearTimeout(hardKillTimer);
+      timer = null;
+      graceTimer = null;
+      hardKillTimer = null;
+    };
+
+    const requestKill = (reason) => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      hardKillTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        }
       }, 2000);
+      if (reason) {
+        stderr += `\n${reason}`;
+      }
+    };
+
+    const maybeStartGraceKill = () => {
+      if (!heuristics.enabled || graceKilled || graceTimer || timedOut) return;
+      if (heuristics.graceSec <= 0) return;
+      const verdict = evaluateLogSuccess(`${stdout}\n${stderr}`, task);
+      if (!verdict.softSuccess) return;
+      graceKilled = true;
+      console.log(
+        `[browser-launcher] task#${task.id} success log matched (${verdict.successHit}); grace kill in ${heuristics.graceSec}s`
+      );
+      stderr += `\n[panel] success log matched (${verdict.successHit}); waiting ${heuristics.graceSec}s then stopping hung process`;
+      graceTimer = setTimeout(() => {
+        // process still running → terminate but keep soft-success path in task-runner
+        if (child.exitCode === null && child.signalCode === null) {
+          requestKill(`[panel] grace kill after success log (${heuristics.graceSec}s)`);
+        }
+      }, heuristics.graceSec * 1000);
+    };
+
+    timer = setTimeout(() => {
+      timedOut = true;
+      requestKill(`Task timed out after ${task.timeout_sec}s`);
     }, task.timeout_sec * 1000);
 
     child.stdout.on('data', chunk => {
       const text = chunk.toString();
       stdout += text;
+      maybeStartGraceKill();
       if (onStdout) {
         try {
           onStdout(text);
@@ -562,6 +608,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     child.stderr.on('data', chunk => {
       const text = chunk.toString();
       stderr += text;
+      maybeStartGraceKill();
       if (onStderr) {
         try {
           onStderr(text);
@@ -571,7 +618,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       }
     });
     child.on('error', (error) => {
-      clearTimeout(timer);
+      clearRunTimers();
       const state = activeBrowserRuns.get(Number(task.id));
       const stoppedByUser = Boolean(state && state.stoppedByUser);
       const cleanupTask = state && state.task ? state.task : task;
@@ -585,13 +632,15 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
         stdout,
         stderr: `${stderr}\n${error.message || String(error)}`.trim(),
         errorCode: stoppedByUser ? 'stopped' : 'browser_launch_error',
+        timedOut: false,
+        graceKilled: false,
         workerScreenshotPath,
         workerScreenshotDir,
         resultPath,
       });
     });
     child.on('close', (code, signal) => {
-      clearTimeout(timer);
+      clearRunTimers();
       const state = activeBrowserRuns.get(Number(task.id));
       const stoppedByUser = Boolean(state && state.stoppedByUser);
       const cleanupTask = state && state.task ? state.task : task;
@@ -603,10 +652,14 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       resolve({
         startedAt,
         endedAt: new Date().toISOString(),
+        // grace kill is intentional after success — keep real exit for heuristics;
+        // hard timeout still forces non-zero so soft-success path can override.
         exitCode: timedOut ? 1 : exitCode,
         stdout,
         stderr,
         errorCode,
+        timedOut,
+        graceKilled,
         workerScreenshotPath,
         workerScreenshotDir,
         resultPath,
