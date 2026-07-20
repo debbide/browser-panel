@@ -204,6 +204,35 @@
             </div>
           </div>
         </section>
+
+        <section class="modal-panel config-panel" style="margin-top:16px;">
+          <div class="section-header compact">
+            <div>
+              <h2>脚本管理</h2>
+              <p class="muted">管理 <code>tasks/</code> 目录：支持文件夹（如 host2play_dp）、上传、下载、编辑、删除。</p>
+            </div>
+          </div>
+          <div class="files-toolbar row" style="gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <button type="button" class="alt btn-with-icon" id="fs-btn-up" title="上级目录">
+              <i data-lucide="corner-left-up" class="icon-sm"></i> 上级
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-refresh">
+              <i data-lucide="refresh-cw" class="icon-sm"></i> 刷新
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-new-file">
+              <i data-lucide="file-plus" class="icon-sm"></i> 新建文件
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-new-folder">
+              <i data-lucide="folder-plus" class="icon-sm"></i> 新建文件夹
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-upload">
+              <i data-lucide="upload" class="icon-sm"></i> 上传
+            </button>
+            <input type="file" id="fs-upload-input" multiple hidden />
+          </div>
+          <div id="fs-breadcrumb" class="files-breadcrumb muted" style="margin-bottom:8px; font-size:13px;">tasks/</div>
+          <div id="fs-list" class="files-list"></div>
+        </section>
       </div>
     </main>
   </div>

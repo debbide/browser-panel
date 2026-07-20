@@ -2480,9 +2480,300 @@ if (globalEnvSaveBtn) {
   });
 }
 
+/* ========== tasks/ 脚本文件管理（全局配置） ========== */
+let fsCurrentPath = '';
+
+function formatBytes(n) {
+  const v = Number(n) || 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  return `${(v / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fsBreadcrumb(rel) {
+  const el = document.getElementById('fs-breadcrumb');
+  if (!el) return;
+  el.innerHTML = `<code>tasks/${escapeHtml(rel || '')}${rel ? '/' : ''}</code>`;
+}
+
+async function loadTasksFs(dir = fsCurrentPath) {
+  const list = document.getElementById('fs-list');
+  if (!list) return;
+  fsCurrentPath = String(dir || '').replace(/^\/+|\/+$/g, '');
+  fsBreadcrumb(fsCurrentPath);
+  list.innerHTML = '<div class="files-list-empty">加载中…</div>';
+  try {
+    const q = fsCurrentPath ? `?path=${encodeURIComponent(fsCurrentPath)}` : '';
+    const res = await fetchJson(`/api/tasks-fs${q}`);
+    const entries = res.data?.entries || [];
+    if (!entries.length) {
+      list.innerHTML = '<div class="files-list-empty">空目录</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const ent of entries) {
+      const row = document.createElement('div');
+      row.className = `files-row ${ent.type === 'dir' ? 'is-dir' : ''}`;
+      const icon = ent.type === 'dir' ? 'folder' : 'file-code';
+      row.innerHTML = `
+        <i data-lucide="${icon}" class="icon-sm" style="opacity:.85"></i>
+        <div class="files-name" title="${escapeHtml(ent.name)}">${escapeHtml(ent.name)}</div>
+        <div class="files-meta">${ent.type === 'dir' ? '文件夹' : formatBytes(ent.size)}</div>
+        <div class="files-actions"></div>
+      `;
+      const actions = row.querySelector('.files-actions');
+      if (ent.type === 'dir') {
+        row.addEventListener('click', (e) => {
+          if (e.target.closest('button')) return;
+          loadTasksFs(ent.path);
+        });
+      } else {
+        if (ent.text) {
+          const editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'alt';
+          editBtn.textContent = '编辑';
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openTasksFileEditor(ent.path);
+          });
+          actions.appendChild(editBtn);
+        }
+        const dlBtn = document.createElement('button');
+        dlBtn.type = 'button';
+        dlBtn.className = 'alt';
+        dlBtn.textContent = '下载';
+        dlBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.open(`/api/tasks-fs/download?path=${encodeURIComponent(ent.path)}`, '_blank');
+        });
+        actions.appendChild(dlBtn);
+      }
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'alt danger';
+      delBtn.textContent = '删除';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dialogConfirm(`确定删除「${ent.name}」？`, async () => {
+          try {
+            await fetchJson('/api/tasks-fs', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: ent.path }),
+            });
+            toast('已删除', 'success');
+            await loadTasksFs(fsCurrentPath);
+            await loadScripts();
+          } catch (err) {
+            toast(err.message || '删除失败', 'error');
+          }
+        });
+      });
+      actions.appendChild(delBtn);
+      list.appendChild(row);
+    }
+    if (window.lucide) window.lucide.createIcons({ root: list });
+  } catch (error) {
+    list.innerHTML = `<div class="files-list-empty">${escapeHtml(error.message || '加载失败')}</div>`;
+  }
+}
+
+function openTasksFileEditor(relPath) {
+  fetchJson(`/api/tasks-fs/read?path=${encodeURIComponent(relPath)}`)
+    .then((res) => {
+      const file = res.data || {};
+      const mask = document.createElement('div');
+      mask.className = 'modal-mask open';
+      mask.style.zIndex = '10050';
+      const dialog = document.createElement('div');
+      dialog.className = 'modal open files-editor-dialog';
+      dialog.style.cssText = 'z-index:10051; max-width:860px; width:min(860px,96vw);';
+      dialog.innerHTML = `
+        <div class="modal-header">
+          <div>
+            <h2>编辑 ${escapeHtml(file.name || relPath)}</h2>
+            <p class="muted" style="margin:4px 0 0;font-size:13px;"><code>tasks/${escapeHtml(relPath)}</code></p>
+          </div>
+          <button type="button" class="icon-btn fs-ed-close" aria-label="关闭"><i data-lucide="x" class="icon-md"></i></button>
+        </div>
+        <div class="modal-body">
+          <textarea class="files-editor-area" spellcheck="false"></textarea>
+          <div class="row" style="margin-top:12px; gap:8px; justify-content:flex-end;">
+            <button type="button" class="alt fs-ed-cancel">取消</button>
+            <button type="button" class="btn-primary fs-ed-save">保存</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(mask);
+      document.body.appendChild(dialog);
+      const area = dialog.querySelector('.files-editor-area');
+      area.value = file.content || '';
+      if (window.lucide) window.lucide.createIcons({ root: dialog });
+      const close = () => { mask.remove(); dialog.remove(); };
+      dialog.querySelector('.fs-ed-close').addEventListener('click', close);
+      dialog.querySelector('.fs-ed-cancel').addEventListener('click', close);
+      mask.addEventListener('click', close);
+      dialog.querySelector('.fs-ed-save').addEventListener('click', async () => {
+        try {
+          await fetchJson('/api/tasks-fs/write', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: relPath, content: area.value }),
+          });
+          toast('已保存', 'success');
+          close();
+          await loadTasksFs(fsCurrentPath);
+        } catch (err) {
+          toast(err.message || '保存失败', 'error');
+        }
+      });
+      setTimeout(() => area.focus(), 40);
+    })
+    .catch((err) => toast(err.message || '读取失败', 'error'));
+}
+
+function promptFsName(title, placeholder) {
+  return new Promise((resolve) => {
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask open';
+    mask.style.zIndex = '10050';
+    const dialog = document.createElement('div');
+    dialog.className = 'modal open';
+    dialog.style.cssText = 'z-index:10051; max-width:420px; width:min(420px,92vw);';
+    dialog.innerHTML = `
+      <div class="modal-header">
+        <h2>${escapeHtml(title)}</h2>
+        <button type="button" class="icon-btn fs-nm-close"><i data-lucide="x" class="icon-md"></i></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="fs-nm-input" placeholder="${escapeHtml(placeholder || '')}" spellcheck="false" autocomplete="off" style="width:100%" />
+        <div class="row" style="margin-top:12px; gap:8px; justify-content:flex-end;">
+          <button type="button" class="alt fs-nm-cancel">取消</button>
+          <button type="button" class="btn-primary fs-nm-ok">确定</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(mask);
+    document.body.appendChild(dialog);
+    if (window.lucide) window.lucide.createIcons({ root: dialog });
+    const input = dialog.querySelector('.fs-nm-input');
+    const done = (val) => { mask.remove(); dialog.remove(); resolve(val); };
+    dialog.querySelector('.fs-nm-close').addEventListener('click', () => done(null));
+    dialog.querySelector('.fs-nm-cancel').addEventListener('click', () => done(null));
+    mask.addEventListener('click', () => done(null));
+    dialog.querySelector('.fs-nm-ok').addEventListener('click', () => done(String(input.value || '').trim()));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); done(String(input.value || '').trim()); }
+    });
+    setTimeout(() => input.focus(), 40);
+  });
+}
+
+function wireTasksFsUi() {
+  const up = document.getElementById('fs-btn-up');
+  const refresh = document.getElementById('fs-btn-refresh');
+  const newFile = document.getElementById('fs-btn-new-file');
+  const newFolder = document.getElementById('fs-btn-new-folder');
+  const uploadBtn = document.getElementById('fs-btn-upload');
+  const uploadInput = document.getElementById('fs-upload-input');
+
+  if (up) {
+    up.addEventListener('click', () => {
+      if (!fsCurrentPath) return;
+      const parts = fsCurrentPath.split('/').filter(Boolean);
+      parts.pop();
+      loadTasksFs(parts.join('/'));
+    });
+  }
+  if (refresh) refresh.addEventListener('click', () => loadTasksFs(fsCurrentPath));
+  if (newFolder) {
+    newFolder.addEventListener('click', async () => {
+      const name = await promptFsName('新建文件夹', 'folder-name');
+      if (!name) return;
+      try {
+        await fetchJson('/api/tasks-fs/mkdir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parent: fsCurrentPath, name }),
+        });
+        toast('文件夹已创建', 'success');
+        await loadTasksFs(fsCurrentPath);
+      } catch (err) {
+        toast(err.message || '创建失败', 'error');
+      }
+    });
+  }
+  if (newFile) {
+    newFile.addEventListener('click', async () => {
+      const name = await promptFsName('新建文件', 'script.py');
+      if (!name) return;
+      try {
+        const created = await fetchJson('/api/tasks-fs/create-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parent: fsCurrentPath, name, content: '' }),
+        });
+        toast('文件已创建', 'success');
+        await loadTasksFs(fsCurrentPath);
+        await loadScripts();
+        if (created.data?.path) openTasksFileEditor(created.data.path);
+      } catch (err) {
+        toast(err.message || '创建失败', 'error');
+      }
+    });
+  }
+  if (uploadBtn && uploadInput) {
+    uploadBtn.addEventListener('click', () => uploadInput.click());
+    uploadInput.addEventListener('change', async () => {
+      const files = [...(uploadInput.files || [])];
+      uploadInput.value = '';
+      if (!files.length) return;
+      for (const file of files) {
+        try {
+          const buf = await file.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = '';
+          const chunk = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+          }
+          const b64 = btoa(binary);
+          await fetchJson('/api/tasks-fs/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              parent: fsCurrentPath,
+              name: file.name,
+              encoding: 'base64',
+              content: b64,
+            }),
+          });
+          toast(`已上传 ${file.name}`, 'success');
+        } catch (err) {
+          toast(`${file.name}: ${err.message || '上传失败'}`, 'error');
+        }
+      }
+      await loadTasksFs(fsCurrentPath);
+      await loadScripts();
+    });
+  }
+
+  // 进入全局配置时加载
+  const configTabBtn = document.getElementById('tab-config');
+  if (configTabBtn) {
+    configTabBtn.addEventListener('click', () => {
+      loadTasksFs(fsCurrentPath);
+    });
+  }
+}
+
+wireTasksFsUi();
+
 resetAllModalState();
 closeModal();
 refreshAll();
 loadBrowserRuntimeSettings();
 loadVisionSettings();
 loadGlobalEnvSettings();
+loadTasksFs('');
