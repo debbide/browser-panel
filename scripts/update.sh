@@ -1,107 +1,80 @@
 #!/usr/bin/env bash
-# Update panel **in place** (directory never moves).
-#
-# Default: pull latest GitHub Release code (safe sync).
-# Never overwrites: tasks/ data/ logs/ screenshots/ runtime-data/ .env* .venv/ node_modules/
-#
-#   bash scripts/update.sh
-#   bash scripts/update.sh --tag v1.0.0
-#   bash scripts/update.sh --git          # use git pull instead of release
-#   bash scripts/update.sh --deps         # also refresh python/node via install-deps
+# 原地升级：拉最新 Release，不覆盖 tasks/data，然后 npm install，有服务则重启。
+#   cd /opt/browser-panel && bash scripts/update.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# shellcheck source=lib/release-sync.sh
-source "$ROOT/scripts/lib/release-sync.sh"
-
-MODE="release"   # release | git
-TAG="latest"
-WITH_DEPS=0
+REPO="${GITHUB_REPO:-debbide/browser-panel}"
+TAG="${1:-latest}"
 SERVICE="${SERVICE_NAME:-browser-automation-panel}"
-REPO_SLUG=""
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --git) MODE="git"; shift ;;
-    --release) MODE="release"; shift ;;
-    --tag) TAG="$2"; shift 2 ;;
-    --repo) REPO_SLUG="$2"; shift 2 ;;
-    --deps) WITH_DEPS=1; shift ;;
-    -h|--help)
-      cat <<EOF
-Usage: $0 [--release|--git] [--tag TAG] [--deps] [--repo owner/name]
-
-  Default --release  Download latest GitHub Release (or --tag) and sync code
-                     ONLY. Preserves tasks/, data/, logs/, screenshots/,
-                     runtime-data/, .env*, .venv/, node_modules/
-  --git              git pull in this directory (still does not wipe tasks/)
-  --deps             run install-deps.sh after update
-  --tag vX.Y.Z       release tag (default: latest)
-  --repo owner/name  override GitHub repo (default: origin or debbide/browser-panel)
-
-Project stays at: $ROOT
-EOF
-      exit 0
-      ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
-  esac
-done
 
 cd "$ROOT"
-echo "[update] fixed project dir: $ROOT"
+echo "[update] $ROOT"
 
-if [[ "$MODE" == "git" ]]; then
-  if [[ ! -d "$ROOT/.git" ]]; then
-    echo "[update] no .git here; use default release mode or clone first" >&2
-    exit 1
-  fi
-  echo "[update] git pull in place..."
-  git -C "$ROOT" pull --ff-only || git -C "$ROOT" pull
-else
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "[update] curl required for release mode" >&2
-    exit 1
-  fi
-  if [[ -z "$REPO_SLUG" ]]; then
-    REPO_SLUG="$(detect_repo_slug "$ROOT")"
-  fi
-  echo "[update] release sync from github.com/${REPO_SLUG}"
+command -v curl >/dev/null || { echo "need curl"; exit 1; }
+command -v node >/dev/null || { echo "need node"; exit 1; }
 
-  TMP="$(mktemp -d)"
-  cleanup() { rm -rf "$TMP"; }
-  trap cleanup EXIT
+resolve_tag() {
+  local json tag
+  json="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
+  tag=""
+  if [[ -n "$json" ]]; then
+    tag="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name") or "")' <<<"$json" 2>/dev/null || true)"
+    [[ -z "$tag" ]] && tag="$(echo "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  fi
+  echo "$tag"
+}
 
-  download_release_tree "$REPO_SLUG" "$TMP" "$TAG"
-  # Safety: refuse if preserve paths would be wiped — sync function skips them
-  if [[ -d "$ROOT/tasks" ]]; then
-    echo "[update] keep existing tasks/ ($(find "$ROOT/tasks" -type f 2>/dev/null | wc -l | tr -d ' ') files)"
-  fi
-  if [[ -d "$ROOT/data" ]]; then
-    echo "[update] keep existing data/"
-  fi
-  safe_sync_release_into "$TMP/tree" "$ROOT"
-  echo "[update] applied ${RELEASE_TAG_RESOLVED:-release}"
+if [[ "$TAG" == "latest" ]]; then
+  T="$(resolve_tag || true)"
+  TAG="${T:-}"
 fi
 
-echo "[update] npm install..."
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+if [[ -n "$TAG" ]]; then
+  echo "[update] $TAG"
+  curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/refs/tags/${TAG}" -o "$TMP/src.tgz" \
+    || curl -fsSL "https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz" -o "$TMP/src.tgz"
+else
+  echo "[update] master"
+  curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/refs/heads/master" -o "$TMP/src.tgz"
+fi
+
+mkdir -p "$TMP/tree"
+tar -xzf "$TMP/src.tgz" -C "$TMP/tree" --strip-components=1
+
+preserve() {
+  case "$1" in
+    tasks|data|logs|screenshots|runtime-data|node_modules|.venv|.git|.env|.env.panel|.env.local) return 0 ;;
+    .env*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+shopt -s dotglob nullglob
+for p in "$TMP/tree"/*; do
+  n="$(basename "$p")"
+  preserve "$n" && continue
+  if [[ -d "$p" ]]; then
+    rm -rf "$ROOT/$n"
+    cp -a "$p" "$ROOT/$n"
+  else
+    cp -a "$p" "$ROOT/$n"
+  fi
+done
+shopt -u dotglob nullglob
+
+echo "[update] npm install"
 npm install --omit=dev
 
-if [[ "$WITH_DEPS" -eq 1 ]]; then
-  bash "$ROOT/scripts/install-deps.sh"
-fi
-
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "${SERVICE}.service" 2>/dev/null | grep -q "${SERVICE}.service"; then
-  echo "[update] restart ${SERVICE}..."
   if [[ "$(id -u)" -eq 0 ]]; then
     systemctl restart "${SERVICE}.service" || true
-    systemctl --no-pager --full status "${SERVICE}.service" || true
   else
     sudo systemctl restart "${SERVICE}.service" || true
-    sudo systemctl --no-pager --full status "${SERVICE}.service" || true
   fi
-else
-  echo "[update] no systemd unit '${SERVICE}' — restart node manually if needed"
 fi
 
-echo "[update] done @ $ROOT"
-echo "[update] preserved: tasks data logs screenshots runtime-data .env* .venv node_modules"
+echo "[update] done (tasks/data kept)"
