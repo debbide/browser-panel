@@ -927,11 +927,22 @@ function createEnvEditor(container) {
   function collect() {
     return items
       .filter((e) => e.name)
-      .map((e) => ({
-        name: e.name,
-        value: e.value == null ? '' : String(e.value),
-        is_secret: e.is_secret ? 1 : 0,
-      }));
+      .map((e) => {
+        const isSecret = Boolean(e.is_secret);
+        const value = e.value == null ? '' : String(e.value);
+        // Secret values are blank in the form (masked server-side). Keep has_value so
+        // re-sync / save does not drop EMAIL/PASSWORD-style secrets.
+        const hasValue = isSecret
+          ? Boolean(e.has_value || e.valueMasked || value)
+          : Boolean(value);
+        return {
+          name: e.name,
+          value,
+          is_secret: isSecret ? 1 : 0,
+          has_value: hasValue,
+          valueMasked: e.valueMasked || '',
+        };
+      });
   }
 
   function exportText() {
@@ -1048,18 +1059,35 @@ function syncTaskParamsUI(scriptPath, paramsOrEnv = {}) {
 }
 
 function collectTaskEnvFromForm() {
+  // Always return full rows including is_secret + has_value (see createEnvEditor.collect)
   return taskEnvUI.collect();
 }
 
 function collectTaskParamsFromForm() {
   // Backward-compatible flat object (also used for USE_TEMP_PROFILE side effects)
+  // NOTE: secret values are intentionally empty in the UI — do NOT use this object
+  // to re-seed the env editor (empty secrets get filtered out and disappear).
   const env = collectTaskEnvFromForm();
   const params = {};
   for (const item of env) {
     if (!item.name) continue;
+    // Preserve secret keys even when value is blank so callers that iterate keys still see them
+    if (item.is_secret && !item.value && item.has_value) {
+      params[item.name] = item.value; // still '' — presence matters for some call sites
+      continue;
+    }
     params[item.name] = item.value;
   }
   return params;
+}
+
+/** Full env rows for re-rendering the editor without dropping masked secrets. */
+function collectSafeCurrentEnvRows() {
+  try {
+    return collectTaskEnvFromForm();
+  } catch {
+    return [];
+  }
 }
 
 function applyHost2PlayTemplate() {
@@ -2225,7 +2253,8 @@ function useScript(scriptPath, type) {
   }
   if (!form.name.value.trim()) form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
   formHint.textContent = `已选脚本：${getScriptLabel(scriptPath)}`;
-  syncTaskParamsUI(scriptPath, collectSafeCurrentParams());
+  // Must pass full env rows (array), not flat params — secrets have empty value in UI
+  syncTaskParamsUI(scriptPath, collectSafeCurrentEnvRows());
   renderScripts();
   openModal(editingId ? 'edit' : 'create');
 }
@@ -2426,7 +2455,10 @@ modalImportForm.addEventListener('submit', async (event) => {
     selectedScriptPath = result.data.path;
     form.script_path.value = result.data.path;
     form.type.value = result.data.type;
-    syncTaskParamsUI(result.data.path, collectSafeCurrentParams());
+    // BUGFIX: previously used collectSafeCurrentParams() (flat object). Secret values are
+    // always '' in the UI, so entriesFromParamsObject dropped PASSWORD_* etc. Then Save
+    // called replaceEnvEntries and deleted those keys from DB. Keep full env rows instead.
+    syncTaskParamsUI(result.data.path, collectSafeCurrentEnvRows());
     if (!form.name.value.trim()) form.name.value = result.data.name.replace(/\.(js|py)$/i, '');
     openModal(editingId ? 'edit' : 'create');
     formHint.textContent = result.data.overwritten

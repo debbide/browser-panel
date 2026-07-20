@@ -339,8 +339,22 @@ const replaceEnvEntriesTxn = db.transaction((scope, ownerId, entriesInput) => {
     }
     const prev = existingByName.get(name);
     // Secret blank keep: empty new value + existing secret → keep old value
+    // (UI never re-sends secret plaintext; empty means "unchanged")
     if (isSecret && value === '' && prev && String(prev.value || '').length) {
       value = prev.value;
+    }
+    // Also keep previous secret if client forgot is_secret but sent empty value for same name
+    if (!isSecret && value === '' && prev && prev.is_secret && String(prev.value || '').length) {
+      value = prev.value;
+      // treat as secret still
+      upsert.run({
+        scope: normalizedScope,
+        owner_id: normalizedOwnerId,
+        name,
+        value,
+        is_secret: 1,
+      });
+      continue;
     }
     // Skip empty non-secrets (no value to inject)
     if (!isSecret && value === '' && !(prev && prev.is_secret && value === '')) {
