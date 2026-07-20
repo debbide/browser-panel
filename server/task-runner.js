@@ -101,10 +101,31 @@ function isoNow() {
   return new Date().toISOString();
 }
 
-/**
- * 子进程日志原样按行写入，不加面板时间戳。
- * 脚本自己的 [HH:MM:SS] / DEBUG 时间足够，避免双重时间戳。
- */
+/** 本地时分秒，用于脚本没自带时间时补前缀 */
+function logTimeNow() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** 行首是否已有脚本自己的时间（避免双重戳） */
+function lineAlreadyHasTimestamp(line) {
+  const text = safeString(line).trimStart();
+  // [16:46:42] / 16:46:42 / 2026-07-20T... /
+  return (
+    /^\[\d{1,2}:\d{2}(:\d{2})?([.,]\d+)?\]/.test(text)
+    || /^\d{1,2}:\d{2}(:\d{2})?([.,]\d+)?(\s|$)/.test(text)
+    || /^\d{4}-\d{2}-\d{2}[T\s]/.test(text)
+  );
+}
+
+function formatSubprocessLogLine(line) {
+  // 脚本已有时间 → 原样；没有 → 只补 HH:MM:SS
+  if (lineAlreadyHasTimestamp(line)) return `${line}\n`;
+  return `${logTimeNow()} ${line}\n`;
+}
+
+/** 子进程按行写日志：有时间戳不重复加，没有则补短时间 */
 function createTimestampedLineWriter(writeLine) {
   let buffer = '';
   return {
@@ -115,12 +136,12 @@ function createTimestampedLineWriter(writeLine) {
       while ((idx = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, idx);
         buffer = buffer.slice(idx + 1);
-        writeLine(`${line}\n`);
+        writeLine(formatSubprocessLogLine(line));
       }
     },
     flush() {
       if (!buffer) return;
-      writeLine(`${buffer}\n`);
+      writeLine(formatSubprocessLogLine(buffer));
       buffer = '';
     },
   };
