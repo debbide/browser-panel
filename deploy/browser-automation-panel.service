@@ -1,24 +1,41 @@
 [Unit]
 Description=Browser Automation Panel
-After=network.target
+After=network-online.target xvfb-browser.service
+Wants=network-online.target xvfb-browser.service
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/browser-panel
+EnvironmentFile=-/opt/browser-panel/.env.panel
+
+# Defaults (override in .env.panel)
 Environment=NODE_ENV=production
 Environment=PORT=3210
 Environment=HOST=0.0.0.0
-# Override for your host — do not commit personal usernames
-Environment=BROWSER_USER=browser
 Environment=BROWSER_DISPLAY=:1.0
-Environment=BROWSER_XAUTHORITY=/home/browser/.Xauthority
-Environment=BROWSER_USER_DATA_DIR=/home/browser/browser-work/persistent
-Environment=BROWSER_CHROME_PATH=/usr/bin/chromium-browser
+Environment=BROWSER_CHROME_PATH=/usr/bin/google-chrome-stable
+# Optional HTTP proxy for outbound (apt/curl style). Browser tasks prefer task/panel BROWSER_PROXY.
+# Environment=http_proxy=http://127.0.0.1:18999
+# Environment=https_proxy=http://127.0.0.1:18999
+# Browser Linux user / work dir — set in .env.panel on the server (do not put personal names in git)
+# Environment=BROWSER_USER=browser
+# Environment=BROWSER_HOME=/home/browser
+# Environment=BROWSER_WORK_DIR=/home/browser/browser-work
+# Environment=BROWSER_XAUTHORITY=/home/browser/.Xauthority
+# Environment=BROWSER_USER_DATA_DIR=/home/browser/browser-work/persistent
 # Environment=BROWSER_PROXY=socks5://127.0.0.1:1080
-ExecStart=/usr/bin/node server/index.js
+
+ExecStart=/usr/local/bin/node server/index.js
+# Fallback if node is only on PATH from nodesource/apt:
+# ExecStart=/usr/bin/node server/index.js
+
 Restart=on-failure
 RestartSec=5
+# Browser tasks use `su` to BROWSER_USER; keep root or a user that can su
 User=root
+
+# Give Chrome/Xvfb a bit more headroom
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target

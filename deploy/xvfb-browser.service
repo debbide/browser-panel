@@ -1,0 +1,13 @@
+[Unit]
+Description=Xvfb virtual display :1 for browser automation
+After=network.target
+
+[Service]
+Type=simple
+# 1440x900x24 — matches panel default viewport style
+ExecStart=/usr/bin/Xvfb :1 -screen 0 1440x900x24 -ac +extension GLX +render -noreset
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -87,12 +87,25 @@ bash scripts/install-deps.sh --sb
 bash scripts/install-deps.sh --playwright
 ```
 
-## systemd（可选）
+## systemd 常驻（Xvfb + 面板）
 
-改 `deploy/browser-automation-panel.service` 里的 `WorkingDirectory` 为你的固定路径后：
+在**服务器**上（项目已在 `/opt/browser-panel`）：
 
 ```bash
-sudo cp deploy/browser-automation-panel.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now browser-automation-panel
+cd /opt/browser-panel
+# 若代码较旧： bash scripts/update.sh
+sudo bash deploy/install-systemd.sh
+```
+
+会安装并启用：
+
+- `xvfb-browser.service` — 虚拟显示 `:1`
+- `browser-automation-panel.service` — 面板（依赖 Xvfb）
+
+环境写在 **`/opt/browser-panel/.env.panel`**（首次从 `deploy/env.panel.example` 复制，按需改 `BROWSER_USER` / 代理）。
+
+```bash
+systemctl status browser-automation-panel xvfb-browser
+journalctl -u browser-automation-panel -f
+systemctl restart browser-automation-panel
 ```
