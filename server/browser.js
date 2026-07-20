@@ -175,9 +175,12 @@ function ensureManualRuntimeFiles(runtimeSettings) {
   fs.mkdirSync(path.join(workerRoot, 'task-results'), { recursive: true });
   fs.mkdirSync(path.join(workerRoot, 'persistent'), { recursive: true });
   // SeleniumBase UC / fasteners lock dirs (must be writable by browser user)
-  fs.mkdirSync(path.join(workerRoot, 'downloaded_files'), { recursive: true });
-  fs.mkdirSync(path.join(workerRoot, 'assets'), { recursive: true });
-  fs.mkdirSync(path.join(workerRoot, 'archived_files'), { recursive: true });
+  for (const name of ['downloaded_files', 'assets', 'archived_files']) {
+    const dir = path.join(workerRoot, name);
+    fs.mkdirSync(dir, { recursive: true });
+    try { fs.chmodSync(dir, 0o777); } catch { /* ignore */ }
+  }
+  try { fs.chmodSync(workerRoot, 0o755); } catch { /* ignore */ }
   fs.mkdirSync(workerNodeModules, { recursive: true });
 
   const effectiveRuntimeSettings = runtimeSettings || db.getBrowserRuntimeSettings();
@@ -231,13 +234,16 @@ function ensureManualRuntimeFiles(runtimeSettings) {
   fs.copyFileSync(sourceNode, workerNodePath);
   fs.chmodSync(workerNodePath, 0o755);
 
-  // Best-effort ownership for su browser user
+  // Ownership for browser user (required: SB creates locks under cwd as that user)
   try {
-    spawnSync('bash', ['-lc', `chown -R ${shellEscape(browserUser)}:${shellEscape(browserUser)} ${shellEscape(workerRoot)} 2>/dev/null || true`], {
-      stdio: 'ignore',
-    });
-  } catch {
-    // ignore
+    const r = spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, workerRoot], { encoding: 'utf8' });
+    if (r.status !== 0) {
+      console.warn('[browser] chown failed:', (r.stderr || r.stdout || '').trim());
+      spawnSync('chmod', ['-R', 'a+rwX', workerRoot], { stdio: 'ignore' });
+    }
+  } catch (err) {
+    console.warn('[browser] chown error:', err.message);
+    try { spawnSync('chmod', ['-R', 'a+rwX', workerRoot], { stdio: 'ignore' }); } catch { /* ignore */ }
   }
 
   const sessionJs = path.join(workerRoot, 'manual-browser-session.js');

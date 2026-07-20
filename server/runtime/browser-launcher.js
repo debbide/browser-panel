@@ -162,9 +162,16 @@ function ensureRuntimeFiles(task) {
   fs.mkdirSync(path.join(workerRoot, 'screenshots'), { recursive: true });
   fs.mkdirSync(path.join(workerRoot, 'task-results'), { recursive: true });
   // SeleniumBase UC lock/download dirs (browser user must write here)
-  fs.mkdirSync(path.join(workerRoot, 'downloaded_files'), { recursive: true });
-  fs.mkdirSync(path.join(workerRoot, 'assets'), { recursive: true });
-  fs.mkdirSync(path.join(workerRoot, 'archived_files'), { recursive: true });
+  const sbWritable = ['downloaded_files', 'assets', 'archived_files'];
+  for (const name of sbWritable) {
+    const dir = path.join(workerRoot, name);
+    fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.chmodSync(dir, 0o777);
+    } catch {
+      // ignore
+    }
+  }
   fs.mkdirSync(path.join(getRuntimeDataDir(), 'profiles'), { recursive: true });
   const moduleCopies = collectModuleCopyPairs(getRuntimeNodeModules(), workerNodeModules);
   const taskSourcePath = path.resolve(config.paths.root, task.script_path);
@@ -226,7 +233,14 @@ function ensureRuntimeFiles(task) {
       `Failed to prepare worker node (${sourceNode} -> ${workerNodePath}): ${err.message}`
     );
   }
-  spawnSync('bash', ['-lc', `chown -R ${shellEscape(browserUser)}:${shellEscape(browserUser)} ${shellEscape(workerRoot)}`], { stdio: 'ignore' });
+  const ch = spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, workerRoot], { encoding: 'utf8' });
+  if (ch.status !== 0) {
+    console.warn('[browser-launcher] chown failed:', (ch.stderr || ch.stdout || '').trim());
+    spawnSync('chmod', ['-R', 'a+rwX', workerRoot], { stdio: 'ignore' });
+  }
+  for (const name of sbWritable) {
+    try { fs.chmodSync(path.join(workerRoot, name), 0o777); } catch { /* ignore */ }
+  }
 }
 
 
