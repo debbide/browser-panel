@@ -367,6 +367,129 @@ function scheduleTerminateCommands(task, delayMs) {
   }, Math.max(0, Number(delayMs) || 0));
 }
 
+/**
+ * After a browser task ends, Chrome/DrissionPage often leave large dirs under /tmp
+ * (tmpXXXX, .com.google.Chrome*, DrissionPage/...). On small VPS disks this piles up.
+ * Safe rules:
+ * - only under /tmp (or TMPDIR if under /tmp)
+ * - only known leftover name patterns
+ * - never delete if path is a configured persistent profile (should not live in /tmp)
+ * - skip dirs modified in the last minAgeMs (default 2 min) to avoid racing a new task
+ */
+function shouldCleanupTmpEntry(name, absPath, minAgeMs) {
+  const base = String(name || '');
+  // Playwright / Python tempfile / Chrome ephemeral profiles
+  const patterns = [
+    /^tmp[A-Za-z0-9_-]+$/,           // /tmp/tmpgl8v2vzo
+    /^\.com\.google\.Chrome\./,      // Chrome singleton leftovers
+    /^\.org\.chromium\.Chromium\./,
+    /^puppeteer_dev_chrome_profile-/,
+    /^playwright[_-]?/,
+    /^chromium[_-]?/,
+    /^ScopedDir/,
+  ];
+  if (base === 'DrissionPage') return true;
+  if (!patterns.some((re) => re.test(base))) return false;
+  try {
+    const st = fs.statSync(absPath);
+    const age = Date.now() - Number(st.mtimeMs || st.mtime || 0);
+    if (age < minAgeMs) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function isPathInsideTmp(absPath) {
+  const resolved = path.resolve(absPath);
+  const tmpRoot = path.resolve('/tmp');
+  return resolved === tmpRoot || resolved.startsWith(`${tmpRoot}${path.sep}`);
+}
+
+function collectProtectedProfileDirs(task) {
+  const protected = new Set();
+  try {
+    if (task && task._profile && task._profile.user_data_dir) {
+      protected.add(path.resolve(String(task._profile.user_data_dir)));
+    }
+  } catch { /* ignore */ }
+  try {
+    const persistent = config.browser && config.browser.userDataDir
+      ? path.resolve(config.browser.userDataDir)
+      : '';
+    if (persistent) protected.add(persistent);
+  } catch { /* ignore */ }
+  // Never treat runtime temp profiles as protected for /tmp cleanup (they are not under /tmp)
+  return protected;
+}
+
+function cleanupBrowserTempDirs(task = null, options = {}) {
+  const minAgeMs = Math.max(0, Number(options.minAgeMs) || 120000);
+  const dryRun = Boolean(options.dryRun);
+  const tmpRoot = '/tmp';
+  let removed = 0;
+  let freedHint = 0;
+  const protectedDirs = collectProtectedProfileDirs(task);
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(tmpRoot, { withFileTypes: true });
+  } catch (err) {
+    console.warn('[browser-launcher] /tmp readdir failed:', err.message);
+    return { removed: 0, freedHint: 0 };
+  }
+
+  for (const ent of entries) {
+    const name = ent.name;
+    const abs = path.join(tmpRoot, name);
+    if (!isPathInsideTmp(abs)) continue;
+    if (protectedDirs.has(path.resolve(abs))) continue;
+
+    // DrissionPage is a directory tree
+    if (name === 'DrissionPage' && (ent.isDirectory() || ent.isSymbolicLink())) {
+      try {
+        const st = fs.statSync(abs);
+        const age = Date.now() - Number(st.mtimeMs || st.mtime || 0);
+        if (age < minAgeMs) continue;
+        if (!dryRun) fs.rmSync(abs, { recursive: true, force: true });
+        removed += 1;
+        console.log(`[browser-launcher] cleaned /tmp leftover: ${abs}`);
+      } catch (err) {
+        console.warn(`[browser-launcher] clean failed ${abs}:`, err.message);
+      }
+      continue;
+    }
+
+    if (!ent.isDirectory() && !ent.isSymbolicLink()) continue;
+    if (!shouldCleanupTmpEntry(name, abs, minAgeMs)) continue;
+
+    try {
+      if (!dryRun) fs.rmSync(abs, { recursive: true, force: true });
+      removed += 1;
+      console.log(`[browser-launcher] cleaned /tmp leftover: ${abs}`);
+    } catch (err) {
+      console.warn(`[browser-launcher] clean failed ${abs}:`, err.message);
+    }
+  }
+
+  // Also clear common sub-caches if empty parents remain — already removed as trees
+  if (removed > 0) {
+    console.log(`[browser-launcher] /tmp cleanup done: removed=${removed}`);
+  }
+  return { removed, freedHint };
+}
+
+function scheduleTmpCleanup(task, delayMs = 5000) {
+  const snapshot = task ? { ...task, _profile: task._profile || null } : null;
+  setTimeout(() => {
+    try {
+      cleanupBrowserTempDirs(snapshot, { minAgeMs: 120000 });
+    } catch (err) {
+      console.warn('[browser-launcher] scheduleTmpCleanup error:', err.message);
+    }
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
 async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   ensureRuntimeFiles(task);
   const workDir = getBrowserWorkDir();
@@ -643,6 +766,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       activeBrowserRuns.delete(Number(task.id));
       scheduleTerminateCommands(cleanupTask, 0);
       scheduleTerminateCommands(cleanupTask, 1800);
+      // Chrome/DP temp dirs under /tmp — clean after processes are signalled
+      scheduleTmpCleanup(cleanupTask, 8000);
       resolve({
         startedAt,
         endedAt: new Date().toISOString(),
@@ -665,6 +790,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       activeBrowserRuns.delete(Number(task.id));
       scheduleTerminateCommands(cleanupTask, 0);
       scheduleTerminateCommands(cleanupTask, 1800);
+      scheduleTmpCleanup(cleanupTask, 8000);
       const exitCode = code ?? (signal ? 1 : 0);
       const errorCode = stoppedByUser ? 'stopped' : null;
       resolve({
@@ -739,6 +865,7 @@ function stopBrowserTask(taskId, fallbackTask = null) {
     scheduleTerminateCommands(taskSnapshot, 1500);
     scheduleTerminateCommands(taskSnapshot, 3500);
     scheduleTerminateCommands(taskSnapshot, 6500);
+    scheduleTmpCleanup(taskSnapshot, 10000);
   }
   return true;
 }
@@ -746,4 +873,5 @@ function stopBrowserTask(taskId, fallbackTask = null) {
 module.exports = {
   launchBrowserTaskAndWait,
   stopBrowserTask,
+  cleanupBrowserTempDirs,
 };
