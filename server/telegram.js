@@ -1,4 +1,4 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const db = require('./db');
@@ -171,6 +171,10 @@ function buildRetryMarkup(task, run) {
 }
 
 function getTelegramProxy() {
+  const settings = db.getTelegramSettings();
+  if (settings.proxy) {
+    return String(settings.proxy).trim();
+  }
   return String(
     process.env.TG_PROXY
       || process.env.TG_PROXY_URL

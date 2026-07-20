@@ -6,9 +6,26 @@ runtime-data/
 data/*.db*
 *.log
 .sisyphus/
-tasks/*.js
-tasks/*.py
+.claude/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+
+# Python junk
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Task automation scripts (keep only templates/examples)
+tasks/**
 !tasks/template.js
 !tasks/example.js
 !tasks/template.py
 !tasks/example.py
+
+# Optional local tools not part of panel runtime
+# automa-recorder/   # uncomment to ignore if not publishing

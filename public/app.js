@@ -91,6 +91,13 @@ const addTaskBtn = document.getElementById('add-task-btn');
 const openBrowserBtn = document.getElementById('open-browser-btn');
 const browserProfileSelect = document.getElementById('browser-profile-select');
 const taskProfileSelect = document.getElementById('task-profile-select');
+const taskProfileModeSelect = document.getElementById('task-profile-mode');
+const taskProfileModeHint = document.getElementById('task-profile-mode-hint');
+const taskProfilePersistentFields = document.getElementById('task-profile-persistent-fields');
+const taskUsePersistentInput = document.getElementById('task-use-persistent');
+const taskProxyInput = document.getElementById('task-proxy-input');
+const taskProxyFromProfileBtn = document.getElementById('task-proxy-from-profile');
+const taskProxyHint = document.getElementById('task-proxy-hint');
 const addProfileBtn = document.getElementById('add-profile-btn');
 const profilesList = document.getElementById('profiles-list');
 let profilesCache = [];
@@ -102,6 +109,7 @@ const editScriptBtn = document.getElementById('edit-script-btn');
 const scheduleModeSelect = document.getElementById('schedule-mode-select');
 const fixedFieldsEl = document.getElementById('fixed-schedule-fields');
 const intervalFieldsEl = document.getElementById('interval-schedule-fields');
+const dailyWindowFieldsEl = document.getElementById('daily-window-schedule-fields');
 const fixedSummaryEl = document.getElementById('fixed-schedule-summary');
 const intervalSummaryEl = document.getElementById('interval-schedule-summary');
 
@@ -111,11 +119,14 @@ const fixedMinutesEl = form.elements.fixed_minutes;
 const intervalMinEl = form.elements.interval_min;
 const intervalMaxEl = form.elements.interval_max;
 const intervalUnitEl = form.elements.interval_unit;
+const dailyTimeStartEl = form.elements.daily_time_start;
+const dailyTimeEndEl = form.elements.daily_time_end;
 
 const tgForm = document.getElementById('tg-form');
 const tgStatusText = document.getElementById('tg-status-text');
 const tgBotToken = document.getElementById('tg-bot-token');
 const tgChatId = document.getElementById('tg-chat-id');
+const tgProxy = document.getElementById('tg-proxy');
 const tgTokenHelp = document.getElementById('tg-token-help');
 const tgSaveBtn = document.getElementById('tg-save-btn');
 const tgTestBtn = document.getElementById('tg-test-btn');
@@ -127,6 +138,24 @@ const brPluginPackages = document.getElementById('br-plugin-packages');
 const brSaveBtn = document.getElementById('br-save-btn');
 const brInstallBtn = document.getElementById('br-install-btn');
 const brInstallBrowserBtn = document.getElementById('br-install-browser-btn');
+const visionForm = document.getElementById('vision-form');
+const visionStatusText = document.getElementById('vision-status-text');
+const visionChannelsList = document.getElementById('vision-channels-list');
+const visionAddChannelBtn = document.getElementById('vision-add-channel');
+const visionSaveBtn = document.getElementById('vision-save-btn');
+const taskParamsBlock = document.getElementById('task-params-block');
+const taskParamsHint = document.getElementById('task-params-hint');
+const taskEnvEditor = document.getElementById('task-env-editor');
+const taskEnvAddRowBtn = document.getElementById('task-env-add-row');
+const taskEnvTemplateHost2playBtn = document.getElementById('task-env-template-host2play');
+const taskEnvApplyRawBtn = document.getElementById('task-env-apply-raw');
+const taskEnvExportRawBtn = document.getElementById('task-env-export-raw');
+const paramJsonRaw = document.getElementById('param-json-raw');
+const globalEnvEditor = document.getElementById('global-env-editor');
+const globalEnvAddRowBtn = document.getElementById('global-env-add-row');
+const globalEnvImportBtn = document.getElementById('global-env-import');
+const globalEnvSaveBtn = document.getElementById('global-env-save');
+const githubCompatEnabled = document.getElementById('github-compat-enabled');
 
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
@@ -283,26 +312,28 @@ function updateScheduleModeUI() {
   const mode = getScheduleMode();
   fixedFieldsEl.hidden = mode !== 'fixed';
   intervalFieldsEl.hidden = mode !== 'interval';
+  if (dailyWindowFieldsEl) dailyWindowFieldsEl.hidden = mode !== 'daily_window';
+  
   fixedFieldsEl.setAttribute('aria-hidden', mode === 'fixed' ? 'false' : 'true');
   intervalFieldsEl.setAttribute('aria-hidden', mode === 'interval' ? 'false' : 'true');
+  if (dailyWindowFieldsEl) dailyWindowFieldsEl.setAttribute('aria-hidden', mode === 'daily_window' ? 'false' : 'true');
+  
   fixedFieldsEl.classList.toggle('active-pane', mode === 'fixed');
   intervalFieldsEl.classList.toggle('active-pane', mode === 'interval');
+  if (dailyWindowFieldsEl) dailyWindowFieldsEl.classList.toggle('active-pane', mode === 'daily_window');
 
-  if (mode === 'fixed') {
-    intervalMinEl.disabled = true;
-    intervalMaxEl.disabled = true;
-    intervalUnitEl.disabled = true;
-    fixedDaysEl.disabled = false;
-    fixedHoursEl.disabled = false;
-    fixedMinutesEl.disabled = false;
-  } else {
-    intervalMinEl.disabled = false;
-    intervalMaxEl.disabled = false;
-    intervalUnitEl.disabled = false;
-    fixedDaysEl.disabled = true;
-    fixedHoursEl.disabled = true;
-    fixedMinutesEl.disabled = true;
-  }
+  const isFixed = mode === 'fixed';
+  const isInterval = mode === 'interval';
+  const isDaily = mode === 'daily_window';
+
+  intervalMinEl.disabled = !isInterval;
+  intervalMaxEl.disabled = !isInterval;
+  intervalUnitEl.disabled = !isInterval;
+  fixedDaysEl.disabled = !isFixed;
+  fixedHoursEl.disabled = !isFixed;
+  fixedMinutesEl.disabled = !isFixed;
+  if (dailyTimeStartEl) dailyTimeStartEl.disabled = !isDaily;
+  if (dailyTimeEndEl) dailyTimeEndEl.disabled = !isDaily;
 
   updateFixedSummary();
   updateIntervalSummary();
@@ -311,7 +342,21 @@ function updateScheduleModeUI() {
 function buildSchedulePayloadFromForm() {
   const enabled = form.elements.enabled.checked;
   if (!enabled) {
-    return { enabled: false, cron_expr: '', schedule_mode: 'fixed', interval_min: null, interval_max: null, interval_unit: null, next_run_at: null };
+    return { enabled: false, cron_expr: '', schedule_mode: 'fixed', interval_min: null, interval_max: null, interval_unit: null, daily_time_start: null, daily_time_end: null, next_run_at: null };
+  }
+
+  if (getScheduleMode() === 'daily_window') {
+    return {
+      enabled: true,
+      cron_expr: '',
+      schedule_mode: 'daily_window',
+      interval_min: null,
+      interval_max: null,
+      interval_unit: null,
+      daily_time_start: dailyTimeStartEl?.value || '08:00',
+      daily_time_end: dailyTimeEndEl?.value || '12:00',
+      next_run_at: null,
+    };
   }
 
   if (getScheduleMode() === 'interval') {
@@ -368,10 +413,13 @@ function buildSchedulePayloadFromForm() {
 
 function parseTaskSchedule(task) {
   if (!task || !task.enabled) {
-    return { enabled: false, mode: 'fixed', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes' };
+    return { enabled: false, mode: 'fixed', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00' };
+  }
+  if (task.schedule_mode === 'daily_window') {
+    return { enabled: true, mode: 'daily_window', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: task.daily_time_start || '08:00', dailyTimeEnd: task.daily_time_end || '12:00' };
   }
   if (task.schedule_mode === 'interval') {
-    return { enabled: true, mode: 'interval', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: Number(task.interval_min || 5), intervalMax: Number(task.interval_max || 10), intervalUnit: task.interval_unit || 'minutes' };
+    return { enabled: true, mode: 'interval', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: Number(task.interval_min || 5), intervalMax: Number(task.interval_max || 10), intervalUnit: task.interval_unit || 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00' };
   }
   let totalMinutes = Number(task.interval_min || task.interval_max || 0);
   if ((task.interval_unit || 'minutes') === 'days') totalMinutes *= 24 * 60;
@@ -380,11 +428,12 @@ function parseTaskSchedule(task) {
   totalMinutes -= fixedDays * 24 * 60;
   const fixedHours = Math.floor(totalMinutes / 60);
   totalMinutes -= fixedHours * 60;
-  return { enabled: true, mode: 'fixed', fixedDays, fixedHours, fixedMinutes: totalMinutes, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes' };
+  return { enabled: true, mode: 'fixed', fixedDays, fixedHours, fixedMinutes: totalMinutes, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00' };
 }
 
 function describeTaskSchedule(task) {
   if (!task.enabled) return '未启用';
+  if (task.schedule_mode === 'daily_window') return `每天 ${task.daily_time_start || '00:00'}-${task.daily_time_end || '23:59'} 随机`;
   if (task.schedule_mode === 'interval') return `${task.interval_min} - ${task.interval_max} ${prettyUnit(task.interval_unit)}之间`;
   const parsed = parseTaskSchedule(task);
   return `${parsed.fixedDays}天 ${parsed.fixedHours}小时 ${parsed.fixedMinutes}分`;
@@ -394,6 +443,340 @@ function describeNextRun(task) {
   if (!task.enabled) return '未启用';
   if (task.next_run_at) return `下次：${shortTime(task.next_run_at)}`;
   return describeTaskSchedule(task);
+}
+
+function isHost2PlayScript(scriptPath) {
+  const value = String(scriptPath || '').toLowerCase();
+  return value.includes('host2play_renew_dp') || value.includes('host2play');
+}
+
+function parseParamsJson(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return { ...raw };
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function looksLikeSecretName(name) {
+  return /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE|AUTH)/i.test(String(name || ''));
+}
+
+function parseEnvText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  if (raw.startsWith('{')) {
+    const obj = parseParamsJson(raw);
+    return Object.entries(obj).map(([name, value]) => ({
+      name,
+      value: value == null ? '' : String(value),
+      is_secret: looksLikeSecretName(name) ? 1 : 0,
+      has_value: true,
+    }));
+  }
+  const rows = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    let name = trimmed.slice(0, eq).trim();
+    if (name.startsWith('export ')) name = name.slice(7).trim();
+    let value = trimmed.slice(eq + 1);
+    if (
+      (value.startsWith('"') && value.endsWith('"'))
+      || (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    rows.push({
+      name,
+      value,
+      is_secret: looksLikeSecretName(name) ? 1 : 0,
+      has_value: Boolean(value),
+    });
+  }
+  return rows;
+}
+
+function createEnvEditor(container) {
+  if (!container) {
+    return {
+      setRows() {},
+      addRow() {},
+      collect() { return []; },
+      exportText() { return ''; },
+      importText() {},
+    };
+  }
+
+  function bindRow(row) {
+    const secretCb = row.querySelector('.env-secret');
+    const valueInput = row.querySelector('.env-value');
+    const removeBtn = row.querySelector('.env-remove');
+    if (secretCb && valueInput) {
+      const syncType = () => {
+        valueInput.type = secretCb.checked ? 'password' : 'text';
+      };
+      secretCb.addEventListener('change', syncType);
+      syncType();
+    }
+    if (removeBtn) {
+      removeBtn.addEventListener('click', () => row.remove());
+    }
+  }
+
+  function makeRow(entry = {}) {
+    const row = document.createElement('div');
+    row.className = 'env-row';
+    const isSecret = Boolean(entry.is_secret);
+    const hasValue = entry.has_value !== undefined ? Boolean(entry.has_value) : Boolean(entry.value);
+    const placeholder = isSecret
+      ? (entry.valueMasked ? `已保存 ${entry.valueMasked}` : (hasValue ? '已保存（留空不修改）' : 'Secret value'))
+      : 'Value（支持多行）';
+    const displayValue = isSecret ? '' : (entry.value == null ? '' : String(entry.value));
+    row.innerHTML = `
+      <input class="env-name" type="text" placeholder="NAME" spellcheck="false" value="" />
+      <textarea class="env-value" rows="1" placeholder="" spellcheck="false"></textarea>
+      <label class="inline-check env-secret-wrap"><input type="checkbox" class="env-secret" /> Secret</label>
+      <button type="button" class="icon-btn env-remove" title="删除"><i data-lucide="trash-2" class="icon-sm"></i></button>
+    `;
+    row.querySelector('.env-name').value = entry.name || '';
+    const valueEl = row.querySelector('.env-value');
+    valueEl.value = displayValue;
+    valueEl.placeholder = placeholder;
+    if (isSecret) row.querySelector('.env-secret').checked = true;
+    if (isSecret && hasValue) row.dataset.hadSecret = '1';
+    bindRow(row);
+    return row;
+  }
+
+  function setRows(entries) {
+    container.innerHTML = '';
+    const list = Array.isArray(entries) ? entries : [];
+    if (!list.length) {
+      container.appendChild(makeRow({}));
+    } else {
+      for (const entry of list) container.appendChild(makeRow(entry));
+    }
+    if (window.lucide) window.lucide.createIcons({ root: container });
+  }
+
+  function addRow(entry = {}) {
+    container.appendChild(makeRow(entry));
+    if (window.lucide) window.lucide.createIcons({ root: container });
+  }
+
+  function collect() {
+    const rows = [...container.querySelectorAll('.env-row')];
+    const out = [];
+    for (const row of rows) {
+      const name = String(row.querySelector('.env-name')?.value || '').trim();
+      if (!name) continue;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new Error(`变量名无效: ${name}（仅允许字母数字下划线）`);
+      }
+      const isSecret = Boolean(row.querySelector('.env-secret')?.checked);
+      const value = String(row.querySelector('.env-value')?.value ?? '');
+      out.push({ name, value, is_secret: isSecret ? 1 : 0 });
+    }
+    return out;
+  }
+
+  function exportText() {
+    const entries = collect();
+    return entries.map((e) => `${e.name}=${String(e.value).replace(/\n/g, '\\n')}`).join('\n');
+  }
+
+  function importText(text) {
+    const parsed = parseEnvText(text);
+    if (!parsed.length) throw new Error('未解析到任何 KEY=value');
+    const current = collect().filter((e) => e.name);
+    const byName = new Map(current.map((e) => [e.name, e]));
+    for (const item of parsed) byName.set(item.name, item);
+    setRows([...byName.values()]);
+  }
+
+  setRows([]);
+  return { setRows, addRow, collect, exportText, importText, el: container };
+}
+
+const taskEnvUI = createEnvEditor(taskEnvEditor);
+const globalEnvUI = createEnvEditor(globalEnvEditor);
+
+function entriesFromParamsObject(params = {}) {
+  return Object.entries(params || {})
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([name, value]) => ({
+      name,
+      value: typeof value === 'string' ? value : JSON.stringify(value),
+      is_secret: looksLikeSecretName(name) ? 1 : 0,
+      has_value: true,
+    }));
+}
+
+function syncTaskParamsUI(scriptPath, paramsOrEnv = {}) {
+  if (!taskParamsBlock) return;
+  taskParamsBlock.hidden = false;
+  const isHost2 = isHost2PlayScript(scriptPath);
+  if (taskEnvTemplateHost2playBtn) taskEnvTemplateHost2playBtn.hidden = !isHost2;
+  if (taskParamsHint) {
+    taskParamsHint.textContent = isHost2
+      ? 'Host2Play：常用 RENEW_URLS / MAX_RETRIES / USE_TEMP_PROFILE 等，可点模板预填'
+      : '键值注入脚本 env；Secret 勾选后掩码保存';
+  }
+
+  if (Array.isArray(paramsOrEnv)) {
+    taskEnvUI.setRows(paramsOrEnv);
+  } else {
+    taskEnvUI.setRows(entriesFromParamsObject(paramsOrEnv));
+  }
+
+  if (isHost2 && form.elements.timeout_sec && Number(form.elements.timeout_sec.value || 0) < 600) {
+    form.elements.timeout_sec.value = '900';
+  }
+}
+
+function collectTaskEnvFromForm() {
+  return taskEnvUI.collect();
+}
+
+function collectTaskParamsFromForm() {
+  // Backward-compatible flat object (also used for USE_TEMP_PROFILE side effects)
+  const env = collectTaskEnvFromForm();
+  const params = {};
+  for (const item of env) {
+    if (!item.name) continue;
+    params[item.name] = item.value;
+  }
+  return params;
+}
+
+function applyHost2PlayTemplate() {
+  const current = collectTaskEnvFromForm();
+  const byName = new Map(current.map((e) => [e.name, e]));
+  const defaults = [
+    { name: 'RENEW_URLS', value: '', is_secret: 0 },
+    { name: 'VISION_CALL_BUDGET', value: '200', is_secret: 0 },
+    { name: 'MAX_RETRIES', value: '8', is_secret: 0 },
+    { name: 'MAX_RENEW_RETRIES_PER_URL', value: '8', is_secret: 0 },
+    { name: 'USE_TEMP_PROFILE', value: '1', is_secret: 0 },
+    { name: 'VISION_DEBUG', value: '0', is_secret: 0 },
+  ];
+  for (const item of defaults) {
+    if (!byName.has(item.name)) byName.set(item.name, item);
+  }
+  taskEnvUI.setRows([...byName.values()]);
+  if (form.elements.timeout_sec && Number(form.elements.timeout_sec.value || 0) < 600) {
+    form.elements.timeout_sec.value = '900';
+  }
+  toast('已填入 Host2Play 常用变量（请补全 RENEW_URLS）', 'success');
+}
+
+async function loadGlobalEnvSettings() {
+  if (!globalEnvEditor) return;
+  try {
+    const res = await fetchJson('/api/env?scope=global');
+    globalEnvUI.setRows(res.data || []);
+    if (githubCompatEnabled) {
+      githubCompatEnabled.checked = res.githubCompat !== false;
+    }
+  } catch (error) {
+    console.warn('load global env failed', error);
+  }
+}
+
+function makeVisionChannelCard(channel = {}, index = 0) {
+  const isPrimary = index === 0;
+  const card = document.createElement('div');
+  card.className = 'vision-channel-card';
+  card.dataset.visionChannel = '1';
+
+  const masked = channel.apiKeyMasked || '';
+  const keyPlaceholder = masked ? `已保存 ${masked}` : 'API Key';
+  const label = isPrimary ? '主' : String(index);
+
+  card.innerHTML = `
+    <div class="vision-channel-row">
+      <span class="vision-channel-badge">${label}</span>
+      <input type="text" class="vision-ch-base" placeholder="Base URL" value="${(channel.baseUrl || '').replace(/"/g, '&quot;')}" />
+      <input type="password" class="vision-ch-key" placeholder="${keyPlaceholder.replace(/"/g, '&quot;')}" autocomplete="new-password" />
+      <input type="text" class="vision-ch-model" placeholder="Model" value="${(channel.model || '').replace(/"/g, '&quot;')}" />
+      <button type="button" class="icon-btn vision-channel-remove" title="删除" ${isPrimary ? 'disabled style="visibility:hidden;"' : ''}>
+        <i data-lucide="trash-2" class="icon-sm"></i>
+      </button>
+    </div>
+  `;
+
+  const removeBtn = card.querySelector('.vision-channel-remove');
+  if (removeBtn && !isPrimary) {
+    removeBtn.addEventListener('click', () => {
+      card.remove();
+      renumberVisionChannels();
+    });
+  }
+  return card;
+}
+
+function renumberVisionChannels() {
+  if (!visionChannelsList) return;
+  const cards = visionChannelsList.querySelectorAll('[data-vision-channel]');
+  cards.forEach((card, i) => {
+    const badge = card.querySelector('.vision-channel-badge');
+    if (badge) badge.textContent = i === 0 ? '主' : String(i);
+    const removeBtn = card.querySelector('.vision-channel-remove');
+    if (removeBtn) {
+      removeBtn.style.visibility = i === 0 ? 'hidden' : 'visible';
+      removeBtn.disabled = i === 0;
+    }
+  });
+}
+
+function renderVisionChannels(list) {
+  if (!visionChannelsList) return;
+  visionChannelsList.innerHTML = '';
+  const channels = Array.isArray(list) && list.length ? list : [{}];
+  channels.forEach((ch, i) => visionChannelsList.appendChild(makeVisionChannelCard(ch, i)));
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function collectVisionChannels() {
+  if (!visionChannelsList) return [];
+  const cards = visionChannelsList.querySelectorAll('[data-vision-channel]');
+  const out = [];
+  cards.forEach((card) => {
+    const baseUrl = card.querySelector('.vision-ch-base')?.value?.trim() || '';
+    const apiKey = card.querySelector('.vision-ch-key')?.value?.trim() || '';
+    const model = card.querySelector('.vision-ch-model')?.value?.trim() || '';
+    if (!baseUrl && !apiKey && !model) return;
+    out.push({ baseUrl, apiKey, model });
+  });
+  return out;
+}
+
+async function loadVisionSettings() {
+  if (!visionForm) return;
+  try {
+    const res = await fetchJson('/api/settings/vision');
+    const data = res.data || {};
+    renderVisionChannels(data.channelList);
+    if (visionStatusText) {
+      const count = Number(data.channelCount || 0);
+      const base = data.configured ? 'Status: configured' : 'Status: not configured';
+      visionStatusText.textContent = count > 1 ? `${base} · ${count} 通道` : base;
+      visionStatusText.style.color = data.configured ? '#86efac' : '#94a3b8';
+    }
+  } catch (error) {
+    if (visionStatusText) {
+      visionStatusText.textContent = 'Status: load failed';
+      visionStatusText.style.color = '#ef4444';
+    }
+    console.error('Failed to load vision settings:', error);
+  }
 }
 
 function resetTaskForm() {
@@ -408,6 +791,9 @@ function resetTaskForm() {
   form.elements.script_path.value = '';
   form.elements.timeout_sec.value = '300';
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = '';
+  if (taskUsePersistentInput) taskUsePersistentInput.value = '0';
+  setTaskProxyInput('');
+  setTaskProfileMode('temp');
   if (taskProfileSelect) renderProfileOptions(taskProfileSelect, '');
   form.elements.enabled.checked = false;
   scheduleModeSelect.value = 'fixed';
@@ -417,7 +803,10 @@ function resetTaskForm() {
   intervalMinEl.value = '5';
   intervalMaxEl.value = '10';
   intervalUnitEl.value = 'minutes';
+  if (dailyTimeStartEl) dailyTimeStartEl.value = '08:00';
+  if (dailyTimeEndEl) dailyTimeEndEl.value = '12:00';
   updateScheduleModeUI();
+  syncTaskParamsUI('', {});
 }
 
 function resetScriptEditor() {
@@ -451,6 +840,102 @@ function groupLastRuns(runs) {
   for (const run of runs) if (!lastRunsByTask.has(run.task_id)) lastRunsByTask.set(run.task_id, run);
 }
 
+
+function classifyShotKind(name) {
+  const lower = String(name || '').toLowerCase();
+  if (lower.startsWith('instr_')) return '题目';
+  if (lower.includes('_grid.png')) return '标注';
+  if (lower.startsWith('table_')) return '题图';
+  if (lower.includes('success') || lower.includes('fail') || lower.includes('host2play')) return '结果';
+  return '截图';
+}
+
+function formatBytes(size) {
+  const n = Number(size) || 0;
+  if (n < 1024) return n + 'B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
+  return (n / (1024 * 1024)).toFixed(1) + 'MB';
+}
+
+async function openRunScreenshots(runId) {
+  const data = await fetchJson('/api/runs/' + runId + '/screenshots');
+  const payload = data.data || {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  if (!items.length) {
+    toast('这次运行没有可查看的截图', 'warn');
+    return;
+  }
+
+  let activeIndex = 0;
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '10020';
+
+  const dialog = document.createElement('section');
+  dialog.className = 'modal modal-wide open shots-modal';
+  dialog.style.zIndex = '10030';
+  dialog.setAttribute('aria-hidden', 'false');
+
+  const render = () => {
+    const active = items[activeIndex] || items[0];
+    const thumbs = items.map((item, idx) => {
+      const selected = idx === activeIndex ? ' is-active' : '';
+      return '<button type="button" class="shot-thumb' + selected + '" data-shot-index="' + idx + '">'
+        + '<img src="' + escapeHtml(item.url) + '" alt="' + escapeHtml(item.name) + '" loading="lazy" />'
+        + '<span>' + escapeHtml(classifyShotKind(item.name)) + '</span>'
+        + '</button>';
+    }).join('');
+
+    dialog.innerHTML = ''
+      + '<div class="modal-header">'
+      + '  <div>'
+      + '    <h2>运行截图</h2>'
+      + '    <p class="muted">Run #' + payload.runId + ' · 共 ' + items.length + ' 张</p>'
+      + '  </div>'
+      + '  <button class="icon-btn" type="button" aria-label="关闭" data-close-shots-modal>'
+      + '    <i data-lucide="x" class="icon-md"></i>'
+      + '  </button>'
+      + '</div>'
+      + '<div class="modal-body shots-modal-body">'
+      + '  <div class="shots-layout">'
+      + '    <div class="shots-thumbs">' + thumbs + '</div>'
+      + '    <div class="shots-preview">'
+      + '      <div class="shots-preview-meta">'
+      + '        <strong>' + escapeHtml(active.name) + '</strong>'
+      + '        <span class="muted">' + escapeHtml(classifyShotKind(active.name)) + ' · ' + escapeHtml(formatBytes(active.size)) + '</span>'
+      + '      </div>'
+      + '      <div class="shots-preview-frame">'
+      + '        <img src="' + escapeHtml(active.url) + '" alt="' + escapeHtml(active.name) + '" />'
+      + '      </div>'
+      + '      <div class="row shots-preview-actions">'
+      + '        <a href="' + escapeHtml(active.url) + '" target="_blank">新窗口打开</a>'
+      + '        <span class="muted">' + (activeIndex + 1) + ' / ' + items.length + '</span>'
+      + '      </div>'
+      + '    </div>'
+      + '  </div>'
+      + '</div>';
+
+    dialog.querySelector('[data-close-shots-modal]').addEventListener('click', close);
+    dialog.querySelectorAll('[data-shot-index]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activeIndex = Number(btn.getAttribute('data-shot-index')) || 0;
+        render();
+      });
+    });
+    if (window.lucide) window.lucide.createIcons({ root: dialog });
+  };
+
+  const close = () => {
+    mask.remove();
+    dialog.remove();
+  };
+
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  mask.addEventListener('click', close);
+  render();
+}
+
 function runCard(run) {
   const logHref = run.log_path ? `/${run.log_path.replace(/^.*?(logs\/)/, '$1')}` : '';
   const screenshotHref = run.screenshot_path ? `/${run.screenshot_path.replace(/^.*?(screenshots\/)/, '$1')}` : '';
@@ -467,11 +952,102 @@ function runCard(run) {
         <div><span class="label">\u9519\u8bef\u7c7b\u578b</span><span>${escapeHtml(prettyErrorCode(run.error_code) || '-')}</span></div>
       </div>
       <div class="row">
-        ${logHref ? `<a href="${logHref}" target="_blank">\u67e5\u770b\u65e5\u5fd7</a>` : ''}
+        <button type="button" class="linkish" data-open-run-log="${run.id}">\u67e5\u770b\u65e5\u5fd7</button>
+        ${logHref ? `<a href="${logHref}" target="_blank">\u539f\u6587</a>` : ''}
         ${screenshotHref ? `<a href="${screenshotHref}" target="_blank">\u67e5\u770b\u622a\u56fe</a>` : ''}
+        <button type="button" class="linkish" data-open-run-shots="${run.id}">\u67e5\u770b\u622a\u56fe\u96c6</button>
       </div>
       ${run.error_text ? `<pre>${escapeHtml(run.error_text)}</pre>` : ''}
     </div>`;
+}
+
+async function openRunLog(runId) {
+  const res = await fetchJson(`/api/runs/${runId}/log?tail=150`);
+  const data = res.data || {};
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '10020';
+
+  const dialog = document.createElement('section');
+  dialog.className = 'modal modal-wide open log-viewer-modal';
+  dialog.style.zIndex = '10030';
+  dialog.setAttribute('aria-hidden', 'false');
+
+  const statusLabel = prettyStatus(data.status || '-');
+  const errLabel = prettyErrorCode(data.errorCode) || data.errorCode || '-';
+  const summaryHtml = data.summary
+    ? `<pre class="log-viewer-summary">${escapeHtml(data.summary)}</pre>`
+    : '<p class="muted">\u65e0\u6458\u8981 section</p>';
+
+  dialog.innerHTML = `
+    <div class="modal-header">
+      <div>
+        <h2>\u8fd0\u884c\u65e5\u5fd7 #${runId}</h2>
+        <p class="muted">\u4efb\u52a1 #${data.taskId || '-'} \u00b7 ${escapeHtml(statusLabel)} \u00b7 ${escapeHtml(String(errLabel))} \u00b7 ${data.totalLines || 0} \u884c</p>
+      </div>
+      <button class="icon-btn" type="button" aria-label="\u5173\u95ed" data-close-log-modal>
+        <i data-lucide="x" class="icon-md"></i>
+      </button>
+    </div>
+    <div class="modal-body log-viewer-body">
+      <div class="log-viewer-toolbar row" style="gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+        <button type="button" class="alt" data-log-mode="summary">\u6458\u8981</button>
+        <button type="button" class="alt" data-log-mode="tail">\u6700\u540e ${data.tail || 150} \u884c</button>
+        <button type="button" class="alt" data-log-mode="full">\u5168\u6587</button>
+        ${data.logUrl ? `<a class="alt btn-with-icon" href="${escapeHtml(data.logUrl)}" target="_blank" style="display:inline-flex;align-items:center;">\u65b0\u7a97\u53e3</a>` : ''}
+      </div>
+      <div class="log-viewer-panel" data-log-panel="summary">${summaryHtml}</div>
+      <div class="log-viewer-panel" data-log-panel="tail" hidden>
+        <pre class="log-viewer-pre">${escapeHtml(data.content || '')}</pre>
+      </div>
+      <div class="log-viewer-panel" data-log-panel="full" hidden>
+        <pre class="log-viewer-pre muted">\u70b9\u51fb\u300c\u5168\u6587\u300d\u52a0\u8f7d\u2026</pre>
+      </div>
+    </div>
+  `;
+
+  const close = () => {
+    mask.remove();
+    dialog.remove();
+  };
+
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  mask.addEventListener('click', close);
+  dialog.querySelector('[data-close-log-modal]').addEventListener('click', close);
+
+  const panels = {
+    summary: dialog.querySelector('[data-log-panel="summary"]'),
+    tail: dialog.querySelector('[data-log-panel="tail"]'),
+    full: dialog.querySelector('[data-log-panel="full"]'),
+  };
+  let fullLoaded = false;
+
+  function showPanel(mode) {
+    Object.keys(panels).forEach((key) => {
+      if (panels[key]) panels[key].hidden = key !== mode;
+    });
+  }
+
+  dialog.querySelectorAll('[data-log-mode]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const mode = btn.getAttribute('data-log-mode');
+      if (mode === 'full' && !fullLoaded) {
+        try {
+          const fullRes = await fetchJson(`/api/runs/${runId}/log?full=1`);
+          const fullData = fullRes.data || {};
+          panels.full.innerHTML = `<pre class="log-viewer-pre">${escapeHtml(fullData.content || '')}</pre>`;
+          fullLoaded = true;
+        } catch (error) {
+          toast(error.message || '\u52a0\u8f7d\u5168\u6587\u5931\u8d25', 'error');
+          return;
+        }
+      }
+      showPanel(mode);
+    });
+  });
+
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
 }
 
 async function showTaskRuns(id) {
@@ -518,6 +1094,26 @@ function openTaskRunsModal(id, runs) {
   document.body.appendChild(dialog);
   mask.addEventListener('click', close);
   dialog.querySelector('[data-close-runs-modal]').addEventListener('click', close);
+  dialog.querySelectorAll('[data-open-run-shots]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const runId = Number(btn.getAttribute('data-open-run-shots'));
+      try {
+        await openRunScreenshots(runId);
+      } catch (error) {
+        toast(error.message || '加载截图失败', 'error');
+      }
+    });
+  });
+  dialog.querySelectorAll('[data-open-run-log]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const runId = Number(btn.getAttribute('data-open-run-log'));
+      try {
+        await openRunLog(runId);
+      } catch (error) {
+        toast(error.message || '加载日志失败', 'error');
+      }
+    });
+  });
   if (window.lucide) window.lucide.createIcons({ root: dialog });
 }
 
@@ -535,6 +1131,15 @@ function taskCard(task) {
   const isRunning = runningTaskIds.has(task.id) || Boolean(task.is_running);
   const latest = latestRunSummary(task.id);
   const scriptLabel = task.script_path ? `已绑定脚本 · ${getScriptLabel(task.script_path)}` : '未绑定脚本';
+  const isPersistent = Boolean(Number(task.use_persistent));
+  const profileName = (() => {
+    if (!task.browser_profile_id) return isPersistent ? '默认配置' : '临时目录';
+    const p = profilesCache.find((x) => Number(x.id) === Number(task.browser_profile_id));
+    return p ? p.name : `#${task.browser_profile_id}`;
+  })();
+  const profilePill = isPersistent
+    ? `<span class="pill pill-persistent" title="持久浏览器配置">持久 · ${escapeHtml(profileName)}</span>`
+    : `<span class="pill pill-temp" title="临时 profile，不写持久目录">临时 · ${escapeHtml(profileName)}</span>`;
   return `
     <article class="task-card ${isRunning ? 'task-running' : ''}" data-testid="task-card" data-task-id="${task.id}">
       <div class="task-card-top">
@@ -542,6 +1147,7 @@ function taskCard(task) {
           <div class="task-title-row">
             <h3>${escapeHtml(task.name)}</h3>
             <span class="pill pill-type">${escapeHtml(task.type)}</span>
+            ${profilePill}
             ${isRunning ? '<span class="pill pill-running">运行中</span>' : ''}
           </div>
           <div class="task-subtitle">${escapeHtml(scriptLabel)}</div>
@@ -561,7 +1167,7 @@ function taskCard(task) {
           <span class="metric-label">定时</span>
           <div class="status-indicator">
             <span class="dot ${task.enabled ? 'active' : 'idle'}"></span>
-            <span>${task.enabled ? (task.schedule_mode === 'interval' ? '随机区间' : '固定周期') : '未启用'}</span>
+            <span>${task.enabled ? (task.schedule_mode === 'daily_window' ? '每天随机时段' : (task.schedule_mode === 'interval' ? '随机区间' : '固定周期')) : '未启用'}</span>
           </div>
           <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
         </div>
@@ -606,12 +1212,13 @@ async function loadRuns() {
 async function loadTelegramSettings() {
   try {
     const res = await fetchJson('/api/settings/telegram');
-    const { configured, chatId, botTokenMasked } = res.data;
+    const { configured, chatId, botTokenMasked, proxy } = res.data;
     
     tgStatusText.textContent = configured ? '状态：已配置' : '状态：未配置';
     tgStatusText.style.color = configured ? '#86efac' : '#94a3b8';
     
     tgChatId.value = chatId || '';
+    if (tgProxy) tgProxy.value = proxy || '';
     tgBotToken.value = '';
     tgBotToken.setAttribute('aria-describedby', 'tg-token-help');
     
@@ -706,12 +1313,94 @@ async function installBrowserRuntimeEnvironment() {
 function renderProfileOptions(selectEl, selectedId) {
   if (!selectEl) return;
   const prev = selectedId !== undefined ? String(selectedId) : selectEl.value;
-  selectEl.innerHTML = '<option value="">\u9ed8\u8ba4\u914d\u7f6e</option>' +
+  const emptyLabel = selectEl === taskProfileSelect && isTaskTempProfileMode()
+    ? '\u4e0d\u7ed1\u5b9a\u914d\u7f6e\uff08\u4ec5\u7cfb\u7edf\u9ed8\u8ba4\u4ee3\u7406\uff09'
+    : '\u9ed8\u8ba4\u914d\u7f6e';
+  selectEl.innerHTML = `<option value="">${emptyLabel}</option>` +
     profilesCache.map((p) => {
       const stack = String(p.runtime_stack || '').trim();
       const stackText = stack ? ` [${stack}]` : '';
       return `<option value="${p.id}" ${String(p.id) === prev ? 'selected' : ''}>${escapeHtml(`${p.name}${stackText}`)}</option>`;
     }).join('');
+}
+
+function isTaskTempProfileMode() {
+  if (!taskProfileModeSelect) return true;
+  return String(taskProfileModeSelect.value || 'temp') !== 'persistent';
+}
+
+function updateTaskProfileModeUI() {
+  const temp = isTaskTempProfileMode();
+  if (taskUsePersistentInput) taskUsePersistentInput.value = temp ? '0' : '1';
+  if (taskProfileModeHint) {
+    taskProfileModeHint.textContent = temp
+      ? '\u4e34\u65f6\u6a21\u5f0f\uff1a\u6bcf\u6b21\u72ec\u7acb user-data-dir\uff0c\u8dd1\u5b8c\u9694\u79bb\u3002\u4ee3\u7406\u53ef\u5355\u72ec\u586b\u5199\uff0c\u65e0\u9700\u7ed1\u5b9a\u4f1a\u5199\u6570\u636e\u7684\u914d\u7f6e\u3002'
+      : '\u6301\u4e45\u6a21\u5f0f\uff1a\u4f7f\u7528\u4e0b\u65b9\u6d4f\u89c8\u5668\u914d\u7f6e\u7684 user-data-dir\uff1b\u4ee3\u7406\u53ef\u8986\u76d6\u8be5\u914d\u7f6e\u7684\u4ee3\u7406\u3002';
+  }
+  if (taskProfilePersistentFields) {
+    const label = taskProfilePersistentFields.querySelector('.field-label');
+    if (label) {
+      label.textContent = temp
+        ? '\u53ef\u9009\uff1a\u501f\u7528\u914d\u7f6e\u7ea7\u53d8\u91cf\uff08\u4e0d\u5199\u5176\u6570\u636e\u76ee\u5f55\uff09'
+        : '\u6d4f\u89c8\u5668\u914d\u7f6e\uff08\u5199\u5165\u5176\u6570\u636e\u76ee\u5f55\uff09';
+    }
+  }
+  if (taskProxyHint) {
+    taskProxyHint.textContent = temp
+      ? '\u4e34\u65f6\u6a21\u5f0f\u53ef\u5355\u72ec\u8bbe\u4ee3\u7406\u3002\u7559\u7a7a\uff1a\u82e5\u9009\u4e86\u914d\u7f6e\u5219\u7528\u914d\u7f6e\u4ee3\u7406\uff0c\u5426\u5219\u7528\u7cfb\u7edf\u9ed8\u8ba4\u3002'
+      : '\u53ef\u8986\u76d6\u6240\u9009\u914d\u7f6e\u7684\u4ee3\u7406\u3002\u7559\u7a7a\u5219\u7528\u914d\u7f6e\u4ee3\u7406 / \u7cfb\u7edf\u9ed8\u8ba4\u3002';
+  }
+  if (taskProxyFromProfileBtn) {
+    taskProxyFromProfileBtn.hidden = !(taskProfileSelect && taskProfileSelect.value);
+  }
+  // refresh empty option label
+  if (taskProfileSelect) {
+    renderProfileOptions(taskProfileSelect, taskProfileSelect.value);
+  }
+}
+
+function setTaskProfileMode(mode) {
+  const next = mode === 'persistent' ? 'persistent' : 'temp';
+  if (taskProfileModeSelect) taskProfileModeSelect.value = next;
+  updateTaskProfileModeUI();
+}
+
+function getTaskProxyFromForm() {
+  return String(taskProxyInput?.value || '').trim();
+}
+
+function setTaskProxyInput(value) {
+  if (taskProxyInput) taskProxyInput.value = String(value || '').trim();
+}
+
+function fillTaskProxyFromSelectedProfile() {
+  const id = taskProfileSelect?.value;
+  if (!id) {
+    toast('\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u6d4f\u89c8\u5668\u914d\u7f6e', 'warn');
+    return;
+  }
+  const p = profilesCache.find((x) => String(x.id) === String(id));
+  if (!p) {
+    toast('\u672a\u627e\u5230\u8be5\u914d\u7f6e', 'error');
+    return;
+  }
+  if (!p.proxy) {
+    toast('\u8be5\u914d\u7f6e\u672a\u8bbe\u7f6e\u4ee3\u7406', 'warn');
+    return;
+  }
+  setTaskProxyInput(p.proxy);
+  toast('\u5df2\u586b\u5165\u914d\u7f6e\u4ee3\u7406\uff08\u4ecd\u4f7f\u7528\u4e34\u65f6\u6570\u636e\u76ee\u5f55\uff09', 'success');
+}
+
+function extractProxyFromEnvList(envList) {
+  if (!Array.isArray(envList)) return '';
+  const hit = envList.find((e) => String(e?.name || '').toUpperCase() === 'BROWSER_PROXY');
+  return hit ? String(hit.value || '') : '';
+}
+
+function extractProxyFromParams(params = {}) {
+  if (!params || typeof params !== 'object') return '';
+  return String(params.BROWSER_PROXY || params.browser_proxy || '').trim();
 }
 
 function renderProfiles() {
@@ -767,8 +1456,17 @@ async function loadProfiles() {
   renderProfiles();
 }
 
-function openProfileModal(profile) {
+async function openProfileModal(profile) {
   const isEdit = Boolean(profile);
+  let profileEnv = [];
+  if (isEdit && profile?.id) {
+    try {
+      const res = await fetchJson(`/api/browser-profiles/${profile.id}/env`);
+      profileEnv = res.data || [];
+    } catch {
+      profileEnv = [];
+    }
+  }
   const mask = document.createElement('div');
   mask.className = 'modal-mask open';
   mask.style.zIndex = '9999';
@@ -776,7 +1474,7 @@ function openProfileModal(profile) {
   dialog.className = 'modal open';
   dialog.style.cssText = 'align-items:center;justify-content:center;z-index:10000;';
   dialog.innerHTML = `
-    <div class="modal-panel" style="max-width:420px;width:100%;padding:24px;">
+    <div class="modal-panel" style="max-width:560px;width:100%;padding:24px;max-height:90vh;overflow:auto;">
       <div class="section-header compact" style="margin-bottom:16px;">
         <h3>${isEdit ? '\u7f16\u8f91\u914d\u7f6e' : '\u65b0\u5efa\u6d4f\u89c8\u5668\u914d\u7f6e'}</h3>
         <button class="icon-btn" id="pmodal-close"><i data-lucide="x" class="icon-md"></i></button>
@@ -810,6 +1508,18 @@ function openProfileModal(profile) {
           <label class="field-label">Timezone</label>
           <input name="timezone_id" placeholder="Asia/Shanghai" value="${escapeHtml(profile?.timezone_id || '')}" />
         </div>
+        <div class="config-block" style="margin-top:8px;">
+          <div class="section-header compact">
+            <div>
+              <h4>\u914d\u7f6e\u7ea7\u53d8\u91cf</h4>
+              <p class="muted">\u7ed1\u5b9a\u6b64\u6d4f\u89c8\u5668\u914d\u7f6e\u7684\u8d26\u53f7/\u5bc6\u94a5\uff0c\u4efb\u52a1\u9009\u7528\u8be5\u914d\u7f6e\u65f6\u6ce8\u5165</p>
+            </div>
+            <button type="button" class="alt btn-with-icon" id="profile-env-add" style="padding:4px 10px;">
+              <i data-lucide="plus" class="icon-sm"></i> \u6dfb\u52a0
+            </button>
+          </div>
+          <div id="profile-env-editor" class="env-editor"></div>
+        </div>
         <div class="row" style="margin-top:8px;">
           <button type="submit" class="btn-primary">${isEdit ? '\u4fdd\u5b58' : '\u521b\u5efa'}</button>
           <button type="button" class="alt" id="pmodal-cancel">\u53d6\u6d88</button>
@@ -819,6 +1529,9 @@ function openProfileModal(profile) {
   `;
   document.body.appendChild(mask);
   document.body.appendChild(dialog);
+  const profileEnvUI = createEnvEditor(dialog.querySelector('#profile-env-editor'));
+  profileEnvUI.setRows(profileEnv);
+  dialog.querySelector('#profile-env-add')?.addEventListener('click', () => profileEnvUI.addRow({}));
   if (window.lucide) window.lucide.createIcons({ root: dialog });
   const close = () => { mask.remove(); dialog.remove(); };
   dialog.querySelector('#pmodal-close').addEventListener('click', close);
@@ -827,6 +1540,13 @@ function openProfileModal(profile) {
   dialog.querySelector('#profile-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    let env;
+    try {
+      env = profileEnvUI.collect();
+    } catch (err) {
+      toast(err.message || '\u53d8\u91cf\u65e0\u6548', 'error');
+      return;
+    }
     const body = {
       name: fd.get('name'),
       user_data_dir: fd.get('user_data_dir'),
@@ -836,12 +1556,21 @@ function openProfileModal(profile) {
       timezone_id: fd.get('timezone_id'),
     };
     try {
+      let profileId = profile?.id;
       if (isEdit) {
         await fetchJson(`/api/browser-profiles/${profile.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         toast('\u914d\u7f6e\u5df2\u66f4\u65b0', 'success');
       } else {
-        await fetchJson('/api/browser-profiles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const created = await fetchJson('/api/browser-profiles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        profileId = created?.data?.id;
         toast('\u914d\u7f6e\u5df2\u521b\u5efa', 'success');
+      }
+      if (profileId) {
+        await fetchJson(`/api/browser-profiles/${profileId}/env`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ env }),
+        });
       }
       close();
       await loadProfiles();
@@ -869,7 +1598,14 @@ function deleteProfile(id) {
   });
 }
 async function refreshAll() {
-  await Promise.all([loadScripts(), loadRuns(), loadBrowserStatus(), loadTelegramSettings(), loadProfiles()]);
+  await Promise.all([
+    loadScripts(),
+    loadRuns(),
+    loadBrowserStatus(),
+    loadTelegramSettings(),
+    loadProfiles(),
+    loadGlobalEnvSettings(),
+  ]);
   await loadTasks();
 }
 
@@ -925,9 +1661,13 @@ function deleteTask(id) {
 
 function fillTaskForm(task) {
   form.name.value = task.name;
-  form.type.value = task.type;
+  form.type.value = String(task.script_path || '').toLowerCase().endsWith('.py') ? 'python' : task.type;
   form.script_path.value = task.script_path;
   form.timeout_sec.value = task.timeout_sec;
+  // host2play 默认至少 900；已保存的更大值（如 1200）原样保留
+  if (isHost2PlayScript(task.script_path) && Number(form.timeout_sec.value || 0) < 600) {
+    form.timeout_sec.value = '900';
+  }
   const schedule = parseTaskSchedule(task);
   form.elements.enabled.checked = schedule.enabled;
   scheduleModeSelect.value = schedule.mode;
@@ -937,11 +1677,31 @@ function fillTaskForm(task) {
   intervalMinEl.value = schedule.intervalMin;
   intervalMaxEl.value = schedule.intervalMax;
   intervalUnitEl.value = schedule.intervalUnit;
+  if (dailyTimeStartEl) dailyTimeStartEl.value = schedule.dailyTimeStart;
+  if (dailyTimeEndEl) dailyTimeEndEl.value = schedule.dailyTimeEnd;
   updateScheduleModeUI();
+  // use_persistent=1 → 持久；否则默认临时（含历史任务字段缺失）
+  setTaskProfileMode(Number(task.use_persistent) ? 'persistent' : 'temp');
   if (taskProfileSelect) {
     renderProfileOptions(taskProfileSelect, task.browser_profile_id || '');
   }
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
+  let proxyValue = '';
+  if (Array.isArray(task.env) && task.env.length) {
+    proxyValue = extractProxyFromEnvList(task.env);
+    // 表格里不再重复展示 BROWSER_PROXY（有专用输入框）
+    const envWithoutProxy = task.env.filter((e) => String(e?.name || '').toUpperCase() !== 'BROWSER_PROXY');
+    syncTaskParamsUI(task.script_path, envWithoutProxy);
+  } else {
+    const params = task.params || parseParamsJson(task.params_json);
+    proxyValue = extractProxyFromParams(params);
+    const paramsWithoutProxy = { ...params };
+    delete paramsWithoutProxy.BROWSER_PROXY;
+    delete paramsWithoutProxy.browser_proxy;
+    syncTaskParamsUI(task.script_path, paramsWithoutProxy);
+  }
+  setTaskProxyInput(proxyValue);
+  updateTaskProfileModeUI();
 }
 
 async function editTask(id) {
@@ -968,11 +1728,24 @@ async function editTask(id) {
 function useScript(scriptPath, type) {
   selectedScriptPath = scriptPath;
   form.script_path.value = scriptPath;
-  form.type.value = type;
+  const resolvedType = String(scriptPath || '').toLowerCase().endsWith('.py') ? 'python' : type;
+  form.type.value = resolvedType;
+  if (isHost2PlayScript(scriptPath) && Number(form.elements.timeout_sec?.value || 0) < 600) {
+    form.elements.timeout_sec.value = '900';
+  }
   if (!form.name.value.trim()) form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
   formHint.textContent = `已选脚本：${getScriptLabel(scriptPath)}`;
+  syncTaskParamsUI(scriptPath, collectSafeCurrentParams());
   renderScripts();
   openModal(editingId ? 'edit' : 'create');
+}
+
+function collectSafeCurrentParams() {
+  try {
+    return collectTaskParamsFromForm();
+  } catch {
+    return {};
+  }
 }
 
 function getSelectedScript() {
@@ -1007,14 +1780,56 @@ form.addEventListener('submit', async (event) => {
     toast('请先在下方选择或导入要运行的脚本文件', 'warn');
     return;
   }
+  let env;
+  let params;
+  try {
+    env = collectTaskEnvFromForm();
+    params = collectTaskParamsFromForm();
+  } catch (error) {
+    toast(error.message || 'Invalid task env', 'error');
+    return;
+  }
+
   const schedule = buildSchedulePayloadFromForm();
   const formData = new FormData(form);
   const payload = Object.fromEntries(formData.entries());
   Object.assign(payload, schedule);
+  if (String(payload.script_path || '').toLowerCase().endsWith('.py')) {
+    payload.type = 'python';
+  }
   payload.use_browser = true;
-  payload.use_persistent = true;
+  // 默认临时；仅当用户明确选「持久配置」才写 use_persistent=1
+  const wantPersistent = !isTaskTempProfileMode();
+  payload.use_persistent = wantPersistent;
   payload.timeout_sec = Number(payload.timeout_sec || 300);
+  if (isHost2PlayScript(payload.script_path) && payload.timeout_sec < 600) {
+    payload.timeout_sec = 900;
+  }
   payload.browser_profile_id = taskProfileSelect && taskProfileSelect.value ? Number(taskProfileSelect.value) : null;
+  // 与 env 侧 USE_TEMP_PROFILE / BROWSER_PROXY 对齐
+  const envByName = new Map(env.map((e) => [e.name, e]));
+  envByName.set('USE_TEMP_PROFILE', {
+    name: 'USE_TEMP_PROFILE',
+    value: wantPersistent ? '0' : '1',
+    is_secret: 0,
+  });
+  const taskProxy = getTaskProxyFromForm();
+  if (taskProxy) {
+    envByName.set('BROWSER_PROXY', {
+      name: 'BROWSER_PROXY',
+      value: taskProxy,
+      is_secret: 0,
+    });
+  } else {
+    envByName.delete('BROWSER_PROXY');
+  }
+  payload.env = [...envByName.values()];
+  payload.params = {
+    ...params,
+    USE_TEMP_PROFILE: wantPersistent ? '0' : '1',
+  };
+  if (taskProxy) payload.params.BROWSER_PROXY = taskProxy;
+  else delete payload.params.BROWSER_PROXY;
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
   const method = editingId ? 'PUT' : 'POST';
   await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -1049,6 +1864,7 @@ modalImportForm.addEventListener('submit', async (event) => {
     selectedScriptPath = result.data.path;
     form.script_path.value = result.data.path;
     form.type.value = result.data.type;
+    syncTaskParamsUI(result.data.path, collectSafeCurrentParams());
     if (!form.name.value.trim()) form.name.value = result.data.name.replace(/\.(js|py)$/i, '');
     openModal(editingId ? 'edit' : 'create');
     formHint.textContent = `已导入脚本：${getScriptLabel(result.data.path)}`;
@@ -1109,21 +1925,23 @@ window.editTask = editTask;
 window.useScript = useScript;
 window.loadScriptIntoEditor = loadScriptIntoEditor;
 window.showTaskRuns = showTaskRuns;
+window.openRunScreenshots = openRunScreenshots;
 
 if (tgForm) {
   tgForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const botToken = tgBotToken.value.trim();
     const chatId = tgChatId.value.trim();
+    const proxy = tgProxy ? tgProxy.value.trim() : '';
 
     tgSaveBtn.disabled = true;
-    tgSaveBtn.textContent = '\u4fdd\u5b58\u4e2d...';
+    tgSaveBtn.textContent = '保存中...';
 
     try {
       await fetchJson('/api/settings/telegram', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ botToken, chatId }),
+        body: JSON.stringify({ botToken, chatId, proxy }),
       });
       toast('Telegram \u8bbe\u7f6e\u5df2\u6210\u529f\u4fdd\u5b58', 'success');
       await loadTelegramSettings();
@@ -1149,6 +1967,54 @@ if (tgTestBtn) {
     } finally {
       tgTestBtn.disabled = false;
       tgTestBtn.textContent = '\u53d1\u9001\u6d4b\u8bd5\u6d88\u606f';
+    }
+  });
+}
+
+if (visionAddChannelBtn) {
+  visionAddChannelBtn.addEventListener('click', () => {
+    if (!visionChannelsList) return;
+    const count = visionChannelsList.querySelectorAll('[data-vision-channel]').length;
+    visionChannelsList.appendChild(makeVisionChannelCard({}, count));
+    renumberVisionChannels();
+    if (window.lucide) window.lucide.createIcons();
+  });
+}
+
+if (visionForm) {
+  visionForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const channelList = collectVisionChannels();
+    if (!channelList.length) {
+      toast('请至少配置一个视觉通道', 'error');
+      return;
+    }
+    for (let i = 0; i < channelList.length; i += 1) {
+      const ch = channelList[i];
+      if (!ch.baseUrl || !ch.model) {
+        toast(`${i === 0 ? '主通道' : `备用通道 ${i}`} 需要填写 Base URL 和 Model`, 'error');
+        return;
+      }
+    }
+    if (visionSaveBtn) {
+      visionSaveBtn.disabled = true;
+      visionSaveBtn.textContent = 'Saving...';
+    }
+    try {
+      await fetchJson('/api/settings/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelList }),
+      });
+      toast('Vision settings saved', 'success');
+      await loadVisionSettings();
+    } catch (error) {
+      toast(error.message || 'Failed to save vision settings', 'error');
+    } finally {
+      if (visionSaveBtn) {
+        visionSaveBtn.disabled = false;
+        visionSaveBtn.textContent = 'Save Vision Settings';
+      }
     }
   });
 }
@@ -1218,7 +2084,86 @@ if (brInstallBrowserBtn) {
   });
 }
 
+if (taskProfileModeSelect) {
+  taskProfileModeSelect.addEventListener('change', () => updateTaskProfileModeUI());
+  updateTaskProfileModeUI();
+}
+if (taskProfileSelect) {
+  taskProfileSelect.addEventListener('change', () => {
+    if (form.elements.browser_profile_id) {
+      form.elements.browser_profile_id.value = taskProfileSelect.value || '';
+    }
+    updateTaskProfileModeUI();
+  });
+}
+if (taskProxyFromProfileBtn) {
+  taskProxyFromProfileBtn.addEventListener('click', () => fillTaskProxyFromSelectedProfile());
+}
+if (taskEnvAddRowBtn) {
+  taskEnvAddRowBtn.addEventListener('click', () => taskEnvUI.addRow({}));
+}
+if (taskEnvTemplateHost2playBtn) {
+  taskEnvTemplateHost2playBtn.addEventListener('click', () => applyHost2PlayTemplate());
+}
+if (taskEnvApplyRawBtn) {
+  taskEnvApplyRawBtn.addEventListener('click', () => {
+    try {
+      taskEnvUI.importText(paramJsonRaw?.value || '');
+      toast('已应用到表格', 'success');
+    } catch (error) {
+      toast(error.message || '导入失败', 'error');
+    }
+  });
+}
+if (taskEnvExportRawBtn) {
+  taskEnvExportRawBtn.addEventListener('click', () => {
+    try {
+      if (paramJsonRaw) paramJsonRaw.value = taskEnvUI.exportText();
+      toast('已导出到文本框', 'success');
+    } catch (error) {
+      toast(error.message || '导出失败', 'error');
+    }
+  });
+}
+if (globalEnvAddRowBtn) {
+  globalEnvAddRowBtn.addEventListener('click', () => globalEnvUI.addRow({}));
+}
+if (globalEnvImportBtn) {
+  globalEnvImportBtn.addEventListener('click', () => {
+    const text = window.prompt('粘贴 .env 或 JSON 内容：', '');
+    if (text == null) return;
+    try {
+      globalEnvUI.importText(text);
+      toast('已导入到表格，请点保存', 'success');
+    } catch (error) {
+      toast(error.message || '导入失败', 'error');
+    }
+  });
+}
+if (globalEnvSaveBtn) {
+  globalEnvSaveBtn.addEventListener('click', async () => {
+    try {
+      const env = globalEnvUI.collect();
+      await fetchJson('/api/env', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'global',
+          env,
+          githubCompat: githubCompatEnabled ? githubCompatEnabled.checked : true,
+        }),
+      });
+      toast('全局变量已保存', 'success');
+      await loadGlobalEnvSettings();
+    } catch (error) {
+      toast(error.message || '保存失败', 'error');
+    }
+  });
+}
+
 resetAllModalState();
 closeModal();
 refreshAll();
 loadBrowserRuntimeSettings();
+loadVisionSettings();
+loadGlobalEnvSettings();

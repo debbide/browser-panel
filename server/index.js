@@ -18,7 +18,7 @@ function refreshNextRunAfterSuccessfulManualRun(task) {
   const latestTask = db.getTask(task.id);
   if (!latestTask?.enabled) return;
 
-  const nextRunAt = computeNextRun(latestTask, new Date());
+  const nextRunAt = computeNextRun(latestTask, new Date(), true);
   const updatedTask = db.updateTask(task.id, {
     ...latestTask,
     next_run_at: nextRunAt,
@@ -46,6 +46,7 @@ async function executeTask(id, options = {}) {
     exit_code: null,
     log_path: prepareLogForTask(id),
     screenshot_path: null,
+    screenshots_dir: null,
     error_text: null,
   });
 
@@ -57,6 +58,7 @@ async function executeTask(id, options = {}) {
     exit_code: result.exitCode,
     log_path: result.logPath,
     screenshot_path: result.screenshotPath,
+    screenshots_dir: result.screenshotsDir || null,
     error_text: result.errorText,
     error_code: result.errorCode || null,
     retryable: result.retryable ?? null,
@@ -130,6 +132,7 @@ function normalizeTelegramSettingsResponse() {
     configured: isTelegramConfigured(settings),
     chatId: settings.chatId || '',
     botTokenMasked: maskTelegramToken(settings.botToken),
+    proxy: settings.proxy || '',
   };
 }
 
@@ -137,6 +140,100 @@ function resolveTelegramSettingValue(incomingValue, existingValue) {
   const value = String(incomingValue || '').trim();
   if (value) return value;
   return existingValue || null;
+}
+
+function normalizeTaskParams(input) {
+  if (input === undefined || input === null || input === '') return {};
+  if (typeof input === 'string') {
+    const text = input.trim();
+    if (!text) return {};
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('params must be a JSON object');
+      }
+      return parsed;
+    } catch (error) {
+      throw new Error(error.message || 'Invalid params JSON');
+    }
+  }
+  if (typeof input === 'object' && !Array.isArray(input)) {
+    return input;
+  }
+  throw new Error('params must be a JSON object');
+}
+
+function serializeTaskParams(input) {
+  return JSON.stringify(normalizeTaskParams(input));
+}
+
+/** Default temp (0). Only explicit true/1/'true' enables persistent profile. */
+function parseUsePersistentFlag(value, defaultValue = 0) {
+  if (value === undefined || value === null || value === '') return defaultValue ? 1 : 0;
+  if (value === true || value === 1 || value === '1') return 1;
+  const text = String(value).trim().toLowerCase();
+  if (['true', 'yes', 'on'].includes(text)) return 1;
+  return 0;
+}
+
+function normalizeEnvEntriesPayload(input) {
+  if (!Array.isArray(input)) {
+    throw new Error('env must be an array of {name, value, is_secret}');
+  }
+  return input.map((item) => ({
+    name: item && item.name,
+    value: item && item.value !== undefined ? item.value : '',
+    is_secret: item && (item.is_secret === true || item.is_secret === 1 || item.is_secret === '1') ? 1 : 0,
+  }));
+}
+
+function applyTaskEnvPayload(taskId, payload = {}) {
+  if (Array.isArray(payload.env)) {
+    db.replaceEnvEntries('task', taskId, normalizeEnvEntriesPayload(payload.env));
+    return db.syncTaskParamsJsonFromEnv(taskId);
+  }
+  // Legacy: flat params / params_json object
+  if (payload.params !== undefined || payload.params_json !== undefined) {
+    const params = normalizeTaskParams(payload.params ?? payload.params_json);
+    db.setTaskEnvFromParams(taskId, params);
+    return db.syncTaskParamsJsonFromEnv(taskId);
+  }
+  return db.getTask(taskId);
+}
+
+function decorateTaskForApi(task) {
+  if (!task) return task;
+  try {
+    db.migrateTaskParamsToEnvIfNeeded(task);
+  } catch {
+    // ignore
+  }
+  const env = db.listEnvEntriesPublic('task', task.id);
+  const params = db.getTaskEnvMap(task);
+  return {
+    ...task,
+    env,
+    params,
+    params_json: JSON.stringify(params),
+  };
+}
+
+function normalizeVisionSettingsPayload(payload = {}) {
+  const out = {
+    baseUrl: payload.baseUrl !== undefined ? String(payload.baseUrl || '').trim() : undefined,
+    model: payload.model !== undefined ? String(payload.model || '').trim() : undefined,
+    apiKey: payload.apiKey !== undefined ? String(payload.apiKey || '').trim() : undefined,
+    channels: payload.channels !== undefined ? String(payload.channels || '').trim() : undefined,
+  };
+  // 动态通道卡片：[{baseUrl, apiKey, model}]（apiKey 留空=不改）。第 1 项为主通道。
+  if (Array.isArray(payload.channelList)) {
+    out.channelList = payload.channelList.map((c) => ({
+      baseUrl: String((c && c.baseUrl) || '').trim(),
+      apiKey: c && c.apiKey !== undefined ? String(c.apiKey || '').trim() : '',
+      model: String((c && c.model) || '').trim(),
+    }));
+  }
+  return out;
 }
 
 function slugifyScriptName(input) {
@@ -305,11 +402,6 @@ app.use(express.static(config.paths.publicDir));
 app.use('/tasks', express.static(config.paths.tasksDir));
 app.use('/logs', express.static(config.paths.logsDir));
 app.use('/screenshots', express.static(config.paths.screenshotsDir));
-
-app.get('/api/tasks', (req, res) => {
-  const tasks = db.listTasks().map(task => ({ ...task, is_running: isTaskRunning(task.id) }));
-  res.json({ data: tasks });
-});
 
 app.get('/api/browser', (req, res) => {
   res.json({ data: getManualBrowserStatus() });
@@ -490,6 +582,10 @@ app.post('/api/settings/telegram', (req, res) => {
 
   db.setSetting('telegram_bot_token', botToken);
   db.setSetting('telegram_chat_id', chatId);
+  
+  if (payload.proxy !== undefined) {
+    db.setSetting('telegram_proxy', String(payload.proxy).trim());
+  }
 
   res.json({ data: normalizeTelegramSettingsResponse() });
 });
@@ -500,6 +596,20 @@ app.post('/api/settings/telegram/test', async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to send test message' });
+  }
+});
+
+app.get('/api/settings/vision', (req, res) => {
+  res.json({ data: db.getVisionSettingsPublic() });
+});
+
+app.post('/api/settings/vision', (req, res) => {
+  try {
+    const payload = normalizeVisionSettingsPayload(req.body || {});
+    const updated = db.setVisionSettings(payload);
+    res.json({ data: updated });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to save vision settings' });
   }
 });
 
@@ -624,29 +734,110 @@ app.post('/api/browser/close', async (req, res) => {
   }
 });
 
+app.get('/api/env', (req, res) => {
+  try {
+    const scope = String(req.query.scope || 'global');
+    const ownerId = req.query.owner_id !== undefined ? Number(req.query.owner_id) : null;
+    const data = db.listEnvEntriesPublic(scope, ownerId);
+    res.json({
+      data,
+      githubCompat: db.isGithubCompatEnabled(),
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to list env' });
+  }
+});
+
+app.put('/api/env', (req, res) => {
+  try {
+    const payload = req.body || {};
+    const scope = String(payload.scope || 'global');
+    const ownerId = payload.owner_id !== undefined ? payload.owner_id : null;
+    const entries = normalizeEnvEntriesPayload(payload.env || payload.entries || []);
+    const data = db.replaceEnvEntries(scope, ownerId, entries);
+    if (scope === 'task' && ownerId) {
+      db.syncTaskParamsJsonFromEnv(Number(ownerId));
+    }
+    if (payload.githubCompat !== undefined) {
+      db.setGithubCompatEnabled(Boolean(payload.githubCompat));
+    }
+    res.json({ data, githubCompat: db.isGithubCompatEnabled() });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to save env' });
+  }
+});
+
+app.get('/api/settings/github-compat', (req, res) => {
+  res.json({ data: { enabled: db.isGithubCompatEnabled() } });
+});
+
+app.post('/api/settings/github-compat', (req, res) => {
+  try {
+    const enabled = req.body && req.body.enabled !== undefined
+      ? Boolean(req.body.enabled)
+      : true;
+    res.json({ data: { enabled: db.setGithubCompatEnabled(enabled) } });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to save setting' });
+  }
+});
+
+app.get('/api/browser-profiles/:id/env', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!db.getBrowserProfile(id)) return res.status(404).json({ message: 'Profile not found' });
+    res.json({ data: db.listEnvEntriesPublic('profile', id) });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to list profile env' });
+  }
+});
+
+app.put('/api/browser-profiles/:id/env', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!db.getBrowserProfile(id)) return res.status(404).json({ message: 'Profile not found' });
+    const entries = normalizeEnvEntriesPayload((req.body || {}).env || (req.body || {}).entries || []);
+    res.json({ data: db.replaceEnvEntries('profile', id, entries) });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to save profile env' });
+  }
+});
+
+app.get('/api/tasks', (req, res) => {
+  const tasks = db.listTasks().map((task) => ({
+    ...decorateTaskForApi(task),
+    is_running: isTaskRunning(task.id),
+  }));
+  res.json({ data: tasks });
+});
+
 app.post('/api/tasks', (req, res) => {
   try {
     const payload = req.body || {};
     const type = payload.type === 'python' ? 'python' : 'javascript';
     const name = String(payload.name || 'Untitled Task');
-    const task = db.createTask({
+    let task = db.createTask({
       name,
       type,
       script_path: resolveTaskScriptPath(name, type, String(payload.script_path || '')),
       cron_expr: String(payload.cron_expr || ''),
-      schedule_mode: payload.schedule_mode === 'interval' ? 'interval' : 'fixed',
+      schedule_mode: payload.schedule_mode === 'daily_window' ? 'daily_window' : (payload.schedule_mode === 'interval' ? 'interval' : 'fixed'),
       interval_min: payload.interval_min ? Number(payload.interval_min) : null,
       interval_max: payload.interval_max ? Number(payload.interval_max) : null,
       interval_unit: payload.interval_unit ? String(payload.interval_unit) : null,
+      daily_time_start: payload.daily_time_start ? String(payload.daily_time_start) : null,
+      daily_time_end: payload.daily_time_end ? String(payload.daily_time_end) : null,
       next_run_at: payload.next_run_at ? String(payload.next_run_at) : null,
       enabled: payload.enabled ? 1 : 0,
       use_browser: payload.use_browser === false ? 0 : 1,
-      use_persistent: payload.use_persistent === false ? 0 : 1,
+      use_persistent: parseUsePersistentFlag(payload.use_persistent, 0),
       timeout_sec: Number(payload.timeout_sec || 300),
+      params_json: '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
     });
+    task = applyTaskEnvPayload(task.id, payload) || task;
     reloadJobs(executeTask);
-    res.json({ data: task });
+    res.json({ data: decorateTaskForApi(task) });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to save task' });
   }
@@ -657,27 +848,37 @@ app.put('/api/tasks/:id', (req, res) => {
     const id = Number(req.params.id);
     const payload = req.body || {};
     const existing = db.getTask(id);
+    if (!existing) return res.status(404).json({ message: 'Task not found' });
     const type = payload.type === 'python' ? 'python' : 'javascript';
     const name = String(payload.name || 'Untitled Task');
     const requestedScriptPath = String(payload.script_path || existing?.script_path || '');
-    const task = db.updateTask(id, {
+    let task = db.updateTask(id, {
       name,
       type,
       script_path: resolveTaskScriptPath(name, type, requestedScriptPath, id),
       cron_expr: String(payload.cron_expr || ''),
-      schedule_mode: payload.schedule_mode === 'interval' ? 'interval' : 'fixed',
+      schedule_mode: payload.schedule_mode === 'daily_window' ? 'daily_window' : (payload.schedule_mode === 'interval' ? 'interval' : 'fixed'),
       interval_min: payload.interval_min ? Number(payload.interval_min) : null,
       interval_max: payload.interval_max ? Number(payload.interval_max) : null,
       interval_unit: payload.interval_unit ? String(payload.interval_unit) : null,
+      daily_time_start: payload.daily_time_start ? String(payload.daily_time_start) : null,
+      daily_time_end: payload.daily_time_end ? String(payload.daily_time_end) : null,
       next_run_at: payload.next_run_at ? String(payload.next_run_at) : existing?.next_run_at || null,
       enabled: payload.enabled ? 1 : 0,
       use_browser: payload.use_browser === false ? 0 : 1,
-      use_persistent: payload.use_persistent === false ? 0 : 1,
+      use_persistent: parseUsePersistentFlag(
+        payload.use_persistent,
+        Number(existing.use_persistent) ? 1 : 0
+      ),
       timeout_sec: Number(payload.timeout_sec || 300),
+      params_json: existing.params_json || '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
     });
+    if (payload.env !== undefined || payload.params !== undefined || payload.params_json !== undefined) {
+      task = applyTaskEnvPayload(id, payload) || task;
+    }
     reloadJobs(executeTask);
-    res.json({ data: task });
+    res.json({ data: decorateTaskForApi(task) });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to update task' });
   }
@@ -748,6 +949,151 @@ app.post('/api/tasks/:id/stop', (req, res) => {
     return res.status(404).json({ message: 'No running task can be stopped right now' });
   }
   res.json({ ok: true, stopped: true });
+});
+
+
+function classifyScreenshotName(name) {
+  const lower = String(name || '').toLowerCase();
+  if (lower.startsWith('instr_')) return 'instr';
+  if (lower.includes('_grid.png')) return 'grid';
+  if (lower.startsWith('table_')) return 'table';
+  if (lower.includes('host2play') || lower.includes('success') || lower.includes('fail')) return 'final';
+  return 'other';
+}
+
+function toPublicAssetPath(absPath, kind) {
+  if (!absPath) return '';
+  const normalized = String(absPath).replace(/\\/g, '/');
+  if (kind === 'screenshots') {
+    const marker = '/screenshots/';
+    const idx = normalized.lastIndexOf(marker);
+    if (idx >= 0) return normalized.slice(idx + 1);
+  }
+  if (kind === 'logs') {
+    const marker = '/logs/';
+    const idx = normalized.lastIndexOf(marker);
+    if (idx >= 0) return normalized.slice(idx + 1);
+  }
+  return '';
+}
+
+function listRunScreenshots(run) {
+  const items = [];
+  const dir = run && run.screenshots_dir ? String(run.screenshots_dir) : '';
+  if (dir && fs.existsSync(dir)) {
+    const names = fs.readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /\.(png|jpe?g|webp|gif)$/i.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    for (const name of names) {
+      const abs = path.join(dir, name);
+      let stat = null;
+      try { stat = fs.statSync(abs); } catch { stat = null; }
+      const rel = toPublicAssetPath(abs, 'screenshots');
+      if (!rel) continue;
+      items.push({
+        name,
+        kind: classifyScreenshotName(name),
+        url: `/${rel}`,
+        size: stat ? stat.size : 0,
+        mtime: stat ? stat.mtime.toISOString() : null,
+      });
+    }
+  }
+
+  if (!items.length && run && run.screenshot_path && fs.existsSync(run.screenshot_path)) {
+    const abs = run.screenshot_path;
+    let stat = null;
+    try { stat = fs.statSync(abs); } catch { stat = null; }
+    const rel = toPublicAssetPath(abs, 'screenshots');
+    if (rel) {
+      items.push({
+        name: path.basename(abs),
+        kind: 'final',
+        url: `/${rel}`,
+        size: stat ? stat.size : 0,
+        mtime: stat ? stat.mtime.toISOString() : null,
+      });
+    }
+  }
+  return items;
+}
+
+app.get('/api/runs/:id/screenshots', (req, res) => {
+  const run = db.getRun(Number(req.params.id));
+  if (!run) return res.status(404).json({ message: 'Run not found' });
+  const items = listRunScreenshots(run);
+  res.json({
+    data: {
+      runId: run.id,
+      taskId: run.task_id,
+      screenshotsDir: run.screenshots_dir || null,
+      count: items.length,
+      items,
+    },
+  });
+});
+
+/** 读取任务运行日志：默认返回末尾 tail 行 + 摘要 section */
+app.get('/api/runs/:id/log', (req, res) => {
+  const run = db.getRun(Number(req.params.id));
+  if (!run) return res.status(404).json({ message: 'Run not found' });
+
+  const logPath = run.log_path;
+  if (!logPath || !fs.existsSync(logPath)) {
+    return res.status(404).json({ message: 'Log file not found' });
+  }
+
+  const full = String(req.query.full || '') === '1' || String(req.query.full || '') === 'true';
+  const tail = Math.min(Math.max(Number(req.query.tail) || 120, 20), 2000);
+
+  let content = '';
+  try {
+    content = fs.readFileSync(logPath, 'utf8');
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to read log' });
+  }
+
+  const allLines = content.split(/\r?\n/);
+  const totalLines = allLines.length;
+
+  // 抽出关键 section 摘要（TASK START / SUMMARY / DEBUG / RESULT 头几行）
+  function extractSection(name, maxLines = 40) {
+    const marker = `========== ${name} ==========`;
+    const start = content.indexOf(marker);
+    if (start < 0) return '';
+    const after = content.slice(start);
+    const next = after.indexOf('\n========== ', marker.length);
+    const body = next > 0 ? after.slice(0, next) : after;
+    return body.split(/\r?\n/).slice(0, maxLines).join('\n');
+  }
+
+  const summaryParts = [
+    extractSection('TASK SUMMARY', 30),
+    extractSection('DEBUG SUMMARY', 20),
+    extractSection('WORKER RESULT PAYLOAD', 40),
+  ].filter(Boolean);
+
+  const tailLines = full ? allLines : allLines.slice(Math.max(0, totalLines - tail));
+  const logHref = `/${String(logPath).replace(/^.*?(logs\/)/, '$1').replace(/\\/g, '/')}`;
+
+  res.json({
+    data: {
+      runId: run.id,
+      taskId: run.task_id,
+      status: run.status,
+      errorCode: run.error_code || null,
+      startedAt: run.started_at,
+      endedAt: run.ended_at,
+      logPath,
+      logUrl: logHref,
+      totalLines,
+      tail,
+      full,
+      summary: summaryParts.join('\n\n'),
+      content: tailLines.join('\n'),
+    },
+  });
 });
 
 app.get('/api/tasks/:id/runs', (req, res) => {

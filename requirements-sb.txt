@@ -1,0 +1,5 @@
+# Optional: SeleniumBase stack (prefer x86_64; ARM often painful)
+seleniumbase>=4.30.0
+selenium>=4.20.0
+requests>=2.31.0
+urllib3>=2.0.0

@@ -1,0 +1,25 @@
+[Unit]
+Description=Browser Automation Panel
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/browser-automation-panel
+Environment=NODE_ENV=production
+Environment=PORT=3210
+Environment=HOST=0.0.0.0
+# Override these if your browser user / chrome path differ
+Environment=BROWSER_USER=abc61154321
+Environment=BROWSER_DISPLAY=:1.0
+Environment=BROWSER_XAUTHORITY=/home/abc61154321/.Xauthority
+Environment=BROWSER_USER_DATA_DIR=/home/abc61154321/browser-work/persistent
+Environment=BROWSER_CHROME_PATH=/usr/bin/chromium-browser
+# Environment=BROWSER_PROXY=socks5://127.0.0.1:1080
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=5
+# Need enough privileges to `su` into browser user for browser tasks
+User=root
+
+[Install]
+WantedBy=multi-user.target

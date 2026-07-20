@@ -1,0 +1,254 @@
+const db = require('../db');
+const config = require('../../config');
+
+const SYSTEM_PROTECTED_KEYS = new Set([
+  'TASK_RESULT_PATH',
+  'TASK_SCREENSHOT_PATH',
+  'TASK_SCREENSHOT_DIR',
+  'BROWSER_DISPLAY',
+  'BROWSER_XAUTHORITY',
+  'BROWSER_USER',
+  'BROWSER_USER_DATA_DIR',
+  'BROWSER_CHROME_PATH',
+  'BROWSER_PROXY',
+  'BROWSER_LOCALE',
+  'BROWSER_TIMEZONE',
+  'BROWSER_HEADLESS',
+  'BROWSER_PROFILE_NAME',
+  'BROWSER_RUNTIME_STACK',
+  'BROWSER_USE_PLAYWRIGHT_EXTRA',
+  'BROWSER_PLUGIN_PACKAGES',
+  'DISPLAY',
+  'XAUTHORITY',
+  'APP_ROOT',
+  'LOGS_DIR',
+  'SCREENSHOTS_DIR',
+]);
+
+const HOST_FORWARD_PREFIXES = ['CF_', 'HCAPTCHA_', 'CTF_'];
+
+function toEnvValue(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function isTruthyEnv(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+function redactEnvValue(key, value) {
+  const name = String(key || '').toUpperCase();
+  if (/(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE|AUTH)/.test(name)) {
+    return db.maskSecret(value);
+  }
+  const text = String(value || '');
+  if (text.length > 120) return `${text.slice(0, 60)}…(${text.length} chars)`;
+  return text;
+}
+
+function assignMap(target, source, { overwrite = true } = {}) {
+  if (!source) return;
+  for (const [key, value] of Object.entries(source)) {
+    if (!key) continue;
+    if (value === null || value === undefined || value === '') continue;
+    if (!overwrite && target[key] !== undefined && target[key] !== '') continue;
+    target[String(key)] = toEnvValue(value);
+  }
+}
+
+function collectHostPrefixEnv(prefixes = HOST_FORWARD_PREFIXES) {
+  const out = {};
+  for (const [key, raw] of Object.entries(process.env || {})) {
+    if (!key) continue;
+    if (!prefixes.some((p) => key.startsWith(p))) continue;
+    if (raw === undefined || raw === null || raw === '') continue;
+    out[key] = String(raw);
+  }
+  return out;
+}
+
+function parseTaskParams(task) {
+  return db.getTaskEnvMap(task);
+}
+
+function resolveUseTempProfile(task, params = parseTaskParams(task)) {
+  if (isTruthyEnv(params.USE_TEMP_PROFILE)) return true;
+  if (isTruthyEnv(params.use_temp_profile)) return true;
+  return !(task && task.use_persistent);
+}
+
+function pickNonEmptyString(...values) {
+  for (const value of values) {
+    const text = String(value === undefined || value === null ? '' : value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+/**
+ * Proxy resolution (task-level first, so temp mode can set proxy without a data-dir profile):
+ *   1) task env/params BROWSER_PROXY
+ *   2) selected browser profile.proxy
+ *   3) config.browser.proxy
+ */
+function resolveEffectiveProxy(task, profile = null) {
+  const params = parseTaskParams(task) || {};
+  const resolvedProfile = profile
+    || (task && task._profile)
+    || (task && task.browser_profile_id ? db.getBrowserProfile(task.browser_profile_id) : null);
+  return pickNonEmptyString(
+    params.BROWSER_PROXY,
+    params.browser_proxy,
+    resolvedProfile && resolvedProfile.proxy,
+    config.browser.proxy || ''
+  );
+}
+
+function applyVisionTelegramFallbacks(env) {
+  const vision = db.getVisionSettings();
+  if (vision.baseUrl && !env.VISION_BASE_URL) env.VISION_BASE_URL = vision.baseUrl;
+  if (vision.apiKey && !env.VISION_API_KEY) env.VISION_API_KEY = vision.apiKey;
+  if (vision.model && !env.VISION_MODEL) env.VISION_MODEL = vision.model;
+  if (vision.channels && !env.VISION_CHANNELS) env.VISION_CHANNELS = vision.channels;
+
+  const telegram = db.getTelegramSettings();
+  if (telegram.botToken) {
+    if (!env.TG_BOT_TOKEN) env.TG_BOT_TOKEN = telegram.botToken;
+    if (!env.TG_TOKEN) env.TG_TOKEN = telegram.botToken;
+  }
+  if (telegram.chatId) {
+    if (!env.TG_CHAT_ID) env.TG_CHAT_ID = telegram.chatId;
+    if (!env.CHAT_ID) env.CHAT_ID = telegram.chatId;
+  }
+  if (telegram.proxy) {
+    if (!env.TG_PROXY) env.TG_PROXY = telegram.proxy;
+    if (!env.TG_PROXY_URL) env.TG_PROXY_URL = telegram.proxy;
+  }
+}
+
+function applyGithubCompat(env) {
+  if (!db.isGithubCompatEnabled()) return;
+  if (!env.GITHUB_ACTIONS) env.GITHUB_ACTIONS = 'true';
+  if (!env.CI) env.CI = 'true';
+}
+
+/**
+ * Merge user-configured env layers (no system browser/task paths).
+ * Order: host prefixes → global → profile → task → vision/tg fallback → github compat
+ */
+function buildUserEnvLayers(task = null) {
+  const env = {};
+
+  assignMap(env, collectHostPrefixEnv());
+  assignMap(env, db.getGlobalEnvMap());
+
+  const profileId = task && (task.browser_profile_id || (task._profile && task._profile.id));
+  if (profileId) {
+    assignMap(env, db.getProfileEnvMap(profileId));
+  }
+
+  if (task) {
+    // lazy migrate params_json → env_entries once
+    try {
+      db.migrateTaskParamsToEnvIfNeeded(task);
+    } catch {
+      // ignore migration errors at runtime
+    }
+    assignMap(env, db.getTaskEnvMap(task));
+  }
+
+  applyVisionTelegramFallbacks(env);
+  applyGithubCompat(env);
+  return env;
+}
+
+function forceSystemKeys(env, system = {}) {
+  for (const [key, value] of Object.entries(system || {})) {
+    if (!key) continue;
+    if (value === null || value === undefined) continue;
+    env[String(key)] = toEnvValue(value);
+  }
+  return env;
+}
+
+/**
+ * Foreground (non-su) process env.
+ */
+function buildForegroundEnv(task, { screenshotPath } = {}) {
+  const env = { ...process.env };
+  const user = buildUserEnvLayers(task);
+  assignMap(env, user, { overwrite: true });
+
+  const params = parseTaskParams(task);
+  const useTempProfile = resolveUseTempProfile(task, params);
+  const system = {
+    APP_ROOT: config.paths.root,
+    LOGS_DIR: config.paths.logsDir,
+    SCREENSHOTS_DIR: config.paths.screenshotsDir,
+  };
+  if (screenshotPath) system.TASK_SCREENSHOT_PATH = screenshotPath;
+
+  if (task && task.use_browser) {
+    const profile = task._profile || null;
+    system.BROWSER_DISPLAY = config.browser.display;
+    system.BROWSER_XAUTHORITY = config.browser.xauthority;
+    system.BROWSER_USER = config.browser.user;
+    system.BROWSER_USER_DATA_DIR = useTempProfile
+      ? '' // caller may still set temp path; keep empty to force later
+      : (profile && profile.user_data_dir) || (task.use_persistent ? config.browser.userDataDir : '');
+    system.BROWSER_CHROME_PATH = config.browser.chromePath;
+    system.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
+    system.BROWSER_LOCALE = (profile && profile.locale) || config.browser.locale;
+    system.BROWSER_TIMEZONE = (profile && profile.timezone_id) || config.browser.timezoneId;
+    system.BROWSER_HEADLESS = 'false';
+  }
+
+  forceSystemKeys(env, system);
+  return env;
+}
+
+/**
+ * Browser launcher: returns ordered [key, value] pairs for shell injection.
+ * System pairs should be applied by caller first (or pass system map).
+ */
+function buildBrowserUserEnvPairs(task) {
+  const env = buildUserEnvLayers(task);
+  // Strip keys that must only come from system layer
+  for (const key of SYSTEM_PROTECTED_KEYS) {
+    // still allow user to set non-conflicting; system forced later
+    // do not delete user VISION etc.
+  }
+  return Object.entries(env)
+    .filter(([k, v]) => k && v !== undefined && v !== null && v !== '')
+    .sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function envObjectToPairs(env) {
+  return Object.entries(env || {})
+    .filter(([k, v]) => k && v !== undefined && v !== null && String(v) !== '')
+    .sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function summarizeEnvPairs(pairs) {
+  return pairs.map(([k, v]) => `${k}=${redactEnvValue(k, v)}`).join(', ');
+}
+
+module.exports = {
+  SYSTEM_PROTECTED_KEYS,
+  toEnvValue,
+  isTruthyEnv,
+  redactEnvValue,
+  parseTaskParams,
+  resolveUseTempProfile,
+  resolveEffectiveProxy,
+  pickNonEmptyString,
+  buildUserEnvLayers,
+  buildForegroundEnv,
+  buildBrowserUserEnvPairs,
+  forceSystemKeys,
+  envObjectToPairs,
+  summarizeEnvPairs,
+  applyVisionTelegramFallbacks,
+};

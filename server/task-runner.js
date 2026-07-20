@@ -4,6 +4,12 @@ const { spawn } = require('child_process');
 const config = require('../config');
 const { launchBrowserTaskAndWait, stopBrowserTask } = require('./runtime/browser-launcher');
 const db = require('./db');
+const {
+  parseTaskParams,
+  resolveUseTempProfile,
+  resolveEffectiveProxy,
+  buildForegroundEnv,
+} = require('./runtime/env-builder');
 
 const activeChildren = new Map();
 
@@ -20,6 +26,36 @@ function makeLogPath(taskId) {
 
 function makeScreenshotPath(taskId) {
   return path.join(config.paths.screenshotsDir, `task-${taskId}-${stamp()}.png`);
+}
+
+function makeRunScreenshotsDir(taskId, runId) {
+  const safeRunId = String(runId || `${taskId}-${Date.now()}`).replace(/[^a-zA-Z0-9._-]+/g, '-');
+  return path.join(config.paths.screenshotsDir, 'runs', `task-${taskId}-run-${safeRunId}`);
+}
+
+function listImageFiles(dirPath) {
+  if (!dirPath || !fs.existsSync(dirPath)) return [];
+  return fs.readdirSync(dirPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.(png|jpe?g|webp|gif)$/i.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function copyDirectoryImages(srcDir, destDir) {
+  if (!srcDir || !fs.existsSync(srcDir)) return 0;
+  fs.mkdirSync(destDir, { recursive: true });
+  let copied = 0;
+  for (const name of listImageFiles(srcDir)) {
+    const from = path.join(srcDir, name);
+    const to = path.join(destDir, name);
+    try {
+      fs.copyFileSync(from, to);
+      copied += 1;
+    } catch {
+      // ignore single-file copy failures
+    }
+  }
+  return copied;
 }
 
 function getTempProfileDir(task) {
@@ -61,27 +97,58 @@ function appendLog(logPath, text) {
   fs.appendFileSync(logPath, safeString(text), 'utf8');
 }
 
+function isoNow() {
+  return new Date().toISOString();
+}
+
+/** 给子进程输出按行加时间戳（项目层统一，脚本不用改） */
+function createTimestampedLineWriter(writeLine) {
+  let buffer = '';
+  return {
+    write(chunk) {
+      buffer += safeString(chunk);
+      // 统一换行，保留最后半行
+      buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      let idx;
+      while ((idx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        writeLine(`${isoNow()} ${line}\n`);
+      }
+    },
+    flush() {
+      if (!buffer) return;
+      writeLine(`${isoNow()} ${buffer}\n`);
+      buffer = '';
+    },
+  };
+}
+
 function createRealtimeLogWriter(logPath) {
   let stdoutHeaderWritten = false;
   let stderrHeaderWritten = false;
+  const stdoutWriter = createTimestampedLineWriter((line) => appendLog(logPath, line));
+  const stderrWriter = createTimestampedLineWriter((line) => appendLog(logPath, line));
   return {
     onStdout(text) {
       if (!stdoutHeaderWritten) {
         appendLog(logPath, section('SUBPROCESS OUTPUT (STDOUT)'));
         stdoutHeaderWritten = true;
       }
-      appendLog(logPath, text);
+      stdoutWriter.write(text);
     },
     onStderr(text) {
       if (!stderrHeaderWritten) {
         appendLog(logPath, section('SUBPROCESS OUTPUT (STDERR)'));
         stderrHeaderWritten = true;
       }
-      appendLog(logPath, text);
+      stderrWriter.write(text);
     },
     finalizeHeadersIfMissing() {
       if (!stdoutHeaderWritten) appendLog(logPath, section('SUBPROCESS OUTPUT (STDOUT)'));
       if (!stderrHeaderWritten) appendLog(logPath, section('SUBPROCESS OUTPUT (STDERR)'));
+      stdoutWriter.flush();
+      stderrWriter.flush();
     },
   };
 }
@@ -285,13 +352,19 @@ function appendTimelineSection(logPath, tracker) {
   appendLog(logPath, tracker.render());
 }
 
-function appendDebugSummarySection(logPath, tracker) {
-  if (!tracker) return;
-  writeLogHeader(logPath, 'DEBUG SUMMARY', [
-    ['timeline_steps', tracker.getStepCount()],
-    ['last_url', tracker.getLastUrl() || ''],
-    ['last_title', tracker.getLastTitle() || ''],
-  ]);
+function appendDebugSummarySection(logPath, tracker, extra = {}) {
+  if (!tracker && !extra) return;
+  const entries = [
+    ['timeline_steps', tracker ? tracker.getStepCount() : 0],
+    ['last_url', tracker ? (tracker.getLastUrl() || '') : ''],
+    ['last_title', tracker ? (tracker.getLastTitle() || '') : ''],
+  ];
+  if (extra.status !== undefined) entries.push(['status', extra.status || '']);
+  if (extra.errorCode !== undefined) entries.push(['error_code', extra.errorCode || '']);
+  if (extra.exitCode !== undefined) entries.push(['exit_code', extra.exitCode ?? '']);
+  if (extra.ok !== undefined) entries.push(['result_ok', extra.ok ? '1' : '0']);
+  if (extra.retryable !== undefined) entries.push(['retryable', extra.retryable ? '1' : '0']);
+  writeLogHeader(logPath, 'DEBUG SUMMARY', entries);
 }
 function resolveTaskProfile(task) {
   if (!task.browser_profile_id) return null;
@@ -309,13 +382,12 @@ function resolveRuntimeStack(task, runtimeSettings) {
 function resolveBrowserContext(task) {
   const runtimeSettings = db.getBrowserRuntimeSettings();
   const profile = task._profile || null;
-  const effectiveProxy = pickNonEmptyString(
-    profile && profile.proxy,
-    config.browser.proxy || ''
-  );
+  const params = parseTaskParams(task);
+  const effectiveProxy = resolveEffectiveProxy(task, profile);
+  const useTempProfile = resolveUseTempProfile(task, params);
   const effectiveUserDataDir = pickNonEmptyString(
-    profile && profile.user_data_dir,
-    task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task)
+    useTempProfile ? '' : (profile && profile.user_data_dir),
+    useTempProfile ? getTempProfileDir(task) : (task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task))
   );
   const effectiveLocale = pickNonEmptyString(
     profile && profile.locale,
@@ -367,16 +439,24 @@ function defaultRetryableByErrorCode(errorCode) {
 }
 
 function buildEnv(task, screenshotPath) {
-  const env = { ...process.env };
+  const env = buildForegroundEnv(task, { screenshotPath });
+  const params = parseTaskParams(task);
+  const useTempProfile = resolveUseTempProfile(task, params);
   if (task.use_browser) {
+    const profile = task._profile || null;
+    env.BROWSER_USER_DATA_DIR = useTempProfile
+      ? getTempProfileDir(task)
+      : pickNonEmptyString(
+        profile && profile.user_data_dir,
+        task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task)
+      );
+    env.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
+    env.BROWSER_LOCALE = pickNonEmptyString(profile && profile.locale, config.browser.locale);
+    env.BROWSER_TIMEZONE = pickNonEmptyString(profile && profile.timezone_id, config.browser.timezoneId);
     env.BROWSER_DISPLAY = config.browser.display;
     env.BROWSER_XAUTHORITY = config.browser.xauthority;
     env.BROWSER_USER = config.browser.user;
-    env.BROWSER_USER_DATA_DIR = task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task);
     env.BROWSER_CHROME_PATH = config.browser.chromePath;
-    env.BROWSER_PROXY = config.browser.proxy;
-    env.BROWSER_LOCALE = config.browser.locale;
-    env.BROWSER_TIMEZONE = config.browser.timezoneId;
     env.BROWSER_HEADLESS = 'false';
   }
   env.APP_ROOT = config.paths.root;
@@ -408,8 +488,8 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
     ]);
     appendLog(logPath, section('SUBPROCESS OUTPUT'));
 
-    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
     const tracker = createStepTimelineTracker();
+    const lineWriter = createTimestampedLineWriter((line) => appendLog(logPath, line));
     const { cmd, args } = getCommand(task);
     const child = spawn(cmd, args, {
       cwd: config.paths.root,
@@ -427,18 +507,19 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
     child.stdout.on('data', chunk => {
       const text = chunk.toString();
       tracker.ingest('stdout', text);
-      logStream.write(chunk);
+      lineWriter.write(text);
     });
     child.stderr.on('data', chunk => {
       const text = chunk.toString();
       stderrText += text;
       tracker.ingest('stderr', text);
-      logStream.write(chunk);
+      lineWriter.write(text);
     });
 
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       activeChildren.delete(task.id);
+      lineWriter.flush();
       tracker.finalize(code === 0 ? 'ok' : 'failed');
       const errorText = stderrText.trim() || null;
       let errorCode = classifyForegroundFailure(code, errorText);
@@ -446,29 +527,31 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
         errorCode = 'stopped';
       }
       const endedAt = new Date().toISOString();
-      logStream.end(() => {
-        appendTimelineSection(logPath, tracker);
-        appendDebugSummarySection(logPath, tracker);
-        writeLogHeader(logPath, 'TASK SUMMARY', [
-          ['ended_at', endedAt],
-          ['status', code === 0 ? 'success' : 'failed'],
-          ['error_code', errorCode || ''],
-          ['exit_code', code ?? ''],
-          ['signal', signal || ''],
-          ['screenshot_exists', fs.existsSync(screenshotPath) ? '1' : '0'],
-        ]);
-        resolve({
-          status: code === 0 ? 'success' : 'failed',
-          errorCode,
-          startedAt,
-          endedAt,
-          exitCode: code,
-          logPath,
-          screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
-          errorText,
-          retryable: code === 0 ? 0 : defaultRetryableByErrorCode(errorCode),
-          retryReason: null,
-        });
+      appendTimelineSection(logPath, tracker);
+      appendDebugSummarySection(logPath, tracker, {
+        status: code === 0 ? 'success' : 'failed',
+        errorCode: errorCode || '',
+        exitCode: code ?? '',
+      });
+      writeLogHeader(logPath, 'TASK SUMMARY', [
+        ['ended_at', endedAt],
+        ['status', code === 0 ? 'success' : 'failed'],
+        ['error_code', errorCode || ''],
+        ['exit_code', code ?? ''],
+        ['signal', signal || ''],
+        ['screenshot_exists', fs.existsSync(screenshotPath) ? '1' : '0'],
+      ]);
+      resolve({
+        status: code === 0 ? 'success' : 'failed',
+        errorCode,
+        startedAt,
+        endedAt,
+        exitCode: code,
+        logPath,
+        screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
+        errorText,
+        retryable: code === 0 ? 0 : defaultRetryableByErrorCode(errorCode),
+        retryReason: null,
       });
     });
   });
@@ -479,6 +562,8 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   if (profile) task = { ...task, _profile: profile };
   const screenshotPath = makeScreenshotPath(task.id);
   const runId = `${task.id}-${Date.now()}`;
+  const screenshotsDir = makeRunScreenshotsDir(task.id, runId);
+  fs.mkdirSync(screenshotsDir, { recursive: true });
   const browserContext = resolveBrowserContext(task);
   const startedAt = new Date().toISOString();
 
@@ -500,6 +585,7 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     ['browser_locale', browserContext.effectiveLocale || ''],
     ['browser_timezone', browserContext.effectiveTimezone || ''],
     ['screenshot_path', screenshotPath],
+    ['screenshots_dir', screenshotsDir],
     ['run_id', runId],
   ]);
 
@@ -516,6 +602,7 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     },
   });
   const workerScreenshotPath = result.workerScreenshotPath;
+  const workerScreenshotDir = result.workerScreenshotDir;
   const workerResultPath = result.resultPath;
   realtimeWriter.finalizeHeadersIfMissing();
   tracker.finalize(result.exitCode === 0 ? 'ok' : 'failed');
@@ -531,9 +618,11 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   }
   if (fs.existsSync(workerResultPath)) fs.unlinkSync(workerResultPath);
   if (fs.existsSync(workerScreenshotPath)) fs.copyFileSync(workerScreenshotPath, screenshotPath);
+  const archivedCount = copyDirectoryImages(workerScreenshotDir, screenshotsDir);
+  const hasRunShots = archivedCount > 0 || listImageFiles(screenshotsDir).length > 0;
+  const screenshotsDirPath = hasRunShots ? screenshotsDir : null;
 
   appendTimelineSection(logPath, tracker);
-  appendDebugSummarySection(logPath, tracker);
 
   appendLog(logPath, section('WORKER RESULT PAYLOAD'));
   if (taskResult) {
@@ -546,6 +635,13 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   }
 
   if (result.errorCode === 'stopped') {
+    appendDebugSummarySection(logPath, tracker, {
+      status: 'failed',
+      errorCode: 'stopped',
+      exitCode: result.exitCode ?? '',
+      ok: false,
+      retryable: 0,
+    });
     writeLogHeader(logPath, 'TASK SUMMARY', [
       ['ended_at', result.endedAt],
       ['status', 'failed'],
@@ -553,6 +649,8 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
       ['exit_code', result.exitCode ?? ''],
       ['worker_result_path', workerResultPath],
       ['worker_screenshot_path', workerScreenshotPath],
+      ['worker_screenshots_dir', workerScreenshotDir || ''],
+      ['screenshots_dir', screenshotsDirPath || ''],
       ['screenshot_exists', fs.existsSync(screenshotPath) ? '1' : '0'],
     ]);
     return {
@@ -563,6 +661,7 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
       exitCode: result.exitCode,
       logPath,
       screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
+      screenshotsDir: screenshotsDirPath,
       errorText: 'Stopped by user',
       retryable: 0,
       retryReason: null,
@@ -584,6 +683,13 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   const retryReasonRaw = taskResult?.data?.retry_reason ?? taskResult?.retry_reason;
   const retryReason = retryReasonRaw === null || retryReasonRaw === undefined ? null : String(retryReasonRaw).slice(0, 300);
 
+  appendDebugSummarySection(logPath, tracker, {
+    status: ok ? 'success' : 'failed',
+    errorCode: errorCode || '',
+    exitCode: result.exitCode ?? '',
+    ok,
+    retryable,
+  });
   writeLogHeader(logPath, 'TASK SUMMARY', [
     ['ended_at', result.endedAt],
     ['status', ok ? 'success' : 'failed'],
@@ -591,6 +697,8 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     ['exit_code', result.exitCode ?? ''],
     ['worker_result_path', workerResultPath],
     ['worker_screenshot_path', workerScreenshotPath],
+    ['worker_screenshots_dir', workerScreenshotDir || ''],
+    ['screenshots_dir', screenshotsDirPath || ''],
     ['screenshot_exists', hasScreenshot ? '1' : '0'],
   ]);
 
@@ -602,6 +710,7 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     exitCode: result.exitCode,
     logPath,
     screenshotPath: hasScreenshot ? screenshotPath : null,
+    screenshotsDir: screenshotsDirPath,
     errorText: taskResult?.error || result.stderr || (hasScreenshot ? null : 'No result payload written'),
     retryable,
     retryReason,

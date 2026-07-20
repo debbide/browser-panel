@@ -91,6 +91,10 @@
               <label class="field-label" for="tg-chat-id">Chat ID</label>
               <input type="text" name="chatId" id="tg-chat-id" placeholder="例如: 123456789" />
             </div>
+            <div>
+              <label class="field-label" for="tg-proxy">代理 (Proxy)</label>
+              <input type="text" name="proxy" id="tg-proxy" placeholder="例如: socks5://127.0.0.1:7891" />
+            </div>
             <div class="row" style="margin-top: 8px;">
               <button type="submit" id="tg-save-btn" class="btn-primary btn-with-icon">
                 <i data-lucide="save" class="icon-sm"></i> 保存设置
@@ -145,6 +149,61 @@
             </div>
           </form>
         </section>
+
+        <section class="modal-panel config-panel" style="margin-top:16px;">
+          <div class="section-header compact">
+            <div>
+              <h2>Vision Model</h2>
+              <p class="muted" id="vision-status-text">Status: loading...</p>
+            </div>
+          </div>
+          <form id="vision-form" class="grid single-col">
+            <div id="vision-channels-list"></div>
+            <div class="row" style="margin-top:8px; gap:8px;">
+              <button type="button" id="vision-add-channel" class="alt btn-with-icon">
+                <i data-lucide="plus" class="icon-sm"></i> 添加通道
+              </button>
+            </div>
+            <div class="schedule-note" style="margin-top:6px;">
+              按顺序故障转移 · Key 留空=不改 · OpenAI 兼容 /chat/completions
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button type="submit" id="vision-save-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> Save Vision Settings
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section class="modal-panel config-panel" style="margin-top:16px;">
+          <div class="section-header compact">
+            <div>
+              <h2>变量与密钥</h2>
+              <p class="muted">类似 GitHub Secrets / Variables。保存后所有任务默认继承，任务级可覆盖。</p>
+            </div>
+          </div>
+          <div class="grid single-col">
+            <label class="inline-check">
+              <input type="checkbox" id="github-compat-enabled" checked />
+              注入 GITHUB_ACTIONS=true 与 CI=true（兼容部分脚本分支）
+            </label>
+            <div id="global-env-editor" class="env-editor" data-env-scope="global"></div>
+            <div class="row" style="margin-top:8px; gap:8px; flex-wrap:wrap;">
+              <button type="button" id="global-env-add-row" class="alt btn-with-icon">
+                <i data-lucide="plus" class="icon-sm"></i> 添加变量
+              </button>
+              <button type="button" id="global-env-import" class="alt btn-with-icon">
+                <i data-lucide="file-up" class="icon-sm"></i> 导入 .env
+              </button>
+              <button type="button" id="global-env-save" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> 保存变量
+              </button>
+            </div>
+            <div class="schedule-note">
+              脚本通过 <code>os.environ["NAME"]</code> / <code>process.env.NAME</code> 读取，无需改脚本。Secret 保存后只显示掩码，留空再保存表示不修改。
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   </div>
@@ -168,15 +227,70 @@
             <div class="grid single-col">
               <input name="name" placeholder="任务名称" required data-testid="task-name-input" />
               <div>
+                <label class="field-label" for="task-profile-mode">浏览器数据模式</label>
+                <select id="task-profile-mode" name="profile_mode" style="width:100%;">
+                  <option value="temp" selected>临时配置（推荐）— 每次独立目录，跑完隔离，不污染已有登录态</option>
+                  <option value="persistent">持久配置 — 使用下方选定的浏览器配置目录</option>
+                </select>
+                <p class="schedule-note" id="task-profile-mode-hint" style="margin-top:4px;">
+                  临时模式：每次运行使用独立临时 profile，适合探测/测试脚本，避免把 Cookie 写进正式配置。
+                </p>
+              </div>
+              <div id="task-profile-persistent-fields">
                 <label class="field-label" for="task-profile-select">浏览器配置</label>
                 <select id="task-profile-select" style="width:100%;">
                   <option value="">默认配置</option>
                 </select>
               </div>
+              <div id="task-proxy-fields">
+                <label class="field-label" for="task-proxy-input">代理（可选）</label>
+                <div class="row" style="gap:8px; align-items:center;">
+                  <input
+                    id="task-proxy-input"
+                    type="text"
+                    style="flex:1; width:100%;"
+                    placeholder="例如 socks5://127.0.0.1:20004 或 http://127.0.0.1:7890"
+                    autocomplete="off"
+                  />
+                  <button type="button" id="task-proxy-from-profile" class="alt" style="white-space:nowrap;">
+                    从配置填入
+                  </button>
+                </div>
+                <p class="schedule-note" id="task-proxy-hint" style="margin-top:4px;">
+                  临时模式可单独设代理，不必绑定会写数据的浏览器配置。留空则用配置/系统默认。
+                </p>
+              </div>
               <input type="hidden" name="type" value="javascript" />
               <input type="hidden" name="script_path" required />
               <input type="hidden" name="timeout_sec" value="300" />
               <input type="hidden" name="browser_profile_id" id="task-profile-id" value="" />
+              <input type="hidden" name="use_persistent" id="task-use-persistent" value="0" />
+
+            <div id="task-params-block" class="config-block">
+              <div class="section-header compact">
+                <div>
+                  <h4>环境变量</h4>
+                  <p class="muted" id="task-params-hint">键值会注入脚本进程 env（覆盖全局 / 浏览器配置同名项）</p>
+                </div>
+                <div class="row" style="gap:6px; flex-wrap:wrap;">
+                  <button type="button" id="task-env-add-row" class="alt btn-with-icon" style="padding:4px 10px;">
+                    <i data-lucide="plus" class="icon-sm"></i> 添加
+                  </button>
+                  <button type="button" id="task-env-template-host2play" class="alt btn-with-icon" style="padding:4px 10px;" hidden>
+                    Host2Play 模板
+                  </button>
+                </div>
+              </div>
+              <div id="task-env-editor" class="env-editor" data-env-scope="task"></div>
+              <details class="env-advanced" style="margin-top:8px;">
+                <summary class="muted">高级：导入 / 导出 .env 或 JSON</summary>
+                <textarea id="param-json-raw" rows="5" placeholder="KEY=value 或 {&quot;KEY&quot;:&quot;value&quot;}"></textarea>
+                <div class="row" style="margin-top:6px; gap:8px;">
+                  <button type="button" id="task-env-apply-raw" class="alt">应用到表格</button>
+                  <button type="button" id="task-env-export-raw" class="alt">导出到文本</button>
+                </div>
+              </details>
+            </div>
             </div>
 
             <div class="config-block">
@@ -193,6 +307,7 @@
                 <select name="schedule_mode" id="schedule-mode-select" data-testid="schedule-mode-select">
                   <option value="fixed">固定周期</option>
                   <option value="interval">随机区间</option>
+                  <option value="daily_window">每天特定时段随机</option>
                 </select>
               </div>
 
@@ -237,6 +352,21 @@
                   </div>
                 </div>
                 <div id="interval-schedule-summary" class="field-span-2 muted">每次检查将在 5 - 10 分钟内随机触发</div>
+              </div>
+
+              <div id="daily-window-schedule-fields" class="schedule-pane" hidden>
+                <p class="schedule-note">每天特定时段随机：在每天指定的时间窗口内随机触发一次。</p>
+                <div class="grid interval-range-grid">
+                  <div>
+                    <label class="field-label">开始时间</label>
+                    <input name="daily_time_start" type="time" value="08:00" data-testid="daily-time-start-input" />
+                  </div>
+                  <div class="range-sep">至</div>
+                  <div>
+                    <label class="field-label">结束时间</label>
+                    <input name="daily_time_end" type="time" value="12:00" data-testid="daily-time-end-input" />
+                  </div>
+                </div>
               </div>
 
               <input type="hidden" name="cron_expr" />

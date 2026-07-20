@@ -157,11 +157,14 @@ function ensureManualRuntimeFiles(runtimeSettings) {
     fs.cpSync(file.from, file.to, { recursive: true });
   }
 
+  // Portable worker node: use current process binary (no hard-coded nvm path).
   const workerNodePath = '/tmp/node-openclaw';
-  if (!fs.existsSync(workerNodePath)) {
-    fs.copyFileSync('/root/.nvm/versions/node/v22.22.1/bin/node', workerNodePath);
-    fs.chmodSync(workerNodePath, 0o755);
+  const sourceNode = process.execPath;
+  if (!fs.existsSync(sourceNode)) {
+    throw new Error(`Node binary not found: ${sourceNode}`);
   }
+  fs.copyFileSync(sourceNode, workerNodePath);
+  fs.chmodSync(workerNodePath, 0o755);
 }
 
 function isPidAlive(pid) {

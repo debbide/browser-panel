@@ -3,6 +3,13 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const config = require('../../config');
 const db = require('../db');
+const {
+  parseTaskParams,
+  resolveUseTempProfile,
+  resolveEffectiveProxy,
+  buildBrowserUserEnvPairs,
+  summarizeEnvPairs,
+} = require('./env-builder');
 const activeBrowserRuns = new Map();
 
 function getRuntimeDataDir() {
@@ -15,25 +22,6 @@ function getTempProfileDir(task) {
 
 function shellEscape(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
-}
-
-function collectEnvByPrefixes(prefixes) {
-  const out = [];
-  for (const [key, rawValue] of Object.entries(process.env || {})) {
-    if (!prefixes.some(prefix => key.startsWith(prefix))) continue;
-    if (rawValue === undefined || rawValue === null || rawValue === '') continue;
-    out.push([key, String(rawValue)]);
-  }
-  out.sort((a, b) => a[0].localeCompare(b[0]));
-  return out;
-}
-
-function redactEnvValue(key, value) {
-  const name = String(key || '').toUpperCase();
-  if (name.includes('TOKEN') || name.includes('SECRET') || name.includes('PASSWORD')) {
-    return '***';
-  }
-  return String(value);
 }
 
 function parsePackageList(value) {
@@ -163,6 +151,8 @@ function collectModuleCopyPairs(entryModules, workerNodeModules) {
 function ensureRuntimeFiles(task) {
   const workerNodeModules = '/home/abc61154321/browser-work/node_modules';
   fs.mkdirSync(workerNodeModules, { recursive: true });
+  fs.mkdirSync('/home/abc61154321/browser-work/screenshots', { recursive: true });
+  fs.mkdirSync('/home/abc61154321/browser-work/task-results', { recursive: true });
   fs.mkdirSync(path.join(getRuntimeDataDir(), 'profiles'), { recursive: true });
   const moduleCopies = collectModuleCopyPairs(getRuntimeNodeModules(), workerNodeModules);
   const taskSourcePath = path.resolve(config.paths.root, task.script_path);
@@ -186,6 +176,22 @@ function ensureRuntimeFiles(task) {
         to: `/home/abc61154321/browser-work/${sibling}`,
       });
     }
+
+    const hcaptchaPackageDir = path.join(config.paths.tasksDir, 'hcaptcha_solver_refactor');
+    if (fs.existsSync(hcaptchaPackageDir)) {
+      files.push({
+        from: hcaptchaPackageDir,
+        to: '/home/abc61154321/browser-work/hcaptcha_solver_refactor',
+      });
+    }
+
+    const host2playPackageDir = path.join(config.paths.tasksDir, 'host2play_dp');
+    if (fs.existsSync(host2playPackageDir)) {
+      files.push({
+        from: host2playPackageDir,
+        to: '/home/abc61154321/browser-work/host2play_dp',
+      });
+    }
   }
 
   for (const file of files) {
@@ -193,9 +199,20 @@ function ensureRuntimeFiles(task) {
     if (fs.existsSync(file.to)) fs.rmSync(file.to, { recursive: true, force: true });
     fs.cpSync(file.from, file.to, { recursive: true });
   }
-  if (!fs.existsSync('/tmp/node-openclaw')) {
-    fs.copyFileSync('/root/.nvm/versions/node/v22.22.1/bin/node', '/tmp/node-openclaw');
-    fs.chmodSync('/tmp/node-openclaw', 0o755);
+  // Worker node binary: copy current process node (portable; no hard-coded nvm path).
+  // Legacy name /tmp/node-openclaw kept so existing su/wrapper commands keep working.
+  const workerNodePath = '/tmp/node-openclaw';
+  const sourceNode = process.execPath;
+  try {
+    if (!fs.existsSync(sourceNode)) {
+      throw new Error(`Node binary not found: ${sourceNode}`);
+    }
+    fs.copyFileSync(sourceNode, workerNodePath);
+    fs.chmodSync(workerNodePath, 0o755);
+  } catch (err) {
+    throw new Error(
+      `Failed to prepare worker node (${sourceNode} -> ${workerNodePath}): ${err.message}`
+    );
   }
   spawnSync('bash', ['-lc', 'chown -R abc61154321:abc61154321 /home/abc61154321/browser-work'], { stdio: 'ignore' });
 }
@@ -203,11 +220,15 @@ function ensureRuntimeFiles(task) {
 
 function buildTerminateCommandsByTask(task) {
   const profile = task && task._profile;
-  const userDataDir = profile && profile.user_data_dir
-    ? profile.user_data_dir
-    : (task && task.use_persistent
-      ? config.browser.userDataDir
-      : getTempProfileDir(task));
+  const params = parseTaskParams(task);
+  const useTempProfile = resolveUseTempProfile(task, params);
+  const userDataDir = useTempProfile
+    ? getTempProfileDir(task)
+    : (profile && profile.user_data_dir
+      ? profile.user_data_dir
+      : (task && task.use_persistent
+        ? config.browser.userDataDir
+        : getTempProfileDir(task)));
   const scriptName = task && task.script_path ? path.basename(task.script_path) : '';
   const browserUser = (config.browser && config.browser.user) ? String(config.browser.user).trim() : '';
   const userPrefix = browserUser ? `pkill -u ${shellEscape(browserUser)} ` : 'pkill ';
@@ -324,19 +345,20 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const taskFile = `/home/abc61154321/browser-work/${baseName}`;
   const wrapperFile = '/home/abc61154321/browser-work/js-task-wrapper.js';
   const workerScreenshotPath = `/home/abc61154321/browser-work/screenshots/task-${task.id}-${runId}.png`;
+  const workerScreenshotDir = `/home/abc61154321/browser-work/screenshots/runs/task-${task.id}-run-${runId}`;
   const resultPath = `/home/abc61154321/browser-work/task-results/run-${runId}.json`;
+  // Leave creation to the worker process so ownership stays writable for browser user.
   const runner = task.type === 'python'
     ? `${shellEscape('/usr/bin/python3')} ${shellEscape(taskFile)}`
     : `${shellEscape('/tmp/node-openclaw')} ${shellEscape(wrapperFile)} ${shellEscape(taskFile)}`;
   const profile = task && task._profile ? task._profile : null;
+  const taskParams = parseTaskParams(task);
+  const useTempProfile = resolveUseTempProfile(task, taskParams);
   const effectiveUserDataDir = pickNonEmptyString(
-    profile && profile.user_data_dir,
-    task && task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task)
+    useTempProfile ? '' : (profile && profile.user_data_dir),
+    useTempProfile ? getTempProfileDir(task) : (task && task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task))
   );
-  const effectiveProxy = pickNonEmptyString(
-    profile && profile.proxy,
-    config.browser.proxy || ''
-  );
+  const effectiveProxy = resolveEffectiveProxy(task, profile);
   const effectiveProfileName = pickNonEmptyString(
     profile && profile.name,
     ''
@@ -348,37 +370,36 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const runtimeSettings = db.getBrowserRuntimeSettings();
   const runtimeStack = resolveRuntimeStack(task._profile, runtimeSettings);
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);
-  const cfEnvPairs = collectEnvByPrefixes(['CF_']);
-  const tgEnvPairs = collectEnvByPrefixes(['TG_']);
-  if (cfEnvPairs.length > 0) {
-    const summary = cfEnvPairs.map(([k, v]) => `${k}=${v}`).join(', ');
-    console.log(`[browser-launcher] forwarding env: ${summary}`);
-  }
-  if (tgEnvPairs.length > 0) {
-    const summary = tgEnvPairs.map(([k, v]) => `${k}=${redactEnvValue(k, v)}`).join(', ');
-    console.log(`[browser-launcher] forwarding tg env: ${summary}`);
+  const userEnvPairs = buildBrowserUserEnvPairs(task);
+  if (userEnvPairs.length > 0) {
+    console.log(`[browser-launcher] forwarding user env: ${summarizeEnvPairs(userEnvPairs)}`);
   }
 
-  const cmdParts = [
-    'cd /home/abc61154321/browser-work &&',
-    `DISPLAY=${shellEscape(config.browser.display)}`,
-    `XAUTHORITY=${shellEscape(config.browser.xauthority)}`,
-    `BROWSER_USER_DATA_DIR=${shellEscape(effectiveUserDataDir)}`,
-    `BROWSER_CHROME_PATH=${shellEscape(config.browser.chromePath)}`,
-    `BROWSER_PROXY=${shellEscape(effectiveProxy)}`,
-    `BROWSER_PROFILE_NAME=${shellEscape(effectiveProfileName)}`,
-    `BROWSER_LOCALE=${shellEscape(effectiveLocale)}`,
-    `BROWSER_TIMEZONE=${shellEscape(effectiveTimezone)}`,
-    `BROWSER_RUNTIME_STACK=${shellEscape(runtimeStack)}`,
-    `BROWSER_USE_PLAYWRIGHT_EXTRA=${shellEscape(usePlaywrightExtra ? '1' : '0')}`,
-    `BROWSER_PLUGIN_PACKAGES=${shellEscape(runtimeSettings.pluginPackages || '')}`,
-    `TASK_SCREENSHOT_PATH=${shellEscape(workerScreenshotPath)}`,
-    `TASK_RESULT_PATH=${shellEscape(resultPath)}`,
+  // System keys first, then user layers (user may set script vars; system keys re-forced after).
+  const systemPairs = [
+    ['DISPLAY', config.browser.display],
+    ['XAUTHORITY', config.browser.xauthority],
+    ['BROWSER_USER_DATA_DIR', effectiveUserDataDir],
+    ['BROWSER_CHROME_PATH', config.browser.chromePath],
+    ['BROWSER_PROXY', effectiveProxy],
+    ['BROWSER_PROFILE_NAME', effectiveProfileName],
+    ['BROWSER_LOCALE', effectiveLocale],
+    ['BROWSER_TIMEZONE', effectiveTimezone],
+    ['BROWSER_RUNTIME_STACK', runtimeStack],
+    ['BROWSER_USE_PLAYWRIGHT_EXTRA', usePlaywrightExtra ? '1' : '0'],
+    ['BROWSER_PLUGIN_PACKAGES', runtimeSettings.pluginPackages || ''],
+    ['TASK_SCREENSHOT_PATH', workerScreenshotPath],
+    ['TASK_SCREENSHOT_DIR', workerScreenshotDir],
+    ['TASK_RESULT_PATH', resultPath],
   ];
-  for (const [key, value] of cfEnvPairs) {
+
+  const cmdParts = ['cd /home/abc61154321/browser-work &&'];
+  for (const [key, value] of userEnvPairs) {
+    // Skip keys that will be forced by system layer
+    if (systemPairs.some(([sk]) => sk === key)) continue;
     cmdParts.push(`${key}=${shellEscape(value)}`);
   }
-  for (const [key, value] of tgEnvPairs) {
+  for (const [key, value] of systemPairs) {
     cmdParts.push(`${key}=${shellEscape(value)}`);
   }
   cmdParts.push(runner);
@@ -396,6 +417,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       child,
       task: { ...task, _launcherPid: child.pid },
       workerScreenshotPath,
+      workerScreenshotDir,
       resultPath,
       stoppedByUser: false,
     });
@@ -450,6 +472,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
         stderr: `${stderr}\n${error.message || String(error)}`.trim(),
         errorCode: stoppedByUser ? 'stopped' : 'browser_launch_error',
         workerScreenshotPath,
+        workerScreenshotDir,
         resultPath,
       });
     });
@@ -471,6 +494,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
         stderr,
         errorCode,
         workerScreenshotPath,
+        workerScreenshotDir,
         resultPath,
       });
     });

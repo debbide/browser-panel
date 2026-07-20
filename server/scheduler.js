@@ -40,7 +40,61 @@ function addInterval(date, value, unit) {
   return next;
 }
 
-function computeNextRun(task, fromDate = new Date()) {
+function getTzDate(baseDate, targetMin, addDays = 0) {
+  let tz = 'Asia/Shanghai';
+  try { tz = require('../config').browser.timezoneId || tz; } catch (e) {}
+  
+  const shiftDate = new Date(baseDate.getTime() + addDays * 24 * 3600 * 1000);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(shiftDate);
+  
+  const y = parts.find(p => p.type === 'year').value;
+  const m = parts.find(p => p.type === 'month').value;
+  const d = parts.find(p => p.type === 'day').value;
+  
+  const h = Math.floor(targetMin / 60);
+  const min = targetMin % 60;
+  const localStr = `${y}-${m}-${d}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00.000`;
+  
+  const offsetParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    timeZoneName: 'longOffset'
+  }).formatToParts(shiftDate);
+  const gmtStr = offsetParts.find(p => p.type === 'timeZoneName')?.value || 'GMT';
+  const offsetStr = gmtStr === 'GMT' ? 'Z' : gmtStr.replace('GMT', '');
+  
+  return new Date(localStr + offsetStr);
+}
+
+function computeNextRun(task, fromDate = new Date(), isReschedule = false) {
+  if (task.schedule_mode === 'daily_window') {
+    const startStr = task.daily_time_start || '00:00';
+    const endStr = task.daily_time_end || '23:59';
+    const [startH, startM] = startStr.split(':').map(Number);
+    const [endH, endM] = endStr.split(':').map(Number);
+    
+    const startTotalMin = (startH || 0) * 60 + (startM || 0);
+    const endTotalMin = (endH || 0) * 60 + (endM || 0);
+    
+    let targetMin = startTotalMin;
+    if (endTotalMin > startTotalMin) {
+       targetMin = randomIntInclusive(startTotalMin, endTotalMin);
+    }
+    
+    let candidate = getTzDate(fromDate, targetMin, isReschedule ? 1 : 0);
+    
+    if (!isReschedule && candidate.getTime() <= fromDate.getTime()) {
+      if (endTotalMin > startTotalMin) {
+         targetMin = randomIntInclusive(startTotalMin, endTotalMin);
+      }
+      candidate = getTzDate(fromDate, targetMin, 1);
+    }
+    
+    return candidate.toISOString();
+  }
+
   const min = Number(task.interval_min || 0);
   const max = Number(task.interval_max || 0);
   const unit = task.interval_unit || 'hours';
@@ -81,7 +135,7 @@ function startMainLoop(runTaskById) {
              // 运行结束后，再次排期
              const latestTask = listTasks().find(item => item.id === task.id);
              if (latestTask && latestTask.enabled) {
-               const nextTime = computeNextRun(latestTask, new Date());
+               const nextTime = computeNextRun(latestTask, new Date(), true);
                if (nextTime) updateTask(task.id, { ...latestTask, next_run_at: nextTime });
              }
            });
