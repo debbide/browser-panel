@@ -161,6 +161,10 @@ function ensureRuntimeFiles(task) {
   fs.mkdirSync(workerNodeModules, { recursive: true });
   fs.mkdirSync(path.join(workerRoot, 'screenshots'), { recursive: true });
   fs.mkdirSync(path.join(workerRoot, 'task-results'), { recursive: true });
+  // SeleniumBase UC lock/download dirs (browser user must write here)
+  fs.mkdirSync(path.join(workerRoot, 'downloaded_files'), { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'assets'), { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'archived_files'), { recursive: true });
   fs.mkdirSync(path.join(getRuntimeDataDir(), 'profiles'), { recursive: true });
   const moduleCopies = collectModuleCopyPairs(getRuntimeNodeModules(), workerNodeModules);
   const taskSourcePath = path.resolve(config.paths.root, task.script_path);

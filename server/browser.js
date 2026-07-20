@@ -174,6 +174,10 @@ function ensureManualRuntimeFiles(runtimeSettings) {
   fs.mkdirSync(path.join(workerRoot, 'screenshots'), { recursive: true });
   fs.mkdirSync(path.join(workerRoot, 'task-results'), { recursive: true });
   fs.mkdirSync(path.join(workerRoot, 'persistent'), { recursive: true });
+  // SeleniumBase UC / fasteners lock dirs (must be writable by browser user)
+  fs.mkdirSync(path.join(workerRoot, 'downloaded_files'), { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'assets'), { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'archived_files'), { recursive: true });
   fs.mkdirSync(workerNodeModules, { recursive: true });
 
   const effectiveRuntimeSettings = runtimeSettings || db.getBrowserRuntimeSettings();
