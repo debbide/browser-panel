@@ -101,14 +101,29 @@ function isoNow() {
   return new Date().toISOString();
 }
 
-/** 子进程日志只用时分秒，避免 2026-07-20T09:15:07.286Z 这种过长前缀 */
+/** 子进程日志只用时分秒；脚本若已自带时间戳则不再套一层 */
 function logTimeNow() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-/** 给子进程输出按行加时间戳（项目层统一，脚本不用改） */
+function lineAlreadyHasTimestamp(line) {
+  const text = safeString(line).trimStart();
+  // [16:46:42] / 16:46:42 / 2026-07-20T... / 2026-07-20 16:46:42
+  return (
+    /^\[\d{1,2}:\d{2}(:\d{2})?\]/.test(text)
+    || /^\d{1,2}:\d{2}(:\d{2})?([.,]\d+)?(\s|$)/.test(text)
+    || /^\d{4}-\d{2}-\d{2}[T\s]/.test(text)
+  );
+}
+
+function formatSubprocessLogLine(line) {
+  if (lineAlreadyHasTimestamp(line)) return `${line}\n`;
+  return `${logTimeNow()} ${line}\n`;
+}
+
+/** 给子进程输出按行加时间戳（仅当脚本行内没有时间戳时） */
 function createTimestampedLineWriter(writeLine) {
   let buffer = '';
   return {
@@ -120,12 +135,12 @@ function createTimestampedLineWriter(writeLine) {
       while ((idx = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, idx);
         buffer = buffer.slice(idx + 1);
-        writeLine(`${logTimeNow()} ${line}\n`);
+        writeLine(formatSubprocessLogLine(line));
       }
     },
     flush() {
       if (!buffer) return;
-      writeLine(`${logTimeNow()} ${buffer}\n`);
+      writeLine(formatSubprocessLogLine(buffer));
       buffer = '';
     },
   };
