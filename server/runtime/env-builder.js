@@ -106,25 +106,47 @@ function resolveEffectiveProxy(task, profile = null) {
   );
 }
 
-function applyVisionTelegramFallbacks(env) {
+function applyVisionFallbacks(env) {
   const vision = db.getVisionSettings();
   if (vision.baseUrl && !env.VISION_BASE_URL) env.VISION_BASE_URL = vision.baseUrl;
   if (vision.apiKey && !env.VISION_API_KEY) env.VISION_API_KEY = vision.apiKey;
   if (vision.model && !env.VISION_MODEL) env.VISION_MODEL = vision.model;
   if (vision.channels && !env.VISION_CHANNELS) env.VISION_CHANNELS = vision.channels;
+}
 
+/** Default ON. Task may set USE_GLOBAL_TELEGRAM=0 to disable injecting panel Telegram into script env. */
+function wantsGlobalTelegram(env = {}) {
+  const raw = env.USE_GLOBAL_TELEGRAM ?? env.use_global_telegram;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return true;
+  return isTruthyEnv(raw);
+}
+
+/**
+ * Inject panel Telegram settings for scripts (TG_TOKEN / TG_CHAT_ID / aliases).
+ * force=true: always overwrite (when task opted into global TG).
+ * force=false: only fill missing keys.
+ */
+function applyTelegramFallbacks(env, { force = false } = {}) {
   const telegram = db.getTelegramSettings();
+  if (!telegram) return;
   if (telegram.botToken) {
-    if (!env.TG_BOT_TOKEN) env.TG_BOT_TOKEN = telegram.botToken;
-    if (!env.TG_TOKEN) env.TG_TOKEN = telegram.botToken;
+    if (force || !env.TG_BOT_TOKEN) env.TG_BOT_TOKEN = telegram.botToken;
+    if (force || !env.TG_TOKEN) env.TG_TOKEN = telegram.botToken;
   }
   if (telegram.chatId) {
-    if (!env.TG_CHAT_ID) env.TG_CHAT_ID = telegram.chatId;
-    if (!env.CHAT_ID) env.CHAT_ID = telegram.chatId;
+    if (force || !env.TG_CHAT_ID) env.TG_CHAT_ID = telegram.chatId;
+    if (force || !env.CHAT_ID) env.CHAT_ID = telegram.chatId;
   }
   if (telegram.proxy) {
-    if (!env.TG_PROXY) env.TG_PROXY = telegram.proxy;
-    if (!env.TG_PROXY_URL) env.TG_PROXY_URL = telegram.proxy;
+    if (force || !env.TG_PROXY) env.TG_PROXY = telegram.proxy;
+    if (force || !env.TG_PROXY_URL) env.TG_PROXY_URL = telegram.proxy;
+  }
+}
+
+function applyVisionTelegramFallbacks(env) {
+  applyVisionFallbacks(env);
+  if (wantsGlobalTelegram(env)) {
+    applyTelegramFallbacks(env, { force: false });
   }
 }
 
@@ -136,7 +158,7 @@ function applyGithubCompat(env) {
 
 /**
  * Merge user-configured env layers (no system browser/task paths).
- * Order: host prefixes → global → profile → task → vision/tg fallback → github compat
+ * Order: host prefixes → global env_entries → profile → task → vision → telegram (optional) → github compat
  */
 function buildUserEnvLayers(task = null) {
   const env = {};
@@ -159,7 +181,14 @@ function buildUserEnvLayers(task = null) {
     assignMap(env, db.getTaskEnvMap(task));
   }
 
-  applyVisionTelegramFallbacks(env);
+  applyVisionFallbacks(env);
+
+  // Task switch USE_GLOBAL_TELEGRAM (default on): force panel Telegram into script env
+  // so game4free-style scripts get TG_TOKEN without per-task copy.
+  if (wantsGlobalTelegram(env)) {
+    applyTelegramFallbacks(env, { force: true });
+  }
+
   applyGithubCompat(env);
   return env;
 }
@@ -251,4 +280,6 @@ module.exports = {
   envObjectToPairs,
   summarizeEnvPairs,
   applyVisionTelegramFallbacks,
+  applyTelegramFallbacks,
+  wantsGlobalTelegram,
 };

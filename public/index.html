@@ -281,6 +281,13 @@
                   </button>
                 </div>
               </div>
+              <label class="inline-check" style="margin:8px 0;">
+                <input type="checkbox" id="task-use-global-telegram" checked />
+                使用全局 Telegram（脚本可读 TG_TOKEN / TG_CHAT_ID）
+              </label>
+              <p class="schedule-note" id="task-use-global-telegram-hint" style="margin:0 0 8px;">
+                勾选：注入面板「全局配置 → Telegram」。不勾选：仅用下方任务变量里的 TG_*；都不填则脚本不发通知。
+              </p>
               <div id="task-env-editor" class="env-editor" data-env-scope="task"></div>
               <details class="env-advanced" style="margin-top:8px;">
                 <summary class="muted">高级：导入 / 导出 .env 或 JSON</summary>

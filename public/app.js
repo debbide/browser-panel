@@ -150,6 +150,7 @@ const taskEnvAddRowBtn = document.getElementById('task-env-add-row');
 const taskEnvTemplateHost2playBtn = document.getElementById('task-env-template-host2play');
 const taskEnvApplyRawBtn = document.getElementById('task-env-apply-raw');
 const taskEnvExportRawBtn = document.getElementById('task-env-export-raw');
+const taskUseGlobalTelegram = document.getElementById('task-use-global-telegram');
 const paramJsonRaw = document.getElementById('param-json-raw');
 const globalEnvEditor = document.getElementById('global-env-editor');
 const globalEnvAddRowBtn = document.getElementById('global-env-add-row');
@@ -619,6 +620,18 @@ function entriesFromParamsObject(params = {}) {
     }));
 }
 
+function readUseGlobalTelegramFlag(paramsOrEnv) {
+  let raw;
+  if (Array.isArray(paramsOrEnv)) {
+    const hit = paramsOrEnv.find((e) => String(e?.name || '').toUpperCase() === 'USE_GLOBAL_TELEGRAM');
+    raw = hit ? hit.value : undefined;
+  } else if (paramsOrEnv && typeof paramsOrEnv === 'object') {
+    raw = paramsOrEnv.USE_GLOBAL_TELEGRAM ?? paramsOrEnv.use_global_telegram;
+  }
+  if (raw === undefined || raw === null || String(raw).trim() === '') return true;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
 function syncTaskParamsUI(scriptPath, paramsOrEnv = {}) {
   if (!taskParamsBlock) return;
   taskParamsBlock.hidden = false;
@@ -630,10 +643,23 @@ function syncTaskParamsUI(scriptPath, paramsOrEnv = {}) {
       : '键值注入脚本 env；Secret 勾选后掩码保存';
   }
 
+  // Strip control keys from the visible table (managed by checkbox)
+  let rows = paramsOrEnv;
   if (Array.isArray(paramsOrEnv)) {
-    taskEnvUI.setRows(paramsOrEnv);
+    rows = paramsOrEnv.filter((e) => {
+      const n = String(e?.name || '').toUpperCase();
+      return n !== 'USE_GLOBAL_TELEGRAM';
+    });
+    taskEnvUI.setRows(rows);
   } else {
-    taskEnvUI.setRows(entriesFromParamsObject(paramsOrEnv));
+    const obj = { ...(paramsOrEnv || {}) };
+    delete obj.USE_GLOBAL_TELEGRAM;
+    delete obj.use_global_telegram;
+    taskEnvUI.setRows(entriesFromParamsObject(obj));
+  }
+
+  if (taskUseGlobalTelegram) {
+    taskUseGlobalTelegram.checked = readUseGlobalTelegramFlag(paramsOrEnv);
   }
 
   if (isHost2 && form.elements.timeout_sec && Number(form.elements.timeout_sec.value || 0) < 600) {
@@ -1813,6 +1839,20 @@ form.addEventListener('submit', async (event) => {
     value: wantPersistent ? '0' : '1',
     is_secret: 0,
   });
+  // 全局 Telegram 开关：默认开；关则脚本不自动带面板 TG（仍可手写 TG_*）
+  const useGlobalTg = taskUseGlobalTelegram ? taskUseGlobalTelegram.checked : true;
+  envByName.set('USE_GLOBAL_TELEGRAM', {
+    name: 'USE_GLOBAL_TELEGRAM',
+    value: useGlobalTg ? '1' : '0',
+    is_secret: 0,
+  });
+  if (useGlobalTg) {
+    // 避免任务里空的 TG_* 占位干扰（服务端也会 force 注入全局）
+    for (const k of ['TG_TOKEN', 'TG_BOT_TOKEN', 'TG_CHAT_ID', 'CHAT_ID', 'TG_PROXY', 'TG_PROXY_URL']) {
+      const cur = envByName.get(k);
+      if (cur && !String(cur.value || '').trim()) envByName.delete(k);
+    }
+  }
   const taskProxy = getTaskProxyFromForm();
   if (taskProxy) {
     envByName.set('BROWSER_PROXY', {
@@ -1827,6 +1867,7 @@ form.addEventListener('submit', async (event) => {
   payload.params = {
     ...params,
     USE_TEMP_PROFILE: wantPersistent ? '0' : '1',
+    USE_GLOBAL_TELEGRAM: useGlobalTg ? '1' : '0',
   };
   if (taskProxy) payload.params.BROWSER_PROXY = taskProxy;
   else delete payload.params.BROWSER_PROXY;
