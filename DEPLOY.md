@@ -1,48 +1,64 @@
 # 部署说明（简单版）
 
-面板自己配置：浏览器用户目录、代理、变量/密钥、临时/持久配置。  
-脚本只负责 **依赖** 和 **更新代码**。
+面板配置：浏览器目录、代理、变量/密钥、临时/持久。  
+脚本只做 **依赖** 和 **原地更新代码**。
 
-## 位置固定（重要）
+## 位置固定 + 数据安全
 
-- 克隆到哪，就一直在哪更新，**脚本不会改项目路径**。
-- `install-deps.sh` / `update.sh` 都以 **脚本所在仓库根目录** 为唯一工作目录。
-- 不要把代码拷来拷去再跑 update；在原目录 `git pull` / `bash scripts/update.sh` 即可。
-- systemd 的 `WorkingDirectory` 请写成你的真实路径，装完不要换目录。
+- 装到哪就一直在哪，`update` **不会改路径**。
+- **永远不覆盖 / 不删除：**
+  - `tasks/`（你的业务脚本）
+  - `data/`（数据库）
+  - `logs/` `screenshots/` `runtime-data/`
+  - `.env*` `.venv/` `node_modules/`
+- 只更新面板代码：`server/` `public/` `scripts/` `package.json` 等。
 
-## 两个脚本
+## 脚本
 
-| 脚本 | 做什么 |
+| 脚本 | 作用 |
 |---|---|
-| `scripts/install-deps.sh` | 在当前仓库目录装 Node / Python(DP) 依赖 |
-| `scripts/update.sh` | **原地** `git pull` + `npm install` + 重启服务（若有） |
+| `scripts/install-from-release.sh` | 从 GitHub Release **首次安装**到当前目录 |
+| `scripts/install-deps.sh` | 装 Node / Python(DP) 依赖 |
+| `scripts/update.sh` | **默认从 Release 更新代码**（保护 tasks/data） |
+| `scripts/update.sh --git` | 改用 `git pull`（仍不删 tasks） |
+| `scripts/update.sh --deps` | 更新后再刷依赖 |
 
-首次也可：
-
-```bash
-bash scripts/install.sh          # = install-deps.sh
-bash scripts/install.sh --sb     # 额外 SeleniumBase（x86）
-bash scripts/install.sh --playwright
-```
-
-## 首次
+## 首次（Release，推荐）
 
 ```bash
-# 路径自己定，以后就固定用这个目录
-git clone https://github.com/debbide/browser-panel.git /opt/browser-panel
+# 路径自己定死，例如 /opt/browser-panel
+mkdir -p /opt/browser-panel
 cd /opt/browser-panel
 
-# 系统需已有: Node >= 18, python3, git
-# 浏览器/显示按你机器自备（chromium、xvfb 等）
+# 需要: curl, tar, Node>=18, python3
+curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/install-from-release.sh | bash
 
-bash scripts/install-deps.sh
+# 或指定目录
+bash install-from-release.sh --dir /opt/browser-panel   # 若已下载脚本
 
-# 启动（前台）— 必须在同一目录
+cd /opt/browser-panel
 node server/index.js
-# 默认 http://0.0.0.0:3210
+# http://0.0.0.0:3210
 ```
 
-可选环境变量（也可用面板/系统 env，不必写进安装脚本）：
+发版后服务器才会拉到带 tag 的包；若还没有 Release，脚本会回退下载 `master` 归档。
+
+## 更新（不丢脚本和数据）
+
+```bash
+cd /opt/browser-panel    # 必须是原来的目录
+bash scripts/update.sh
+
+# 指定版本
+bash scripts/update.sh --tag v1.0.0
+
+# 同时刷新 Python/Node 依赖
+bash scripts/update.sh --deps
+```
+
+流程：下载 Release 解压到临时目录 → **安全同步**代码 → `npm install` → 可选重启 systemd。
+
+## 可选环境变量
 
 ```bash
 export PORT=3210
@@ -52,40 +68,31 @@ export BROWSER_DISPLAY=:1.0
 export BROWSER_PROXY=socks5://127.0.0.1:1080
 ```
 
-## 更新（仍在原目录）
+业务脚本放到 `tasks/`（不进 git / 不进更新包逻辑的覆盖范围）。
+
+## 发 Release 建议
+
+GitHub → Releases → 新建 tag（如 `v1.0.0`）。  
+不必单独上传 zip：`update.sh` 使用 GitHub 的 **tag 源码包**（`archive/refs/tags/...`）。  
+源码包里本来就没有你的本地 `tasks` 业务脚本（gitignore）。
+
+## 依赖
+
+- `requirements-dp.txt` — 默认（ARM 友好）  
+- `requirements-sb.txt` / `requirements-playwright.txt` — 可选  
 
 ```bash
-cd /opt/browser-panel    # 你的固定路径，别换地方
-bash scripts/update.sh
-
-# 连 Python 依赖一起刷：
-bash scripts/update.sh --deps
+bash scripts/install-deps.sh
+bash scripts/install-deps.sh --sb
+bash scripts/install-deps.sh --playwright
 ```
 
-## 面板里配置（不要靠安装脚本）
+## systemd（可选）
 
-1. **全局配置 → 变量与密钥**  
-2. **浏览器配置**（持久目录 / 代理）  
-3. **任务**：临时 or 持久、任务级代理、脚本 env  
-4. Vision / Telegram 等  
-
-业务脚本自行放到 `tasks/`（默认不进 git）。
-
-## 依赖文件
-
-- `requirements-dp.txt` — DrissionPage（默认，ARM 友好）  
-- `requirements-sb.txt` — SeleniumBase（可选）  
-- `requirements-playwright.txt` — Playwright Python（可选）  
-
-## 可选 systemd
-
-仓库带了示例：`deploy/browser-automation-panel.service`  
-需要时自己改 `WorkingDirectory` 后：
+改 `deploy/browser-automation-panel.service` 里的 `WorkingDirectory` 为你的固定路径后：
 
 ```bash
 sudo cp deploy/browser-automation-panel.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now browser-automation-panel
 ```
-
-安装脚本**不会**强制写用户、目录树或 systemd，避免和面板配置打架。
