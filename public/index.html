@@ -352,9 +352,25 @@
               </div>
               <input type="hidden" name="type" value="javascript" />
               <input type="hidden" name="script_path" required />
-              <input type="hidden" name="timeout_sec" value="300" />
               <input type="hidden" name="browser_profile_id" id="task-profile-id" value="" />
               <input type="hidden" name="use_persistent" id="task-use-persistent" value="0" />
+              <div>
+                <label class="field-label" for="task-timeout-sec">任务超时（秒）</label>
+                <input
+                  id="task-timeout-sec"
+                  name="timeout_sec"
+                  type="number"
+                  min="30"
+                  max="86400"
+                  step="1"
+                  value="300"
+                  data-testid="task-timeout-input"
+                  style="width:100%;"
+                />
+                <p class="schedule-note" style="margin-top:4px;">
+                  整次任务最长运行时间，到点面板会结束进程。Host2Play 打码建议 ≥ 900，需要更长可填 1800。
+                </p>
+              </div>
 
             <div id="task-params-block" class="config-block">
               <div class="section-header compact">
