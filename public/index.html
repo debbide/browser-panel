@@ -108,6 +108,30 @@
         <section class="modal-panel config-panel" style="margin-top:16px;">
           <div class="section-header compact">
             <div>
+              <h2>任务调度</h2>
+              <p class="muted" id="scheduler-status-text">状态：加载中...</p>
+            </div>
+          </div>
+          <form id="scheduler-form" class="grid single-col">
+            <label class="inline-check">
+              <input type="checkbox" id="scheduler-allow-parallel" name="allowParallel" />
+              允许并行运行多个任务
+            </label>
+            <div class="schedule-note" style="margin-top:4px;">
+              默认关闭（串行）：适合小 VPS，同一时间只跑一个任务。到点但正忙的任务会保持到期，空闲后按最早到期优先启动。手动「运行」在占线时会提示稍后。
+              开启后：不同任务可同时跑（仍禁止同一任务重复进入）。
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button type="submit" id="scheduler-save-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> 保存调度设置
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section class="modal-panel config-panel" style="margin-top:16px;">
+          <div class="section-header compact">
+            <div>
               <h2>浏览器运行时插件</h2>
               <p class="muted" id="browser-runtime-status">状态：加载中...</p>
             </div>

@@ -130,6 +130,10 @@ const tgProxy = document.getElementById('tg-proxy');
 const tgTokenHelp = document.getElementById('tg-token-help');
 const tgSaveBtn = document.getElementById('tg-save-btn');
 const tgTestBtn = document.getElementById('tg-test-btn');
+const schedulerForm = document.getElementById('scheduler-form');
+const schedulerStatusText = document.getElementById('scheduler-status-text');
+const schedulerAllowParallel = document.getElementById('scheduler-allow-parallel');
+const schedulerSaveBtn = document.getElementById('scheduler-save-btn');
 const browserRuntimeForm = document.getElementById('browser-runtime-form');
 const browserRuntimeStatus = document.getElementById('browser-runtime-status');
 const brRuntimeStack = document.getElementById('br-runtime-stack');
@@ -1490,6 +1494,40 @@ function normalizePluginPackagesForUi(value) {
     .join(', ');
 }
 
+function setSchedulerStatus(text, color) {
+  if (!schedulerStatusText) return;
+  schedulerStatusText.textContent = text;
+  if (color) schedulerStatusText.style.color = color;
+}
+
+async function loadSchedulerSettings() {
+  if (!schedulerForm) return;
+  try {
+    const res = await fetchJson('/api/settings/scheduler');
+    const data = res.data || {};
+    if (schedulerAllowParallel) {
+      schedulerAllowParallel.checked = Boolean(data.allowParallel);
+    }
+    const mode = data.allowParallel ? '并行' : '串行（默认）';
+    const running = Array.isArray(data.runningTaskIds) ? data.runningTaskIds : [];
+    const runningText = running.length ? `，当前运行：#${running.join(', #')}` : '，当前空闲';
+    setSchedulerStatus(`状态：${mode}${runningText}`, '#94a3b8');
+  } catch (error) {
+    setSchedulerStatus('状态：加载失败', '#ef4444');
+    console.error('Failed to load scheduler settings:', error);
+  }
+}
+
+async function saveSchedulerSettings() {
+  const allowParallel = Boolean(schedulerAllowParallel && schedulerAllowParallel.checked);
+  await fetchJson('/api/settings/scheduler', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allowParallel }),
+  });
+  await loadSchedulerSettings();
+}
+
 function setBrowserRuntimeStatus(text, color) {
   if (!browserRuntimeStatus) return;
   browserRuntimeStatus.textContent = text;
@@ -2338,6 +2376,28 @@ if (visionForm) {
   });
 }
 
+if (schedulerForm) {
+  schedulerForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (schedulerSaveBtn) {
+      schedulerSaveBtn.disabled = true;
+      schedulerSaveBtn.textContent = '保存中...';
+    }
+    try {
+      await saveSchedulerSettings();
+      toast('调度设置已保存', 'success');
+    } catch (error) {
+      toast(error.message || '保存调度设置失败', 'error');
+    } finally {
+      if (schedulerSaveBtn) {
+        schedulerSaveBtn.disabled = false;
+        schedulerSaveBtn.innerHTML = '<i data-lucide="save" class="icon-sm"></i> 保存调度设置';
+        if (window.lucide) window.lucide.createIcons();
+      }
+    }
+  });
+}
+
 if (browserRuntimeForm) {
   browserRuntimeForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -2764,6 +2824,7 @@ function wireTasksFsUi() {
   if (configTabBtn) {
     configTabBtn.addEventListener('click', () => {
       loadTasksFs(fsCurrentPath);
+      loadSchedulerSettings();
     });
   }
 }
@@ -2773,6 +2834,7 @@ wireTasksFsUi();
 resetAllModalState();
 closeModal();
 refreshAll();
+loadSchedulerSettings();
 loadBrowserRuntimeSettings();
 loadVisionSettings();
 loadGlobalEnvSettings();

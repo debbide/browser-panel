@@ -5,7 +5,14 @@ const { spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
 const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
-const { reloadJobs, isTaskRunning, runTaskSafely, computeNextRun } = require('./scheduler');
+const {
+  reloadJobs,
+  isTaskRunning,
+  isAnyTaskRunning,
+  getRunningTaskIds,
+  runTaskSafely,
+  computeNextRun,
+} = require('./scheduler');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
@@ -73,6 +80,24 @@ async function executeTask(id, options = {}) {
   return completedRun;
 }
 
+function buildSchedulerBusyPayload(taskId) {
+  const ids = getRunningTaskIds();
+  const runningId = ids[0];
+  const runningTask = runningId != null ? db.getTask(runningId) : null;
+  const label = runningTask
+    ? `#${runningTask.id} ${runningTask.name || ''}`.trim()
+    : (ids.length ? `#${ids.join(',')}` : '未知任务');
+  return {
+    ok: false,
+    status: 409,
+    payload: {
+      message: `当前有任务执行中（${label}），串行模式下请稍后再试`,
+      code: 'scheduler_busy',
+      runningTaskIds: ids,
+    },
+  };
+}
+
 async function triggerTaskExecution(taskId, options = {}) {
   if (getManualBrowserStatus().open) {
     return { ok: false, status: 409, payload: { message: 'Browser is open manually, close it before running tasks', code: 'browser_already_open' } };
@@ -83,9 +108,17 @@ async function triggerTaskExecution(taskId, options = {}) {
     return { ok: false, status: 400, payload: { message: 'Selected browser profile not found', code: 'invalid_browser_profile' } };
   }
 
-  const result = await runTaskSafely(Number(taskId), (id) => executeTask(id, { refreshScheduleOnSuccess: true, profileId }));
+  const idNum = Number(taskId);
+  if (!db.isTaskParallelAllowed() && isAnyTaskRunning() && !isTaskRunning(idNum)) {
+    return buildSchedulerBusyPayload(idNum);
+  }
+
+  const result = await runTaskSafely(idNum, (id) => executeTask(id, { refreshScheduleOnSuccess: true, profileId }));
   if (result?.skipped) {
-    return { ok: false, status: 409, payload: { message: 'Task is already running', code: result.reason } };
+    if (result.reason === 'global_busy') {
+      return buildSchedulerBusyPayload(idNum);
+    }
+    return { ok: false, status: 409, payload: { message: 'Task is already running', code: result.reason || 'already_running' } };
   }
 
   return { ok: true, status: 200, payload: { data: result } };
@@ -108,20 +141,28 @@ async function triggerTaskExecutionInBackground(taskId) {
   }
 
   const taskIdNum = Number(taskId);
-  const result = await runTaskSafely(taskIdNum, async (id) => {
-    setImmediate(async () => {
-      try {
-        await executeTask(id, { refreshScheduleOnSuccess: true });
-      } catch (error) {
-        console.warn('[telegram] retry trigger failed:', error.message);
-      }
-    });
-    return { queued: true };
-  });
-
-  if (result?.skipped) {
+  if (!db.isTaskParallelAllowed() && isAnyTaskRunning() && !isTaskRunning(taskIdNum)) {
+    const busy = buildSchedulerBusyPayload(taskIdNum);
+    return { ok: false, message: busy.payload.message };
+  }
+  if (isTaskRunning(taskIdNum)) {
     return { ok: false, message: 'Task is already running' };
   }
+
+  // Fire-and-forget outside the HTTP/callback path, but keep runTaskSafely
+  // around the full execute so serial/global locks are held until the run ends.
+  // (Previously setImmediate inside runTaskSafely released the lock immediately.)
+  setImmediate(() => {
+    runTaskSafely(taskIdNum, (id) => executeTask(id, { refreshScheduleOnSuccess: true }))
+      .then((result) => {
+        if (result?.skipped) {
+          console.warn('[telegram] retry skipped:', result.reason);
+        }
+      })
+      .catch((error) => {
+        console.warn('[telegram] retry trigger failed:', error.message);
+      });
+  });
 
   return { ok: true, message: 'Retry started' };
 }
@@ -596,6 +637,32 @@ app.post('/api/settings/telegram/test', async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to send test message' });
+  }
+});
+
+app.get('/api/settings/scheduler', (req, res) => {
+  res.json({
+    data: {
+      allowParallel: db.isTaskParallelAllowed(),
+      runningTaskIds: getRunningTaskIds(),
+    },
+  });
+});
+
+app.post('/api/settings/scheduler', (req, res) => {
+  try {
+    const body = req.body || {};
+    const allowParallel = Boolean(body.allowParallel);
+    const updated = db.setTaskParallelAllowed(allowParallel);
+    console.log(`[scheduler] allowParallel=${updated ? '1' : '0'}`);
+    res.json({
+      data: {
+        allowParallel: updated,
+        runningTaskIds: getRunningTaskIds(),
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to save scheduler settings' });
   }
 });
 

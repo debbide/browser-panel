@@ -374,6 +374,16 @@ function setGithubCompatEnabled(enabled) {
   return isGithubCompatEnabled();
 }
 
+/** Default serial (false). Only explicit truthy setting enables parallel. */
+function isTaskParallelAllowed() {
+  return toBool(getSetting('task_allow_parallel'));
+}
+
+function setTaskParallelAllowed(enabled) {
+  setSetting('task_allow_parallel', enabled ? '1' : '0');
+  return isTaskParallelAllowed();
+}
+
 function createRun(taskId, data) {
   const stmt = db.prepare(`
     INSERT INTO task_runs (task_id, status, started_at, ended_at, exit_code, log_path, screenshot_path, screenshots_dir, error_text, error_code, retryable, retry_reason)
@@ -690,4 +700,6 @@ module.exports = {
   parseParamsJsonObject,
   isGithubCompatEnabled,
   setGithubCompatEnabled,
+  isTaskParallelAllowed,
+  setTaskParallelAllowed,
 };
