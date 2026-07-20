@@ -669,7 +669,15 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   }
 
   const hasScreenshot = fs.existsSync(screenshotPath);
-  const ok = Boolean(taskResult?.ok === true);
+  // Prefer explicit TASK_RESULT_PATH payload. For legacy GitHub-style scripts that
+  // never write it: treat clean exit (code 0) as success so the panel matches reality.
+  const exitOk = result.exitCode === 0 || result.exitCode === '0';
+  let ok = false;
+  if (taskResult && typeof taskResult === 'object') {
+    ok = taskResult.ok === true;
+  } else if (exitOk) {
+    ok = true;
+  }
   let errorCode = null;
   if (!ok) {
     if (/timed out/i.test(result.stderr || '')) errorCode = 'timeout';
