@@ -1114,10 +1114,33 @@ function listTasksBoundToPath(relFromTasks) {
   });
 }
 
-// Task picker: all .js/.py under tasks/ (including subfolders like host2play_dp)
+// Task picker: entry scripts only.
+// Default: top-level tasks/*.js|*.py (subfolders like host2play_dp/ are libraries, not task entries).
+// Optional: ?recursive=1 to include nested files (file manager / advanced).
 app.get('/api/scripts', (req, res) => {
   const allowedExts = new Set(['.js', '.py']);
+  const recursive = ['1', 'true', 'yes', 'on'].includes(
+    String(req.query.recursive || '').trim().toLowerCase()
+  );
+  // Never offer package internals as runnable task scripts
+  const skipNames = new Set([
+    '__init__.py',
+    '__main__.py',
+    'conftest.py',
+    'setup.py',
+  ]);
   const out = [];
+  function pushFile(rel, name) {
+    if (skipNames.has(name)) return;
+    if (name.startsWith('.') || name.endsWith('.pyc')) return;
+    const ext = path.extname(name).toLowerCase();
+    if (!allowedExts.has(ext)) return;
+    out.push({
+      name: rel,
+      path: `tasks/${rel}`,
+      type: ext === '.py' ? 'python' : 'javascript',
+    });
+  }
   function walk(dirAbs, relBase) {
     let entries = [];
     try {
@@ -1130,19 +1153,14 @@ app.get('/api/scripts', (req, res) => {
       const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
       const abs = path.join(dirAbs, entry.name);
       if (entry.isDirectory()) {
-        walk(abs, rel);
+        if (recursive) walk(abs, rel);
         continue;
       }
       if (!entry.isFile()) continue;
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!allowedExts.has(ext)) continue;
-      out.push({
-        name: rel,
-        path: `tasks/${rel}`,
-        type: ext === '.py' ? 'python' : 'javascript',
-      });
+      pushFile(rel, entry.name);
     }
   }
+  // Top-level only by default
   walk(config.paths.tasksDir, '');
   out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   res.json({ data: out });
