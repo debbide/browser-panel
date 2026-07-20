@@ -101,46 +101,26 @@ function isoNow() {
   return new Date().toISOString();
 }
 
-/** 子进程日志只用时分秒；脚本若已自带时间戳则不再套一层 */
-function logTimeNow() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function lineAlreadyHasTimestamp(line) {
-  const text = safeString(line).trimStart();
-  // [16:46:42] / 16:46:42 / 2026-07-20T... / 2026-07-20 16:46:42
-  return (
-    /^\[\d{1,2}:\d{2}(:\d{2})?\]/.test(text)
-    || /^\d{1,2}:\d{2}(:\d{2})?([.,]\d+)?(\s|$)/.test(text)
-    || /^\d{4}-\d{2}-\d{2}[T\s]/.test(text)
-  );
-}
-
-function formatSubprocessLogLine(line) {
-  if (lineAlreadyHasTimestamp(line)) return `${line}\n`;
-  return `${logTimeNow()} ${line}\n`;
-}
-
-/** 给子进程输出按行加时间戳（仅当脚本行内没有时间戳时） */
+/**
+ * 子进程日志原样按行写入，不加面板时间戳。
+ * 脚本自己的 [HH:MM:SS] / DEBUG 时间足够，避免双重时间戳。
+ */
 function createTimestampedLineWriter(writeLine) {
   let buffer = '';
   return {
     write(chunk) {
       buffer += safeString(chunk);
-      // 统一换行，保留最后半行
       buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       let idx;
       while ((idx = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, idx);
         buffer = buffer.slice(idx + 1);
-        writeLine(formatSubprocessLogLine(line));
+        writeLine(`${line}\n`);
       }
     },
     flush() {
       if (!buffer) return;
-      writeLine(formatSubprocessLogLine(buffer));
+      writeLine(`${buffer}\n`);
       buffer = '';
     },
   };
