@@ -1884,20 +1884,63 @@ async function saveScriptFromForm(sourceForm) {
   const formData = new FormData(sourceForm);
   const type = String(formData.get('type') || 'javascript');
   const content = String(formData.get('content') || '');
-  const taskName = String(form.elements.name.value || '').trim();
-  if (!taskName) throw new Error('请先填写任务名，再导入脚本');
-  const baseName = slugifyName(taskName);
-  let name = baseName;
-  if (type === 'python' && !name.endsWith('.py')) name += '.py';
-  if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
-  return fetchJson('/api/scripts/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, content }) });
+  // Prefer currently selected/bound script name so re-import overwrites the same file
+  const currentBound = String(form.elements.script_path?.value || selectedScriptPath || '').replace(/\\/g, '/');
+  let name = '';
+  if (currentBound.startsWith('tasks/')) {
+    name = pathBasename(currentBound);
+  }
+  if (!name) {
+    const taskName = String(form.elements.name.value || '').trim();
+    if (!taskName) throw new Error('请先填写任务名，或先选中要覆盖的脚本');
+    const baseName = slugifyName(taskName);
+    name = baseName;
+    if (type === 'python' && !name.endsWith('.py')) name += '.py';
+    if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
+  }
+  // Force extension to match type if user switched type
+  if (type === 'python' && !name.endsWith('.py')) name = name.replace(/\.(js)?$/i, '') + '.py';
+  if (type === 'javascript' && !name.endsWith('.js')) name = name.replace(/\.(py)?$/i, '') + '.js';
+  return fetchJson('/api/scripts/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, content, overwrite: true }),
+  });
+}
+
+function pathBasename(p) {
+  const s = String(p || '').replace(/\\/g, '/');
+  const i = s.lastIndexOf('/');
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+
+async function deleteSelectedScript() {
+  const script = getSelectedScript();
+  if (!script) return;
+  dialogConfirm(`确定删除脚本「${script.name}」？\n（有任务绑定该脚本时会拒绝删除）`, async () => {
+    try {
+      await fetchJson('/api/scripts', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: script.path }),
+      });
+      if (selectedScriptPath === script.path) {
+        selectedScriptPath = '';
+        if (form.elements.script_path) form.elements.script_path.value = '';
+      }
+      await loadScripts();
+      toast('脚本已删除', 'success');
+    } catch (error) {
+      toast(error.message || '删除失败', 'error');
+    }
+  });
 }
 
 modalImportForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (modalImportBtn) {
     modalImportBtn.disabled = true;
-    modalImportBtn.textContent = '导入中...';
+    modalImportBtn.textContent = '保存中...';
   }
 
   try {
@@ -1908,7 +1951,9 @@ modalImportForm.addEventListener('submit', async (event) => {
     syncTaskParamsUI(result.data.path, collectSafeCurrentParams());
     if (!form.name.value.trim()) form.name.value = result.data.name.replace(/\.(js|py)$/i, '');
     openModal(editingId ? 'edit' : 'create');
-    formHint.textContent = `已导入脚本：${getScriptLabel(result.data.path)}`;
+    formHint.textContent = result.data.overwritten
+      ? `已覆盖脚本：${getScriptLabel(result.data.path)}`
+      : `已保存脚本：${getScriptLabel(result.data.path)}`;
     try {
       await loadScripts();
     } catch (error) {
@@ -1918,9 +1963,9 @@ modalImportForm.addEventListener('submit', async (event) => {
       ];
     }
     renderScripts();
-    toast('脚本已导入，现在可以直接保存任务并运行', 'success');
+    toast(result.data.overwritten ? '脚本已覆盖保存' : '脚本已导入', 'success');
   } catch (error) {
-    toast(error.message || '脚本导入失败', 'error');
+    toast(error.message || '脚本保存失败', 'error');
   } finally {
     if (modalImportBtn) {
       modalImportBtn.disabled = false;
@@ -1951,6 +1996,12 @@ editScriptBtn.addEventListener('click', async () => {
     toast(error.message || '脚本读取失败', 'error');
   }
 });
+const deleteScriptBtn = document.getElementById('delete-script-btn');
+if (deleteScriptBtn) {
+  deleteScriptBtn.addEventListener('click', () => {
+    deleteSelectedScript();
+  });
+}
 scheduleModeSelect.addEventListener('change', updateScheduleModeUI);
 fixedDaysEl.addEventListener('input', updateFixedSummary);
 fixedHoursEl.addEventListener('input', updateFixedSummary);

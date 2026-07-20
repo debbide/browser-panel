@@ -923,12 +923,57 @@ app.post('/api/scripts/import', (req, res) => {
     if (!content.trim()) return res.status(400).json({ message: 'Script content is required' });
     fs.mkdirSync(config.paths.tasksDir, { recursive: true });
     const fileType = ext === '.py' ? 'python' : 'javascript';
-    const uniqueName = reserveUniqueScriptFilename(name.slice(0, -ext.length), fileType);
-    const target = path.join(config.paths.tasksDir, uniqueName);
+    // Default: overwrite same filename (edit/import 不再生成 game4free-2.py)
+    // Pass overwrite=false if you ever need unique names again.
+    const overwrite = payload.overwrite === false || payload.overwrite === 0 || payload.overwrite === '0'
+      ? false
+      : true;
+    let finalName = name;
+    if (!overwrite) {
+      finalName = reserveUniqueScriptFilename(name.slice(0, -ext.length), fileType);
+    }
+    const target = path.join(config.paths.tasksDir, finalName);
+    const existed = fs.existsSync(target);
     fs.writeFileSync(target, content, 'utf8');
-    res.json({ data: { name: uniqueName, path: `tasks/${uniqueName}`, type: fileType } });
+    res.json({
+      data: {
+        name: finalName,
+        path: `tasks/${finalName}`,
+        type: fileType,
+        overwritten: Boolean(existed),
+      },
+    });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to save script' });
+  }
+});
+
+app.delete('/api/scripts', (req, res) => {
+  try {
+    const raw = String((req.body && (req.body.path || req.body.name)) || req.query.path || req.query.name || '').trim();
+    if (!raw) return res.status(400).json({ message: 'Script path is required' });
+    const fileName = path.basename(raw.replace(/^tasks[\\/]/, ''));
+    const ext = path.extname(fileName).toLowerCase();
+    if (!['.js', '.py'].includes(ext)) {
+      return res.status(400).json({ message: 'Only .js and .py scripts can be deleted' });
+    }
+    const target = path.join(config.paths.tasksDir, fileName);
+    if (!fs.existsSync(target)) {
+      return res.status(404).json({ message: 'Script not found' });
+    }
+    // Refuse if any task still binds this script
+    const rel = `tasks/${fileName}`;
+    const bound = db.listTasks().filter((t) => String(t.script_path || '').replace(/\\/g, '/') === rel);
+    if (bound.length) {
+      return res.status(409).json({
+        message: `脚本仍被 ${bound.length} 个任务使用，请先改任务脚本或删任务`,
+        tasks: bound.map((t) => ({ id: t.id, name: t.name })),
+      });
+    }
+    fs.unlinkSync(target);
+    res.json({ ok: true, data: { name: fileName, path: rel } });
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Failed to delete script' });
   }
 });
 
