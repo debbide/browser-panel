@@ -1,4 +1,5 @@
 见 [README.md](README.md)。
 
-- 安装：`scripts/install.sh`
-- 升级：`scripts/update.sh`
+```bash
+curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/bp.sh | bash
+```
