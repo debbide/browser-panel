@@ -421,7 +421,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['TASK_RESULT_PATH', resultPath],
   ];
 
-  // Ensure SB can create downloaded_files under cwd (Permission denied if root-owned 755)
+  // Ensure SB can create downloaded_files under cwd + write chromedriver under package drivers/
+  const browserUser = String((config.browser && config.browser.user) || 'browser').trim();
   try {
     fs.mkdirSync(path.join(workDir, 'downloaded_files'), { recursive: true });
     fs.mkdirSync(path.join(workDir, 'assets'), { recursive: true });
@@ -434,9 +435,24 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   } catch (e) {
     console.warn('[browser-launcher] chmod workDir:', e.message);
   }
-  const browserUser = String((config.browser && config.browser.user) || 'browser').trim();
   spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, workDir], { stdio: 'ignore' });
   spawnSync('chmod', ['-R', 'a+rwX', workDir], { stdio: 'ignore' });
+
+  // SeleniumBase UC downloads chromedriver into site-packages/.../drivers (often root-owned).
+  // Make that dir writable for browser user, or fail loudly in logs.
+  try {
+    const py = spawnSync('/usr/bin/python3', ['-c', 'import seleniumbase,os; print(os.path.join(os.path.dirname(seleniumbase.__file__), "drivers"))'], { encoding: 'utf8' });
+    const driversDir = String(py.stdout || '').trim();
+    if (driversDir && driversDir.startsWith('/')) {
+      fs.mkdirSync(driversDir, { recursive: true });
+      spawnSync('chmod', ['-R', 'a+rwX', driversDir], { stdio: 'ignore' });
+      // also parent sometimes needs write for zip extract
+      spawnSync('chmod', ['a+rwX', path.dirname(driversDir)], { stdio: 'ignore' });
+      console.log(`[browser-launcher] SB drivers dir writable: ${driversDir}`);
+    }
+  } catch (e) {
+    console.warn('[browser-launcher] SB drivers chmod skip:', e.message);
+  }
 
   const cmdParts = [
     `mkdir -p ${shellEscape(path.join(workDir, 'downloaded_files'))} ${shellEscape(path.join(workDir, 'assets'))} ${shellEscape(path.join(workDir, 'archived_files'))}`,
