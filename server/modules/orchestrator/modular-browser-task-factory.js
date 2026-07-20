@@ -11,9 +11,13 @@ function ensureGeneratedDir() {
 }
 
 function buildScriptSource(payload) {
+  const workDir = (config.browser && config.browser.workDir)
+    ? String(config.browser.workDir)
+    : path.join('/home', (config.browser && config.browser.user) || 'browser', 'browser-work');
+  const builtinsPath = path.join(workDir, 'modules', 'actions', 'builtins.js').replace(/\\/g, '/');
   return `'use strict';
 
-const { builtinActions } = require('/home/abc61154321/browser-work/modules/actions/builtins.js');
+const { builtinActions } = require(${JSON.stringify(builtinsPath)});
 const payload = ${JSON.stringify(payload, null, 2)};
 
 module.exports = async ({ page, screenshotPath }) => {

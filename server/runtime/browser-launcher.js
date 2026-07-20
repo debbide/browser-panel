@@ -148,11 +148,19 @@ function collectModuleCopyPairs(entryModules, workerNodeModules) {
   return copies;
 }
 
+function getBrowserWorkDir() {
+  return (config.browser && config.browser.workDir)
+    ? String(config.browser.workDir)
+    : path.join('/home', config.browser.user || 'browser', 'browser-work');
+}
+
 function ensureRuntimeFiles(task) {
-  const workerNodeModules = '/home/abc61154321/browser-work/node_modules';
+  const workerRoot = getBrowserWorkDir();
+  const browserUser = String(config.browser.user || 'browser');
+  const workerNodeModules = path.join(workerRoot, 'node_modules');
   fs.mkdirSync(workerNodeModules, { recursive: true });
-  fs.mkdirSync('/home/abc61154321/browser-work/screenshots', { recursive: true });
-  fs.mkdirSync('/home/abc61154321/browser-work/task-results', { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'screenshots'), { recursive: true });
+  fs.mkdirSync(path.join(workerRoot, 'task-results'), { recursive: true });
   fs.mkdirSync(path.join(getRuntimeDataDir(), 'profiles'), { recursive: true });
   const moduleCopies = collectModuleCopyPairs(getRuntimeNodeModules(), workerNodeModules);
   const taskSourcePath = path.resolve(config.paths.root, task.script_path);
@@ -160,9 +168,9 @@ function ensureRuntimeFiles(task) {
   const taskBaseName = path.basename(taskSourcePath);
   const files = [
     ...moduleCopies,
-    { from: path.join(config.paths.root, 'server', 'runtime', 'browser-runtime.js'), to: '/home/abc61154321/browser-work/browser-runtime.js' },
-    { from: path.join(config.paths.root, 'server', 'runtime', 'js-task-wrapper.js'), to: '/home/abc61154321/browser-work/js-task-wrapper.js' },
-    { from: taskSourcePath, to: `/home/abc61154321/browser-work/${taskBaseName}` },
+    { from: path.join(config.paths.root, 'server', 'runtime', 'browser-runtime.js'), to: path.join(workerRoot, 'browser-runtime.js') },
+    { from: path.join(config.paths.root, 'server', 'runtime', 'js-task-wrapper.js'), to: path.join(workerRoot, 'js-task-wrapper.js') },
+    { from: taskSourcePath, to: path.join(workerRoot, taskBaseName) },
   ];
 
   if (task.type === 'python' && fs.existsSync(taskSourceDir)) {
@@ -173,7 +181,7 @@ function ensureRuntimeFiles(task) {
     for (const sibling of pySiblings) {
       files.push({
         from: path.join(taskSourceDir, sibling),
-        to: `/home/abc61154321/browser-work/${sibling}`,
+        to: path.join(workerRoot, sibling),
       });
     }
 
@@ -181,7 +189,7 @@ function ensureRuntimeFiles(task) {
     if (fs.existsSync(hcaptchaPackageDir)) {
       files.push({
         from: hcaptchaPackageDir,
-        to: '/home/abc61154321/browser-work/hcaptcha_solver_refactor',
+        to: path.join(workerRoot, 'hcaptcha_solver_refactor'),
       });
     }
 
@@ -189,7 +197,7 @@ function ensureRuntimeFiles(task) {
     if (fs.existsSync(host2playPackageDir)) {
       files.push({
         from: host2playPackageDir,
-        to: '/home/abc61154321/browser-work/host2play_dp',
+        to: path.join(workerRoot, 'host2play_dp'),
       });
     }
   }
@@ -214,7 +222,7 @@ function ensureRuntimeFiles(task) {
       `Failed to prepare worker node (${sourceNode} -> ${workerNodePath}): ${err.message}`
     );
   }
-  spawnSync('bash', ['-lc', 'chown -R abc61154321:abc61154321 /home/abc61154321/browser-work'], { stdio: 'ignore' });
+  spawnSync('bash', ['-lc', `chown -R ${shellEscape(browserUser)}:${shellEscape(browserUser)} ${shellEscape(workerRoot)}`], { stdio: 'ignore' });
 }
 
 
@@ -250,16 +258,17 @@ function buildTerminateCommandsByTask(task) {
     '  kill -KILL "$p" 2>/dev/null || true',
     '}',
   ];
+  const workDir = getBrowserWorkDir();
   const commands = [
     ...killTreeFunc,
-    `pkill -TERM -f ${shellEscape('/home/abc61154321/browser-work/manual-browser-session-sb.py')} || true`,
-    `pkill -TERM -f ${shellEscape('/home/abc61154321/browser-work/manual-browser-session.js')} || true`,
+    `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session-sb.py'))} || true`,
+    `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session.js'))} || true`,
   ];
   if (task && task._launcherPid) {
     commands.push(`kill_tree ${Number(task._launcherPid)} || true`);
   }
   if (scriptName) {
-    commands.push(`pkill -TERM -f ${shellEscape(`/home/abc61154321/browser-work/${scriptName}`)} || true`);
+    commands.push(`pkill -TERM -f ${shellEscape(path.join(workDir, scriptName))} || true`);
   }
   commands.push(`pkill -TERM -f ${shellEscape('/opt/google/chrome/chrome_crashpad_handler')} || true`);
   commands.push(`pkill -TERM -f -- ${shellEscape(`--user-data-dir=${userDataDir}`)} || true`);
@@ -273,7 +282,7 @@ function buildTerminateCommandsByTask(task) {
   commands.push(`${userPrefix}-TERM -f ${shellEscape('chrome_crashpad_handler')} || true`);
   commands.push('sleep 1');
   if (scriptName) {
-    commands.push(`pkill -KILL -f ${shellEscape(`/home/abc61154321/browser-work/${scriptName}`)} || true`);
+    commands.push(`pkill -KILL -f ${shellEscape(path.join(workDir, scriptName))} || true`);
   }
   if (task && task._launcherPid) {
     commands.push(`kill_tree_kill ${Number(task._launcherPid)} || true`);
@@ -341,12 +350,13 @@ function scheduleTerminateCommands(task, delayMs) {
 
 async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   ensureRuntimeFiles(task);
+  const workDir = getBrowserWorkDir();
   const baseName = path.basename(task.script_path);
-  const taskFile = `/home/abc61154321/browser-work/${baseName}`;
-  const wrapperFile = '/home/abc61154321/browser-work/js-task-wrapper.js';
-  const workerScreenshotPath = `/home/abc61154321/browser-work/screenshots/task-${task.id}-${runId}.png`;
-  const workerScreenshotDir = `/home/abc61154321/browser-work/screenshots/runs/task-${task.id}-run-${runId}`;
-  const resultPath = `/home/abc61154321/browser-work/task-results/run-${runId}.json`;
+  const taskFile = path.join(workDir, baseName);
+  const wrapperFile = path.join(workDir, 'js-task-wrapper.js');
+  const workerScreenshotPath = path.join(workDir, 'screenshots', `task-${task.id}-${runId}.png`);
+  const workerScreenshotDir = path.join(workDir, 'screenshots', 'runs', `task-${task.id}-run-${runId}`);
+  const resultPath = path.join(workDir, 'task-results', `run-${runId}.json`);
   // Leave creation to the worker process so ownership stays writable for browser user.
   const runner = task.type === 'python'
     ? `${shellEscape('/usr/bin/python3')} ${shellEscape(taskFile)}`
@@ -393,7 +403,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['TASK_RESULT_PATH', resultPath],
   ];
 
-  const cmdParts = ['cd /home/abc61154321/browser-work &&'];
+  const cmdParts = [`cd ${shellEscape(workDir)} &&`];
   for (const [key, value] of userEnvPairs) {
     // Skip keys that will be forced by system layer
     if (systemPairs.some(([sk]) => sk === key)) continue;

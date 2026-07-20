@@ -131,8 +131,14 @@ function collectModuleCopyPairs(entryModules, workerNodeModules) {
   return copies;
 }
 
+function getBrowserWorkDir() {
+  return (config.browser && config.browser.workDir)
+    ? String(config.browser.workDir)
+    : path.join('/home', config.browser.user || 'browser', 'browser-work');
+}
+
 function ensureManualRuntimeFiles(runtimeSettings) {
-  const workerRoot = '/home/abc61154321/browser-work';
+  const workerRoot = getBrowserWorkDir();
   const workerNodeModules = path.join(workerRoot, 'node_modules');
   fs.mkdirSync(workerNodeModules, { recursive: true });
 
@@ -201,9 +207,10 @@ function terminateManualGroup(pid, signal) {
 }
 
 function sweepManualProcesses(userDataDir) {
+  const workDir = getBrowserWorkDir();
   const commands = [
-    `pkill -TERM -f ${shellEscape('/home/abc61154321/browser-work/manual-browser-session-sb.py')} || true`,
-    `pkill -TERM -f ${shellEscape('/home/abc61154321/browser-work/manual-browser-session.js')} || true`,
+    `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session-sb.py'))} || true`,
+    `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session.js'))} || true`,
   ];
 
   if (userDataDir) {
@@ -218,8 +225,8 @@ function sweepManualProcesses(userDataDir) {
   commands.push(`pkill -TERM -f ${shellEscape('chrome_crashpad_handler')} || true`);
 
   commands.push('sleep 1');
-  commands.push(`pkill -KILL -f ${shellEscape('/home/abc61154321/browser-work/manual-browser-session-sb.py')} || true`);
-  commands.push(`pkill -KILL -f ${shellEscape('/home/abc61154321/browser-work/manual-browser-session.js')} || true`);
+  commands.push(`pkill -KILL -f ${shellEscape(path.join(workDir, 'manual-browser-session-sb.py'))} || true`);
+  commands.push(`pkill -KILL -f ${shellEscape(path.join(workDir, 'manual-browser-session.js'))} || true`);
   if (userDataDir) {
     commands.push(`pkill -KILL -f -- ${shellEscape(`--user-data-dir=${userDataDir}`)} || true`);
   }
@@ -246,9 +253,10 @@ async function openManualBrowser(profile) {
 
   const runtimeSettings = db.getBrowserRuntimeSettings();
   const runtimeStack = resolveRuntimeStack(profile, runtimeSettings);
+  const workDir = getBrowserWorkDir();
   const runtimeScript = runtimeStack === 'seleniumbase'
-    ? '/home/abc61154321/browser-work/manual-browser-session-sb.py'
-    : '/home/abc61154321/browser-work/manual-browser-session.js';
+    ? path.join(workDir, 'manual-browser-session-sb.py')
+    : path.join(workDir, 'manual-browser-session.js');
   ensureManualRuntimeFiles(runtimeSettings);
   if (!fs.existsSync(runtimeScript)) {
     throw new Error('Manual browser runtime not found');
@@ -273,7 +281,7 @@ async function openManualBrowser(profile) {
     : `exec ${shellEscape(workerNodePath)} ${shellEscape(runtimeScript)}`;
 
   const cmd = [
-    'cd /home/abc61154321/browser-work &&',
+    `cd ${shellEscape(workDir)} &&`,
     `DISPLAY=${shellEscape(config.browser.display)}`,
     `XAUTHORITY=${shellEscape(config.browser.xauthority)}`,
     `BROWSER_USER_DATA_DIR=${shellEscape(effectiveUserDataDir)}`,

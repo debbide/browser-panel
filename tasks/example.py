@@ -16,9 +16,12 @@ def main():
     try:
         import subprocess
         payload = {'ok': True, 'screenshotPath': screenshot_path}
+        work = (os.environ.get('BROWSER_WORK_DIR') or '').strip() or os.path.join(
+            os.path.expanduser('~'), 'browser-work'
+        )
         cmd = [
             '/tmp/node-openclaw',
-            '/home/abc61154321/browser-work/example.js'
+            os.path.join(work, 'example.js'),
         ]
         env = os.environ.copy()
         subprocess.run(cmd, check=True, env=env)

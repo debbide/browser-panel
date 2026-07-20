@@ -63,7 +63,7 @@ bash scripts/update.sh --deps
 ```bash
 export PORT=3210
 export BROWSER_CHROME_PATH=/usr/bin/chromium-browser
-export BROWSER_USER=abc61154321
+export BROWSER_USER=browser
 export BROWSER_DISPLAY=:1.0
 export BROWSER_PROXY=socks5://127.0.0.1:1080
 ```

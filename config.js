@@ -1,5 +1,10 @@
 const path = require('path');
 
+// Generic defaults only — override with env on real hosts (do not put personal usernames here).
+const browserUser = process.env.BROWSER_USER || 'browser';
+const browserHome = process.env.BROWSER_HOME || path.join('/home', browserUser);
+const browserWork = process.env.BROWSER_WORK_DIR || path.join(browserHome, 'browser-work');
+
 module.exports = {
   server: {
     port: Number(process.env.PORT || 3210),
@@ -7,11 +12,13 @@ module.exports = {
   },
   browser: {
     display: process.env.BROWSER_DISPLAY || ':1.0',
-    xauthority: process.env.BROWSER_XAUTHORITY || '/home/abc61154321/.Xauthority',
-    user: process.env.BROWSER_USER || 'abc61154321',
-    userDataDir: process.env.BROWSER_USER_DATA_DIR || '/home/abc61154321/browser-work/persistent',
-    chromePath: process.env.BROWSER_CHROME_PATH || '/usr/bin/google-chrome',
-    proxy: process.env.BROWSER_PROXY || 'socks5://127.0.0.1:20000',
+    xauthority: process.env.BROWSER_XAUTHORITY || path.join(browserHome, '.Xauthority'),
+    user: browserUser,
+    home: browserHome,
+    workDir: browserWork,
+    userDataDir: process.env.BROWSER_USER_DATA_DIR || path.join(browserWork, 'persistent'),
+    chromePath: process.env.BROWSER_CHROME_PATH || '/usr/bin/chromium-browser',
+    proxy: process.env.BROWSER_PROXY || '',
     locale: process.env.BROWSER_LOCALE || 'zh-CN',
     timezoneId: process.env.BROWSER_TIMEZONE || 'Asia/Shanghai',
     headless: false,

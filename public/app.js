@@ -1486,7 +1486,7 @@ async function openProfileModal(profile) {
         </div>
         <div>
           <label class="field-label">USER_DATA_DIR \u76ee\u5f55</label>
-          <input name="user_data_dir" placeholder="/home/abc61154321/browser-work/profiles/account-a" value="${escapeHtml(profile?.user_data_dir || '')}" />
+          <input name="user_data_dir" placeholder="/home/browser/browser-work/profiles/account-a" value="${escapeHtml(profile?.user_data_dir || '')}" />
         </div>
         <div>
           <label class="field-label">\u4ee3\u7406\u5730\u5740</label>
