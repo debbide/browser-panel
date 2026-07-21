@@ -334,7 +334,86 @@ function buildTerminateCommandsByTask(task) {
     commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
   }
 
+  // 4) SeleniumBase UC orphans: chrome with --user-data-dir=/tmp/tmp* whose parent is gone.
+  //    Python dies → chrome reparents to init; PID-tree kill misses them. 1.5G VPS dies next run.
+  //    Only orphans (ppid 1 / parent missing) — never mass-kill concurrent tasks' live trees.
+  commands.push(...buildOrphanSbChromeCleanupCommands({ aggressive: false }));
+
   return commands;
+}
+
+/**
+ * Kill SeleniumBase leftover Chrome under /tmp/tmp* safely.
+ * @param {{ aggressive?: boolean }} opts
+ *   aggressive=true: only when NO other browser task is active — sweep all /tmp/tmp* chrome.
+ *   aggressive=false: only kill orphans (parent dead / ppid 1).
+ */
+function buildOrphanSbChromeCleanupCommands(opts = {}) {
+  const aggressive = Boolean(opts.aggressive);
+  const browserUser = (config.browser && config.browser.user)
+    ? String(config.browser.user).trim()
+    : 'browser';
+  // Inline bash: find chrome cmdlines with /tmp/tmp user-data-dir, kill orphans (or all if aggressive)
+  const script = [
+    'cleanup_sb_tmp_chrome() {',
+    `  local aggressive="${aggressive ? '1' : '0'}"`,
+    `  local buser=${shellEscape(browserUser)}`,
+    '  local line pid ppid udir',
+    '  # Match main + child chrome that still show a /tmp/tmp* profile',
+    '  pgrep -af -- "--user-data-dir=/tmp/tmp" 2>/dev/null | while IFS= read -r line; do',
+    '    pid="${line%% *}"',
+    '    case "$pid" in ""|*[!0-9]*) continue;; esac',
+    '    # Optional: only browser user',
+    '    if [ -n "$buser" ] && [ -r "/proc/$pid" ]; then',
+    '      owner=$(stat -c %U "/proc/$pid" 2>/dev/null || true)',
+    '      if [ -n "$owner" ] && [ "$owner" != "$buser" ] && [ "$owner" != "root" ]; then',
+    '        continue',
+    '      fi',
+    '    fi',
+    '    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d " ")',
+    '    orphan=0',
+    '    if [ -z "$ppid" ] || [ "$ppid" = "1" ] || [ "$ppid" = "0" ]; then',
+    '      orphan=1',
+    '    elif ! kill -0 "$ppid" 2>/dev/null; then',
+    '      orphan=1',
+    '    fi',
+    '    if [ "$aggressive" = "1" ] || [ "$orphan" = "1" ]; then',
+    '      # Extract user-data-dir for logging / rmdir later',
+    '      udir=$(printf "%s" "$line" | sed -n "s/.*--user-data-dir=\\([^ ]*\\).*/\\1/p" | head -1)',
+    '      echo "[terminate] sb-tmp chrome pid=$pid orphan=$orphan aggressive=$aggressive udir=$udir"',
+    '      kill -TERM "$pid" 2>/dev/null || true',
+    '    fi',
+    '  done',
+    '  sleep 1',
+    '  pgrep -af -- "--user-data-dir=/tmp/tmp" 2>/dev/null | while IFS= read -r line; do',
+    '    pid="${line%% *}"',
+    '    case "$pid" in ""|*[!0-9]*) continue;; esac',
+    '    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d " ")',
+    '    orphan=0',
+    '    if [ -z "$ppid" ] || [ "$ppid" = "1" ] || [ "$ppid" = "0" ]; then orphan=1; fi',
+    '    if [ "$aggressive" = "1" ] || [ "$orphan" = "1" ]; then',
+    '      kill -KILL "$pid" 2>/dev/null || true',
+    '    fi',
+    '  done',
+    '  # Remove stale /tmp/tmp* dirs that no longer have a live chrome',
+    '  now=$(date +%s)',
+    '  for d in /tmp/tmp*; do',
+    '    [ -d "$d" ] || continue',
+    '    base=$(basename "$d")',
+    '    case "$base" in tmp[A-Za-z0-9_]*) ;; *) continue;; esac',
+    '    if pgrep -af -- "--user-data-dir=$d" >/dev/null 2>&1; then continue; fi',
+    '    mtime=$(stat -c %Y "$d" 2>/dev/null || echo 0)',
+    '    age=$((now - mtime))',
+    '    # aggressive: any idle dir; else only if older than 45s (avoid racing new concurrent SB)',
+    '    if [ "$aggressive" = "1" ] || [ "$age" -ge 45 ]; then',
+    '      rm -rf "$d" 2>/dev/null || true',
+    '      echo "[terminate] removed stale sb profile $d age=${age}s"',
+    '    fi',
+    '  done',
+    '}',
+    'cleanup_sb_tmp_chrome || true',
+  ];
+  return script;
 }
 
 function runTerminateCommands(commands) {
@@ -535,10 +614,40 @@ function cleanupBrowserTempDirs(task = null, options = {}) {
   return { removed, freedHint };
 }
 
+/**
+ * After a run ends: if no other browser task is active, aggressively sweep
+ * SeleniumBase /tmp/tmp* chrome leftovers (orphans + abandoned profiles).
+ */
+function scheduleOrphanSbChromeSweep(delayMs = 2500) {
+  const wait = Math.max(0, Number(delayMs) || 0);
+  setTimeout(() => {
+    try {
+      if (activeBrowserRuns.size > 0) {
+        console.log(
+          `[browser-launcher] skip aggressive sb-tmp sweep: ${activeBrowserRuns.size} active run(s)`
+        );
+        // Still safe: only kill orphans (parent dead)
+        runTerminateCommands(buildOrphanSbChromeCleanupCommands({ aggressive: false }));
+        return;
+      }
+      console.log('[browser-launcher] aggressive sb-tmp chrome sweep (no active browser runs)');
+      runTerminateCommands(buildOrphanSbChromeCleanupCommands({ aggressive: true }));
+    } catch (err) {
+      console.warn('[browser-launcher] sb-tmp sweep error:', err.message);
+    }
+  }, wait);
+}
+
 function scheduleTmpCleanup(task, delayMs = 5000) {
   const snapshot = task ? { ...task, _profile: task._profile || null } : null;
   setTimeout(() => {
     try {
+      // Kill orphan SB chrome first so rmdir can succeed
+      if (activeBrowserRuns.size === 0) {
+        runTerminateCommands(buildOrphanSbChromeCleanupCommands({ aggressive: true }));
+      } else {
+        runTerminateCommands(buildOrphanSbChromeCleanupCommands({ aggressive: false }));
+      }
       cleanupBrowserTempDirs(snapshot, { minAgeMs: 120000 });
     } catch (err) {
       console.warn('[browser-launcher] scheduleTmpCleanup error:', err.message);
@@ -881,7 +990,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       }
       scheduleTerminateCommands(cleanupTask, 0, runGeneration);
       scheduleTerminateCommands(cleanupTask, 1800, runGeneration);
-      // Chrome/DP temp dirs under /tmp — clean after processes are signalled
+      // SB orphans + /tmp dirs — after processes are signalled
+      scheduleOrphanSbChromeSweep(3000);
       scheduleTmpCleanup(cleanupTask, 8000);
       resolve({
         startedAt,
@@ -909,6 +1019,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       }
       scheduleTerminateCommands(cleanupTask, 0, runGeneration);
       scheduleTerminateCommands(cleanupTask, 1800, runGeneration);
+      scheduleOrphanSbChromeSweep(3000);
       scheduleTmpCleanup(cleanupTask, 8000);
       const exitCode = code ?? (signal ? 1 : 0);
       const errorCode = stoppedByUser ? 'stopped' : null;
@@ -986,6 +1097,7 @@ function stopBrowserTask(taskId, fallbackTask = null) {
     scheduleTerminateCommands(taskSnapshot, 1500, gen);
     scheduleTerminateCommands(taskSnapshot, 3500, gen);
     scheduleTerminateCommands(taskSnapshot, 6500, gen);
+    scheduleOrphanSbChromeSweep(4000);
     scheduleTmpCleanup(taskSnapshot, 10000);
   }
   return true;
@@ -995,4 +1107,6 @@ module.exports = {
   launchBrowserTaskAndWait,
   stopBrowserTask,
   cleanupBrowserTempDirs,
+  buildOrphanSbChromeCleanupCommands,
+  scheduleOrphanSbChromeSweep,
 };
