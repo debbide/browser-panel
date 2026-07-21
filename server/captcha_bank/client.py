@@ -161,3 +161,75 @@ def report(sample_id: str, success: bool) -> None:
         return
     _post("/v1/report", {"sample_id": sid, "success": bool(success)})
     print(f"[captcha-bank] REPORT sample={sid} success={int(bool(success))}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic captcha: tile (object crop) bank
+# Match: small tile image + object name -> is this tile the object?
+# Record: every selected tile crop + object name (human can fix later)
+# ---------------------------------------------------------------------------
+
+
+def tile_match(
+    tile_image_path: str,
+    target_object: str,
+) -> Optional[Dict[str, Any]]:
+    """Return {sample_id, is_positive, distance} if bank is confident, else None."""
+    if not match_enabled():
+        return None
+    path = (tile_image_path or "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+    payload = {
+        "target_object": normalize_object(target_object),
+        "tile_image_path": path,
+    }
+    res = _post("/v1/tile/match", payload)
+    if not res or not res.get("hit"):
+        return None
+    print(
+        f"[captcha-bank] TILE HIT obj={normalize_object(target_object)} "
+        f"pos={res.get('is_positive')} dist={res.get('distance')} id={res.get('sample_id')}",
+        flush=True,
+    )
+    return res
+
+
+def tile_record(
+    tile_image_path: str,
+    target_object: str,
+    is_positive: bool = True,
+    meta: Optional[dict] = None,
+) -> Optional[str]:
+    """Store one tile crop labeled as object (or not). Always for human review."""
+    if not record_enabled():
+        return None
+    path = (tile_image_path or "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+    payload = {
+        "target_object": normalize_object(target_object),
+        "tile_image_path": path,
+        "is_positive": bool(is_positive),
+        "meta": meta or {},
+    }
+    res = _post("/v1/tile/record", payload)
+    if not res:
+        return None
+    sid = res.get("sample_id") or res.get("id")
+    if sid:
+        print(
+            f"[captcha-bank] TILE RECORD id={sid} obj={normalize_object(target_object)} "
+            f"positive={int(bool(is_positive))}",
+            flush=True,
+        )
+    return str(sid) if sid else None
+
+
+def tile_report(sample_id: str, success: bool) -> None:
+    if not enabled():
+        return
+    sid = (sample_id or "").strip()
+    if not sid:
+        return
+    _post("/v1/tile/report", {"sample_id": sid, "success": bool(success)})

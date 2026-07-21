@@ -9,9 +9,13 @@ const {
   resolveEffectiveProxy,
   buildBrowserUserEnvPairs,
   summarizeEnvPairs,
+  applyProxyAliases,
+  PROXY_ALIAS_KEYS,
 } = require('./env-builder');
 const { evaluateLogSuccess, resolveHeuristicsForTask } = require('./success-heuristics');
 const activeBrowserRuns = new Map();
+/** Delayed terminate timers keyed by taskId — cancelled when a newer run starts. */
+const pendingTerminateTimers = new Map();
 
 function getRuntimeDataDir() {
   return path.join(config.paths.root, 'runtime-data');
@@ -355,16 +359,54 @@ function runTerminateCommands(commands) {
   }
 }
 
-function scheduleTerminateCommands(task, delayMs) {
+function clearPendingTerminateTimers(taskId) {
+  const id = Number(taskId);
+  const list = pendingTerminateTimers.get(id);
+  if (!list || !list.length) return;
+  for (const handle of list) {
+    try { clearTimeout(handle); } catch { /* ignore */ }
+  }
+  pendingTerminateTimers.delete(id);
+}
+
+/**
+ * Schedule post-run process cleanup. Skips if a *newer* run for the same task
+ * is already active (avoids pkill -f script.py killing the next attempt).
+ */
+function scheduleTerminateCommands(task, delayMs, generation = 0) {
   const snapshot = task ? { ...task } : null;
-  setTimeout(() => {
-    if (!snapshot) return;
+  if (!snapshot) return;
+  const taskId = Number(snapshot.id);
+  const gen = Number(generation) || Number(snapshot._runGeneration) || 0;
+  const wait = Math.max(0, Number(delayMs) || 0);
+  const handle = setTimeout(() => {
+    // Drop this handle from the pending list
+    const list = pendingTerminateTimers.get(taskId) || [];
+    const next = list.filter((h) => h !== handle);
+    if (next.length) pendingTerminateTimers.set(taskId, next);
+    else pendingTerminateTimers.delete(taskId);
+
     try {
+      const active = activeBrowserRuns.get(taskId);
+      if (active) {
+        const activeGen = Number(active.runGeneration) || 0;
+        // A newer run owns this task id — do not pkill by script name.
+        if (!gen || activeGen > gen) {
+          console.log(
+            `[browser-launcher] skip delayed terminate task#${taskId} gen=${gen} ` +
+            `(active gen=${activeGen})`
+          );
+          return;
+        }
+      }
       runTerminateCommands(buildTerminateCommandsByTask(snapshot));
     } catch {
       // ignore cleanup failures
     }
-  }, Math.max(0, Number(delayMs) || 0));
+  }, wait);
+
+  if (!pendingTerminateTimers.has(taskId)) pendingTerminateTimers.set(taskId, []);
+  pendingTerminateTimers.get(taskId).push(handle);
 }
 
 /**
@@ -528,6 +570,16 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   }
 
   // System keys first, then user layers (user may set script vars; system keys re-forced after).
+  // GitHub-style aliases: BROWSER_PROXY → PROXY / HTTP_PROXY / … (only if panel has a proxy).
+  const proxyAliasEnv = { BROWSER_PROXY: effectiveProxy || '' };
+  if (config.browser && config.browser.chromePath) {
+    proxyAliasEnv.BROWSER_CHROME_PATH = config.browser.chromePath;
+  }
+  if (workerScreenshotDir) {
+    proxyAliasEnv.TASK_SCREENSHOT_DIR = workerScreenshotDir;
+  }
+  applyProxyAliases(proxyAliasEnv, { overwrite: true });
+
   const systemPairs = [
     ['DISPLAY', config.browser.display],
     ['XAUTHORITY', config.browser.xauthority],
@@ -543,7 +595,23 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['TASK_SCREENSHOT_PATH', workerScreenshotPath],
     ['TASK_SCREENSHOT_DIR', workerScreenshotDir],
     ['TASK_RESULT_PATH', resultPath],
+    // Unbuffered Python so GitHub scripts show logs immediately
+    ['PYTHONUNBUFFERED', '1'],
   ];
+  // Expand proxy / chrome / artifact aliases for SeleniumBase & requests-style scripts
+  if (effectiveProxy) {
+    for (const key of PROXY_ALIAS_KEYS) {
+      systemPairs.push([key, effectiveProxy]);
+    }
+  }
+  if (proxyAliasEnv.CHROME_PATH) {
+    systemPairs.push(['CHROME_PATH', proxyAliasEnv.CHROME_PATH]);
+    systemPairs.push(['CHROMIUM_PATH', proxyAliasEnv.CHROMIUM_PATH || proxyAliasEnv.CHROME_PATH]);
+  }
+  if (workerScreenshotDir) {
+    systemPairs.push(['ARTIFACTS_DIR', workerScreenshotDir]);
+    systemPairs.push(['SCREENSHOT_DIR', workerScreenshotDir]);
+  }
 
   // Ensure SB can create downloaded_files under cwd + write chromedriver under package drivers/
   const browserUser = String((config.browser && config.browser.user) || 'browser').trim();
@@ -613,6 +681,12 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const cmd = cmdParts.join(' && ');
 
   const startedAt = new Date().toISOString();
+  // Monotonic generation per task: delayed pkill from older runs must not kill this one.
+  const prevActive = activeBrowserRuns.get(Number(task.id));
+  const runGeneration = (Number(prevActive && prevActive.runGeneration) || 0) + 1;
+  // Cancel any pending terminate timers from a previous run of this task.
+  clearPendingTerminateTimers(task.id);
+
   return await new Promise((resolve) => {
     const onStdout = hooks && typeof hooks.onStdout === 'function' ? hooks.onStdout : null;
     const onStderr = hooks && typeof hooks.onStderr === 'function' ? hooks.onStderr : null;
@@ -669,16 +743,34 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       spawnOpts.gid = runGid;
     }
     const child = spawn('/bin/bash', ['-c', finalCmd], spawnOpts);
+    const taskSnapshotForRun = {
+      ...task,
+      _launcherPid: child.pid,
+      _runGeneration: runGeneration,
+    };
     activeBrowserRuns.set(Number(task.id), {
       child,
-      task: { ...task, _launcherPid: child.pid },
+      task: taskSnapshotForRun,
+      runGeneration,
+      runId,
       workerScreenshotPath,
       workerScreenshotDir,
       resultPath,
       stoppedByUser: false,
     });
-    let stdout = '';
+    // Always emit one line so logs are never totally empty if the script dies instantly.
+    const launchLine =
+      `[panel] launching script=${baseName} type=${task.type || '?'} ` +
+      `run=${runId} gen=${runGeneration} proxy=${effectiveProxy ? 'set' : 'none'} ` +
+      `python_unbuffered=1\n`;
+    let stdout = launchLine;
     let stderr = '';
+    if (onStdout) {
+      try { onStdout(launchLine); } catch { /* ignore */ }
+    }
+    console.log(
+      `[browser-launcher] task#${task.id} launch gen=${runGeneration} run=${runId} script=${baseName}`
+    );
     let timedOut = false;
     let graceKilled = false;
     let graceTimer = null;
@@ -762,10 +854,15 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       clearRunTimers();
       const state = activeBrowserRuns.get(Number(task.id));
       const stoppedByUser = Boolean(state && state.stoppedByUser);
-      const cleanupTask = state && state.task ? state.task : task;
-      activeBrowserRuns.delete(Number(task.id));
-      scheduleTerminateCommands(cleanupTask, 0);
-      scheduleTerminateCommands(cleanupTask, 1800);
+      const cleanupTask = state && state.task
+        ? state.task
+        : { ...task, _runGeneration: runGeneration };
+      // Only clear active map if this generation still owns the slot
+      if (state && Number(state.runGeneration) === runGeneration) {
+        activeBrowserRuns.delete(Number(task.id));
+      }
+      scheduleTerminateCommands(cleanupTask, 0, runGeneration);
+      scheduleTerminateCommands(cleanupTask, 1800, runGeneration);
       // Chrome/DP temp dirs under /tmp — clean after processes are signalled
       scheduleTmpCleanup(cleanupTask, 8000);
       resolve({
@@ -786,10 +883,14 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       clearRunTimers();
       const state = activeBrowserRuns.get(Number(task.id));
       const stoppedByUser = Boolean(state && state.stoppedByUser);
-      const cleanupTask = state && state.task ? state.task : task;
-      activeBrowserRuns.delete(Number(task.id));
-      scheduleTerminateCommands(cleanupTask, 0);
-      scheduleTerminateCommands(cleanupTask, 1800);
+      const cleanupTask = state && state.task
+        ? state.task
+        : { ...task, _runGeneration: runGeneration };
+      if (state && Number(state.runGeneration) === runGeneration) {
+        activeBrowserRuns.delete(Number(task.id));
+      }
+      scheduleTerminateCommands(cleanupTask, 0, runGeneration);
+      scheduleTerminateCommands(cleanupTask, 1800, runGeneration);
       scheduleTmpCleanup(cleanupTask, 8000);
       const exitCode = code ?? (signal ? 1 : 0);
       const errorCode = stoppedByUser ? 'stopped' : null;
@@ -817,10 +918,11 @@ function stopBrowserTask(taskId, fallbackTask = null) {
   if (!state) {
     if (!fallbackTask) return false;
     const snapshot = { ...fallbackTask };
+    const gen = Number(snapshot._runGeneration) || 0;
     runTerminateCommands(buildTerminateCommandsByTask(snapshot));
-    scheduleTerminateCommands(snapshot, 1500);
-    scheduleTerminateCommands(snapshot, 3500);
-    scheduleTerminateCommands(snapshot, 6500);
+    scheduleTerminateCommands(snapshot, 1500, gen);
+    scheduleTerminateCommands(snapshot, 3500, gen);
+    scheduleTerminateCommands(snapshot, 6500, gen);
     return true;
   }
   state.stoppedByUser = true;
@@ -861,10 +963,11 @@ function stopBrowserTask(taskId, fallbackTask = null) {
   }, 1500);
 
   if (taskSnapshot) {
+    const gen = Number(taskSnapshot._runGeneration) || Number(state.runGeneration) || 0;
     runTerminateCommands(buildTerminateCommandsByTask(taskSnapshot));
-    scheduleTerminateCommands(taskSnapshot, 1500);
-    scheduleTerminateCommands(taskSnapshot, 3500);
-    scheduleTerminateCommands(taskSnapshot, 6500);
+    scheduleTerminateCommands(taskSnapshot, 1500, gen);
+    scheduleTerminateCommands(taskSnapshot, 3500, gen);
+    scheduleTerminateCommands(taskSnapshot, 6500, gen);
     scheduleTmpCleanup(taskSnapshot, 10000);
   }
   return true;

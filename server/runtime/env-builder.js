@@ -156,6 +156,73 @@ function applyGithubCompat(env) {
   if (!env.CI) env.CI = 'true';
 }
 
+/** Common proxy env names used by GitHub / SeleniumBase / requests scripts. */
+const PROXY_ALIAS_KEYS = [
+  'PROXY',
+  'proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+];
+
+/**
+ * Fill GitHub-style proxy / chrome / artifact aliases without overwriting user values.
+ * Source of truth for proxy: BROWSER_PROXY, else PROXY / proxy.
+ */
+function applyProxyAliases(env, { overwrite = false } = {}) {
+  if (!env || typeof env !== 'object') return env;
+
+  const browserProxy = String(env.BROWSER_PROXY || '').trim();
+  const legacyProxy = String(env.PROXY || env.proxy || '').trim();
+  const effectiveProxy = browserProxy || legacyProxy;
+
+  if (effectiveProxy) {
+    if (overwrite || !String(env.BROWSER_PROXY || '').trim()) {
+      env.BROWSER_PROXY = effectiveProxy;
+    }
+    for (const key of PROXY_ALIAS_KEYS) {
+      if (overwrite || !String(env[key] || '').trim()) {
+        env[key] = effectiveProxy;
+      }
+    }
+  }
+
+  const chrome = String(env.BROWSER_CHROME_PATH || env.CHROME_PATH || env.CHROMIUM_PATH || '').trim();
+  if (chrome) {
+    if (overwrite || !String(env.BROWSER_CHROME_PATH || '').trim()) {
+      env.BROWSER_CHROME_PATH = chrome;
+    }
+    if (overwrite || !String(env.CHROME_PATH || '').trim()) env.CHROME_PATH = chrome;
+    if (overwrite || !String(env.CHROMIUM_PATH || '').trim()) env.CHROMIUM_PATH = chrome;
+  }
+
+  const shotDir = String(
+    env.TASK_SCREENSHOT_DIR || env.ARTIFACTS_DIR || env.SCREENSHOT_DIR || ''
+  ).trim();
+  if (shotDir) {
+    if (overwrite || !String(env.TASK_SCREENSHOT_DIR || '').trim()) {
+      env.TASK_SCREENSHOT_DIR = shotDir;
+    }
+    if (overwrite || !String(env.ARTIFACTS_DIR || '').trim()) env.ARTIFACTS_DIR = shotDir;
+    if (overwrite || !String(env.SCREENSHOT_DIR || '').trim()) env.SCREENSHOT_DIR = shotDir;
+  }
+
+  return env;
+}
+
+/** Always-on script compat (safe even when GitHub compat flag is off). */
+function applyScriptCompatEnv(env) {
+  if (!env || typeof env !== 'object') return env;
+  if (!String(env.PYTHONUNBUFFERED || '').trim()) {
+    env.PYTHONUNBUFFERED = '1';
+  }
+  applyProxyAliases(env, { overwrite: false });
+  return env;
+}
+
 /**
  * Merge user-configured env layers (no system browser/task paths).
  * Order: host prefixes → global env_entries → profile → task → vision → telegram (optional) → github compat
@@ -190,6 +257,7 @@ function buildUserEnvLayers(task = null) {
   }
 
   applyGithubCompat(env);
+  applyScriptCompatEnv(env);
   return env;
 }
 
@@ -235,6 +303,8 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
   }
 
   forceSystemKeys(env, system);
+  // After system BROWSER_PROXY / chrome path are forced, expand GitHub-style aliases.
+  applyScriptCompatEnv(env);
   return env;
 }
 
@@ -266,6 +336,7 @@ function summarizeEnvPairs(pairs) {
 
 module.exports = {
   SYSTEM_PROTECTED_KEYS,
+  PROXY_ALIAS_KEYS,
   toEnvValue,
   isTruthyEnv,
   redactEnvValue,
@@ -281,5 +352,8 @@ module.exports = {
   summarizeEnvPairs,
   applyVisionTelegramFallbacks,
   applyTelegramFallbacks,
+  applyProxyAliases,
+  applyScriptCompatEnv,
+  applyGithubCompat,
   wantsGlobalTelegram,
 };
