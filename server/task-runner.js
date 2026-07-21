@@ -744,12 +744,21 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   }
   let errorCode = null;
   if (!ok) {
+    const combinedFailLog = `${result.stdout || ''}\n${result.stderr || ''}`;
     if (/timed out/i.test(result.stderr || '') || result.timedOut) errorCode = 'timeout';
     else if ((result.stderr || '').includes('Permission denied')) errorCode = 'permission_error';
-    else if (taskResult?.error) errorCode = 'browser_task_error';
-    else if (!taskResult && !exitOk) errorCode = 'missing_result';
-    else if (!taskResult && exitOk) errorCode = null; // success without payload
-    else if (!exitOk) errorCode = 'browser_launch_error';
+    else if (/tab crashed|BrowserType|Executable doesn.?t exist|Target closed|browser has been closed/i.test(combinedFailLog)) {
+      errorCode = 'browser_launch_error';
+    } else if (taskResult?.error) errorCode = 'browser_task_error';
+    // Script finished with non-zero exit but no TASK_RESULT JSON: this is a normal
+    // GitHub-style failure, not "missing infrastructure result". Prefer script_error
+    // when there is any real subprocess log.
+    else if (!taskResult && !exitOk) {
+      const hasScriptLog = /\[INFO\]|\[ERROR\]|\[FAIL\]|Traceback|Exception|续期|开机|登录|power=|status/i.test(combinedFailLog)
+        || ((result.stdout || '').trim().split(/\r?\n/).filter(Boolean).length > 2);
+      errorCode = hasScriptLog ? 'script_error' : 'missing_result';
+    } else if (!taskResult && exitOk) errorCode = null; // success without payload
+    else if (!exitOk) errorCode = 'script_error';
     else errorCode = 'browser_task_error';
   } else if (softSuccess && (result.timedOut || /timed out/i.test(result.stderr || ''))) {
     // Still success, but annotate that we recovered from a hang
@@ -795,7 +804,10 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
     screenshotsDir: screenshotsDirPath,
     errorText: ok
       ? null
-      : (taskResult?.error || result.stderr || (hasScreenshot ? null : 'No result payload written')),
+      : (taskResult?.error
+        || (result.stderr && String(result.stderr).trim())
+        || (result.stdout && String(result.stdout).trim().split(/\r?\n/).filter(Boolean).slice(-5).join('\n'))
+        || null),
     retryable,
     retryReason,
   };

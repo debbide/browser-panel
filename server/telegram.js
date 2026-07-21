@@ -8,6 +8,21 @@ const SUCCESS_STATUSES = new Set(['success', 'failed']);
 const TELEGRAM_RETRY_PREFIX = 'retry';
 const TELEGRAM_CURL_TIMEOUT_SEC = Math.max(8, Math.ceil(TELEGRAM_TIMEOUT_MS / 1000) + 5);
 
+/**
+ * Panel Telegram = runtime safety net only.
+ * Scripts own success/fail business notifications.
+ *
+ * Notify only when the *runner/browser* likely died before the script could TG:
+ *   timeout, browser launch fail, permission, empty/near-empty logs, tab crash, etc.
+ * Never notify plain business failures (missing_result, script_error with logs, etc.).
+ *
+ * telegram_notify_mode:
+ *   fallback (default) \u2014 safety net only
+ *   always             \u2014 success + failed (legacy, noisy)
+ *   off                \u2014 never
+ */
+const DEFAULT_NOTIFY_MODE = 'fallback';
+
 const I18N = {
   hour: '\u5c0f\u65f6',
   minute: '\u5206\u949f',
@@ -23,6 +38,7 @@ const I18N = {
   unknown_error: '\u672a\u77e5\u9519\u8bef',
   task_success: '\u2705<b>\u4efb\u52a1\u6267\u884c\u6210\u529f</b>',
   task_failed: '\u274c<b>\u4efb\u52a1\u6267\u884c\u5931\u8d25</b>',
+  runtime_failed: '\u274c<b>\u9762\u677f\u8fd0\u884c\u5f02\u5e38</b>\uff08\u811a\u672c\u53ef\u80fd\u6ca1\u8dd1\u5b8c\uff09',
   duration_label: '\u23f1\ufe0f<b>\u8017\u65f6:</b>',
   reason_label: '\u2139\ufe0f <b>\u539f\u56e0:</b>',
   summary_label: '<b>\ud83d\udccb \u5f02\u5e38\u6458\u8981:</b>',
@@ -32,6 +48,87 @@ const I18N = {
   test_time: '\ud83d\udd52<b>\u65f6\u95f4:</b>',
   test_status: '\u2705<b>\u72b6\u6001:</b> <code>\u9762\u677f\u5df2\u8fde\u63a5\uff0cHTML \u89e3\u6790\u6b63\u5e38</code>',
 };
+
+function getTelegramNotifyMode() {
+  const raw = String(db.getSetting('telegram_notify_mode') || '').trim().toLowerCase();
+  // "failed" kept as alias of fallback for older settings
+  if (['fallback', 'failed', 'always', 'off', 'none', '0'].includes(raw)) {
+    if (raw === 'none' || raw === '0') return 'off';
+    if (raw === 'failed') return 'fallback';
+    return raw;
+  }
+  return DEFAULT_NOTIFY_MODE;
+}
+
+function readRunLogText(run) {
+  const logPath = run?.log_path;
+  if (!logPath || !fs.existsSync(logPath)) return '';
+  try {
+    return fs.readFileSync(logPath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function getStdoutBodyLines(logText) {
+  const raw = String(logText || '');
+  const m = raw.split('SUBPROCESS OUTPUT (STDOUT)')[1] || '';
+  const body = m.split('SUBPROCESS OUTPUT (STDERR)')[0] || m;
+  return body
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\d{2}:\d{2}:\d{2}\s*/, '').trim())
+    .filter(Boolean)
+    .filter((l) => !l.startsWith('[panel] launching') && !/^={5,}/.test(l) && !/^----------/.test(l));
+}
+
+/**
+ * Panel notify only for runner/browser crashes \u2014 not business outcomes.
+ * Returns { notify: boolean, reason: string }.
+ */
+function shouldPanelNotifyTaskRun(task, run) {
+  if (!task || !run || !SUCCESS_STATUSES.has(run.status)) {
+    return { notify: false, reason: 'not_terminal' };
+  }
+
+  const mode = getTelegramNotifyMode();
+  if (mode === 'off') return { notify: false, reason: 'mode_off' };
+  if (mode === 'always') return { notify: true, reason: 'mode_always' };
+
+  // Scripts handle success TG themselves
+  if (run.status === 'success') {
+    return { notify: false, reason: 'skip_success' };
+  }
+
+  const code = String(run.error_code || '').trim();
+  const errorText = String(run.error_text || '');
+  const logText = readRunLogText(run);
+  const combined = `${errorText}\n${logText}`;
+  const stdoutLines = getStdoutBodyLines(logText);
+
+  // 1) Explicit runner / environment failures
+  const hardCodes = new Set([
+    'timeout',
+    'browser_launch_error',
+    'permission_error',
+  ]);
+  if (hardCodes.has(code)) {
+    return { notify: true, reason: `runtime:${code}` };
+  }
+
+  // 2) Browser / driver crash signals (even if error_code is messy)
+  if (/tab crashed|BrowserType|Executable doesn.?t exist|chrome.*crash|Session deleted|disconnected|Target closed|browser has been closed|net::ERR_|ECONNREFUSED|Cannot find module|No such file/i.test(combined)) {
+    return { notify: true, reason: 'browser_or_env_crash' };
+  }
+
+  // 3) Almost no script output \u2014 died before business logic / TG
+  if (stdoutLines.length <= 1 && logText.length < 1200) {
+    return { notify: true, reason: 'empty_or_tiny_log' };
+  }
+
+  // 4) Everything else is business / script-finished failure \u2014 do NOT panel-notify
+  //    includes: missing_result, script_error with logs, browser_task_error, offline power, etc.
+  return { notify: false, reason: `skip_business_or_script:${code || 'failed'}` };
+}
 
 function isTelegramConfigured(settings = db.getTelegramSettings()) {
   return Boolean(settings?.botToken && settings?.chatId);
@@ -129,7 +226,8 @@ function buildSuccessMessage(task, run) {
 
 function buildFailureMessage(task, run) {
   const sections = [
-    I18N.task_failed,
+    // Panel messages are runtime safety-net, not business fail notices
+    I18N.runtime_failed,
     `<code>${escapeTgHtml(task.name)}</code>`,
     '',
     `${I18N.reason_label} ${escapeTgHtml(prettyErrorCode(run.error_code))}`,
@@ -390,8 +488,22 @@ function getSafeScreenshotPath(run) {
 async function notifyTaskRun(task, run) {
   if (!task || !run || !SUCCESS_STATUSES.has(run.status)) return false;
 
+  const decision = shouldPanelNotifyTaskRun(task, run);
+  if (!decision.notify) {
+    console.log(
+      `[telegram] skip panel notify task#${task.id} status=${run.status} ` +
+      `code=${run.error_code || '-'} reason=${decision.reason}`
+    );
+    return false;
+  }
+
   const settings = db.getTelegramSettings();
   if (!isTelegramConfigured(settings)) return false;
+
+  console.log(
+    `[telegram] panel notify task#${task.id} status=${run.status} ` +
+    `code=${run.error_code || '-'} reason=${decision.reason}`
+  );
 
   const message = buildTaskRunMessage(task, run);
   const replyMarkup = run.status === 'failed' ? buildRetryMarkup(task, run) : null;
@@ -440,4 +552,6 @@ module.exports = {
   answerTelegramCallback,
   notifyTaskRun,
   sendTelegramTestMessage,
+  shouldPanelNotifyTaskRun,
+  getTelegramNotifyMode,
 };
