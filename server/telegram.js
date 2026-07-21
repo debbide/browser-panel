@@ -9,17 +9,15 @@ const TELEGRAM_RETRY_PREFIX = 'retry';
 const TELEGRAM_CURL_TIMEOUT_SEC = Math.max(8, Math.ceil(TELEGRAM_TIMEOUT_MS / 1000) + 5);
 
 /**
- * Panel Telegram = runtime safety net only.
- * Scripts own success/fail business notifications.
+ * Panel Telegram = environment / runner faults ONLY.
+ * Script success and script business failure are never panel TG.
  *
- * Notify only when the *runner/browser* likely died before the script could TG:
- *   timeout, browser launch fail, permission, empty/near-empty logs, tab crash, etc.
- * Never notify script business outcomes (success or fail). No result-file / script_error taxonomy.
+ * Notify only:
+ *   timeout, browser crash/launch fail, permission, runner died with almost no output
+ * Never:
+ *   success, script exit codes, missing JSON, business FAIL lines, soft-success, etc.
  *
- * telegram_notify_mode:
- *   fallback (default) \u2014 safety net only
- *   always             \u2014 success + failed (legacy, noisy)
- *   off                \u2014 never
+ * telegram_notify_mode: fallback (default) | always (legacy noise) | off
  */
 const DEFAULT_NOTIFY_MODE = 'fallback';
 
@@ -38,7 +36,7 @@ const I18N = {
   unknown_error: '\u672a\u77e5\u9519\u8bef',
   task_success: '\u2705<b>\u4efb\u52a1\u6267\u884c\u6210\u529f</b>',
   task_failed: '\u274c<b>\u4efb\u52a1\u6267\u884c\u5931\u8d25</b>',
-  runtime_failed: '\u274c<b>\u9762\u677f\u8fd0\u884c\u5f02\u5e38</b>\uff08\u811a\u672c\u53ef\u80fd\u6ca1\u8dd1\u5b8c\uff09',
+  runtime_failed: '\u274c<b>\u73af\u5883/\u8fd0\u884c\u6545\u969c</b>\uff08\u975e\u811a\u672c\u4e1a\u52a1\u7ed3\u679c\uff09',
   duration_label: '\u23f1\ufe0f<b>\u8017\u65f6:</b>',
   reason_label: '\u2139\ufe0f <b>\u539f\u56e0:</b>',
   summary_label: '<b>\ud83d\udccb \u5f02\u5e38\u6458\u8981:</b>',
@@ -82,9 +80,8 @@ function getStdoutBodyLines(logText) {
 }
 
 /**
- * Panel notify only for runner/browser crashes \u2014 not business outcomes.
- * If the script produced real logs, assume it (or will) handle its own TG \u2014 stay silent.
- * Returns { notify: boolean, reason: string }.
+ * Strict: panel TG only for environment/runner faults.
+ * Does not interpret script business success or failure at all.
  */
 function shouldPanelNotifyTaskRun(task, run) {
   if (!task || !run || !SUCCESS_STATUSES.has(run.status)) {
@@ -93,9 +90,10 @@ function shouldPanelNotifyTaskRun(task, run) {
 
   const mode = getTelegramNotifyMode();
   if (mode === 'off') return { notify: false, reason: 'mode_off' };
+  // always = legacy (success+failed). Not recommended.
   if (mode === 'always') return { notify: true, reason: 'mode_always' };
 
-  // Never panel-notify success \u2014 scripts own that
+  // Script outcomes are never panel TG \u2014 success or fail
   if (run.status === 'success') {
     return { notify: false, reason: 'skip_success' };
   }
@@ -106,31 +104,27 @@ function shouldPanelNotifyTaskRun(task, run) {
   const combined = `${errorText}\n${logText}`;
   const stdoutLines = getStdoutBodyLines(logText);
 
-  // Script clearly ran (multiple log lines) \u2192 NEVER panel-notify.
-  // User feedback: panel TG drowns script TG and often lies about failure.
-  if (stdoutLines.length >= 2 || logText.length >= 1500) {
-    return { notify: false, reason: 'script_produced_logs_silent' };
+  // 1) Explicit panel/runner environment error codes only
+  if (code === 'timeout' || code === 'browser_launch_error' || code === 'permission_error') {
+    return { notify: true, reason: `env:${code}` };
   }
 
-  // Only remaining cases: almost no output \u2014 runner/browser likely died early
-  const hardCodes = new Set([
-    'timeout',
-    'browser_launch_error',
-    'permission_error',
-  ]);
-  if (hardCodes.has(code)) {
-    return { notify: true, reason: `runtime:${code}` };
+  // 2) Hard browser/environment crash text (not business FAIL / \u7eed\u671f\u5931\u8d25 / etc.)
+  if (
+    /tab crashed|BrowserType|Executable doesn.?t exist|chrome_crashpad|Session deleted|Target closed|browser has been closed|ECONNREFUSED|Failed to launch browser|Chrome failed to start|DevToolsActivePort|No usable sandbox/i.test(
+      combined
+    )
+  ) {
+    return { notify: true, reason: 'env_browser_crash' };
   }
 
-  if (/tab crashed|BrowserType|Executable doesn.?t exist|chrome.*crash|Session deleted|disconnected|Target closed|browser has been closed|ECONNREFUSED/i.test(combined)) {
-    return { notify: true, reason: 'browser_or_env_crash' };
+  // 3) Runner died with essentially no script body \u2014 infrastructure, not business
+  if (stdoutLines.length === 0 && logText.length < 900) {
+    return { notify: true, reason: 'env_no_script_output' };
   }
 
-  if (stdoutLines.length <= 1 && logText.length < 1200) {
-    return { notify: true, reason: 'empty_or_tiny_log' };
-  }
-
-  return { notify: false, reason: 'skip_default' };
+  // Everything else: script ran or exited for its own reasons \u2014 panel silent
+  return { notify: false, reason: 'skip_not_environment_fault' };
 }
 
 function isTelegramConfigured(settings = db.getTelegramSettings()) {
