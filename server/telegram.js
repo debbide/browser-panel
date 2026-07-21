@@ -83,6 +83,7 @@ function getStdoutBodyLines(logText) {
 
 /**
  * Panel notify only for runner/browser crashes \u2014 not business outcomes.
+ * If the script produced real logs, assume it (or will) handle its own TG \u2014 stay silent.
  * Returns { notify: boolean, reason: string }.
  */
 function shouldPanelNotifyTaskRun(task, run) {
@@ -94,7 +95,7 @@ function shouldPanelNotifyTaskRun(task, run) {
   if (mode === 'off') return { notify: false, reason: 'mode_off' };
   if (mode === 'always') return { notify: true, reason: 'mode_always' };
 
-  // Scripts handle success TG themselves
+  // Never panel-notify success \u2014 scripts own that
   if (run.status === 'success') {
     return { notify: false, reason: 'skip_success' };
   }
@@ -105,7 +106,13 @@ function shouldPanelNotifyTaskRun(task, run) {
   const combined = `${errorText}\n${logText}`;
   const stdoutLines = getStdoutBodyLines(logText);
 
-  // 1) Explicit runner / environment failures
+  // Script clearly ran (multiple log lines) \u2192 NEVER panel-notify.
+  // User feedback: panel TG drowns script TG and often lies about failure.
+  if (stdoutLines.length >= 2 || logText.length >= 1500) {
+    return { notify: false, reason: 'script_produced_logs_silent' };
+  }
+
+  // Only remaining cases: almost no output \u2014 runner/browser likely died early
   const hardCodes = new Set([
     'timeout',
     'browser_launch_error',
@@ -115,18 +122,15 @@ function shouldPanelNotifyTaskRun(task, run) {
     return { notify: true, reason: `runtime:${code}` };
   }
 
-  // 2) Browser / driver crash signals (even if error_code is messy)
-  if (/tab crashed|BrowserType|Executable doesn.?t exist|chrome.*crash|Session deleted|disconnected|Target closed|browser has been closed|net::ERR_|ECONNREFUSED|Cannot find module|No such file/i.test(combined)) {
+  if (/tab crashed|BrowserType|Executable doesn.?t exist|chrome.*crash|Session deleted|disconnected|Target closed|browser has been closed|ECONNREFUSED/i.test(combined)) {
     return { notify: true, reason: 'browser_or_env_crash' };
   }
 
-  // 3) Almost no script output \u2014 died before business logic / TG
   if (stdoutLines.length <= 1 && logText.length < 1200) {
     return { notify: true, reason: 'empty_or_tiny_log' };
   }
 
-  // 4) Script ran far enough to produce output \u2014 panel stays silent (script owns TG)
-  return { notify: false, reason: `skip_script_owned:${code || 'failed'}` };
+  return { notify: false, reason: 'skip_default' };
 }
 
 function isTelegramConfigured(settings = db.getTelegramSettings()) {

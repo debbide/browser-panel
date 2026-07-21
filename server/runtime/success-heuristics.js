@@ -1,6 +1,9 @@
 const db = require('../db');
 
-/** Default patterns for GitHub-style scripts that print success then hang (e.g. SB not exiting). */
+/**
+ * Default patterns for GitHub-style scripts that print success then hang (e.g. SB not exiting).
+ * Keep patterns SPECIFIC — bare "✅" / "❌" match process noise ("浏览器已启动") and poison soft-success.
+ */
 const DEFAULT_SUCCESS_PATTERNS = [
   '续期后剩余',
   '续期成功',
@@ -9,20 +12,24 @@ const DEFAULT_SUCCESS_PATTERNS = [
   'Cloudflare 验证已通过',
   '任务完成',
   '执行成功',
-  'SUCCESS',
+  '全部成功',
+  '处理结束',
   'completed successfully',
   '\\[OK\\]',
-  '✅',
+  '✅\\s*.*续期成功',
+  '✅\\s*.*处理结束',
+  '结果汇总[\\s\\S]{0,200}\\[OK\\]',
 ];
 
 const DEFAULT_FAILURE_PATTERNS = [
   'Traceback \\(most recent call last\\)',
   '登录失败',
-  'FAILED',
-  '❌',
-  'Exception:',
+  'tab crashed',
   'Error: BrowserType',
   'Executable doesn\'t exist',
+  'Target closed',
+  'browser has been closed',
+  // Avoid bare FAILED / ❌ — scripts print them mid-run and for partial server fails
 ];
 
 function toBool(value, defaultValue = false) {
@@ -153,6 +160,33 @@ function matchAny(text, patterns) {
 /**
  * @returns {{ softSuccess: boolean, successHit: string|null, failureHit: string|null }}
  */
+function lastMatchIndex(text, patterns) {
+  if (!text || !patterns || !patterns.length) return { index: -1, pattern: null };
+  const compiled = compilePatterns(patterns);
+  let best = -1;
+  let bestPat = null;
+  for (let i = 0; i < compiled.length; i += 1) {
+    const re = compiled[i];
+    // global-less: walk with exec on copy with g
+    const flags = re.flags.includes('g') ? re.flags : `${re.flags}g`;
+    let g;
+    try {
+      g = new RegExp(re.source, flags);
+    } catch {
+      continue;
+    }
+    let m;
+    while ((m = g.exec(text)) !== null) {
+      if (m.index >= best) {
+        best = m.index;
+        bestPat = patterns[i];
+      }
+      if (m[0].length === 0) g.lastIndex += 1;
+    }
+  }
+  return { index: best, pattern: bestPat };
+}
+
 function evaluateLogSuccess(combinedLog, task = null) {
   const h = resolveHeuristicsForTask(task);
   if (!h.enabled) {
@@ -161,11 +195,19 @@ function evaluateLogSuccess(combinedLog, task = null) {
   const text = String(combinedLog || '');
   const failureHit = matchAny(text, h.failurePatterns);
   const successHit = matchAny(text, h.successPatterns);
-  // Soft success only if success matched and no hard failure marker
-  const softSuccess = Boolean(successHit) && !failureHit;
+  // If both appear, prefer whichever is later in the log (final outcome wins).
+  // e.g. mid-run "❌ 未找到按钮" then "✅ 续期成功" → soft success.
+  let softSuccess = false;
+  if (successHit && !failureHit) {
+    softSuccess = true;
+  } else if (successHit && failureHit) {
+    const s = lastMatchIndex(text, h.successPatterns);
+    const f = lastMatchIndex(text, h.failurePatterns);
+    softSuccess = s.index >= f.index;
+  }
   return {
     softSuccess,
-    successHit,
+    successHit: softSuccess ? (successHit || null) : successHit,
     failureHit,
     graceSec: h.graceSec,
     enabled: true,
