@@ -458,7 +458,8 @@ function normalizeRetryable(value) {
 }
 
 function defaultRetryableByErrorCode(errorCode) {
-  const retryableCodes = new Set(['timeout', 'browser_task_error', 'browser_launch_error', 'missing_result']);
+  // Only runtime/infra failures default to retryable. Plain script exits are not our call.
+  const retryableCodes = new Set(['timeout', 'browser_launch_error', 'permission_error']);
   return retryableCodes.has(String(errorCode || '')) ? 1 : 0;
 }
 
@@ -745,23 +746,22 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   let errorCode = null;
   if (!ok) {
     const combinedFailLog = `${result.stdout || ''}\n${result.stderr || ''}`;
-    if (/timed out/i.test(result.stderr || '') || result.timedOut) errorCode = 'timeout';
-    else if ((result.stderr || '').includes('Permission denied')) errorCode = 'permission_error';
-    else if (/tab crashed|BrowserType|Executable doesn.?t exist|Target closed|browser has been closed/i.test(combinedFailLog)) {
+    // Only label *panel/runtime* failures. Do not invent script_error / missing_result
+    // for normal script exits — scripts own their business outcome; panel does not judge them.
+    if (/timed out/i.test(result.stderr || '') || result.timedOut) {
+      errorCode = 'timeout';
+    } else if ((result.stderr || '').includes('Permission denied')) {
+      errorCode = 'permission_error';
+    } else if (/tab crashed|BrowserType|Executable doesn.?t exist|Target closed|browser has been closed/i.test(combinedFailLog)) {
       errorCode = 'browser_launch_error';
-    } else if (taskResult?.error) errorCode = 'browser_task_error';
-    // Script finished with non-zero exit but no TASK_RESULT JSON: this is a normal
-    // GitHub-style failure, not "missing infrastructure result". Prefer script_error
-    // when there is any real subprocess log.
-    else if (!taskResult && !exitOk) {
-      const hasScriptLog = /\[INFO\]|\[ERROR\]|\[FAIL\]|Traceback|Exception|续期|开机|登录|power=|status/i.test(combinedFailLog)
-        || ((result.stdout || '').trim().split(/\r?\n/).filter(Boolean).length > 2);
-      errorCode = hasScriptLog ? 'script_error' : 'missing_result';
-    } else if (!taskResult && exitOk) errorCode = null; // success without payload
-    else if (!exitOk) errorCode = 'script_error';
-    else errorCode = 'browser_task_error';
+    } else if (taskResult && taskResult.error) {
+      // Explicit payload from script — pass through as opaque task error, not our judgment
+      errorCode = 'browser_task_error';
+    } else {
+      // Script exited non-zero (with or without TASK_RESULT): no special panel taxonomy.
+      errorCode = null;
+    }
   } else if (softSuccess && (result.timedOut || /timed out/i.test(result.stderr || ''))) {
-    // Still success, but annotate that we recovered from a hang
     errorCode = null;
   }
   const scriptRetryable = normalizeRetryable(taskResult?.data?.retryable ?? taskResult?.retryable);

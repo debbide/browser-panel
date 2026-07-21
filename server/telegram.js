@@ -14,7 +14,7 @@ const TELEGRAM_CURL_TIMEOUT_SEC = Math.max(8, Math.ceil(TELEGRAM_TIMEOUT_MS / 10
  *
  * Notify only when the *runner/browser* likely died before the script could TG:
  *   timeout, browser launch fail, permission, empty/near-empty logs, tab crash, etc.
- * Never notify plain business failures (missing_result, script_error with logs, etc.).
+ * Never notify script business outcomes (success or fail). No result-file / script_error taxonomy.
  *
  * telegram_notify_mode:
  *   fallback (default) \u2014 safety net only
@@ -125,9 +125,8 @@ function shouldPanelNotifyTaskRun(task, run) {
     return { notify: true, reason: 'empty_or_tiny_log' };
   }
 
-  // 4) Everything else is business / script-finished failure \u2014 do NOT panel-notify
-  //    includes: missing_result, script_error with logs, browser_task_error, offline power, etc.
-  return { notify: false, reason: `skip_business_or_script:${code || 'failed'}` };
+  // 4) Script ran far enough to produce output \u2014 panel stays silent (script owns TG)
+  return { notify: false, reason: `skip_script_owned:${code || 'failed'}` };
 }
 
 function isTelegramConfigured(settings = db.getTelegramSettings()) {
