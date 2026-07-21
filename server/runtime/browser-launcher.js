@@ -249,6 +249,18 @@ function ensureRuntimeFiles(task) {
 }
 
 
+/**
+ * Build kill commands scoped to THIS run only.
+ *
+ * Must NOT use:
+ *   - pkill -f <script basename>   (kills other tasks sharing the same script)
+ *   - pkill -u browser chrome…     (kills every concurrent browser task)
+ *
+ * Safe signals:
+ *   1) launcher PID process tree (bash → setpriv → python/node → chrome children)
+ *   2) processes whose environ/cmdline still carries this run's BAP_RUN_ID
+ *   3) Chrome bound to this task's temp user-data-dir (task-N-tmp-profile is unique per task)
+ */
 function buildTerminateCommandsByTask(task) {
   const profile = task && task._profile;
   const params = parseTaskParams(task);
@@ -260,9 +272,14 @@ function buildTerminateCommandsByTask(task) {
       : (task && task.use_persistent
         ? config.browser.userDataDir
         : getTempProfileDir(task)));
-  const scriptName = task && task.script_path ? path.basename(task.script_path) : '';
-  const browserUser = (config.browser && config.browser.user) ? String(config.browser.user).trim() : '';
-  const userPrefix = browserUser ? `pkill -u ${shellEscape(browserUser)} ` : 'pkill ';
+  const launcherPid = task && task._launcherPid ? Number(task._launcherPid) : 0;
+  const taskId = task && task.id != null ? Number(task.id) : 0;
+  const runId = task && task._runId ? String(task._runId) : '';
+  // Unique token injected as BAP_RUN_ID env on the worker process tree.
+  const runMarker = runId
+    ? `BAP_RUN_ID=${runId}`
+    : (taskId ? `BAP_TASK_ID=${taskId}` : '');
+
   const killTreeFunc = [
     'kill_tree() {',
     '  local p="$1"',
@@ -281,45 +298,42 @@ function buildTerminateCommandsByTask(task) {
     '  kill -KILL "$p" 2>/dev/null || true',
     '}',
   ];
-  const workDir = getBrowserWorkDir();
+
   const commands = [
     ...killTreeFunc,
-    `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session-sb.py'))} || true`,
-    `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session.js'))} || true`,
+    `echo "[terminate] task=${taskId || '?'} pid=${launcherPid || 0} run=${runId || '-'} user-data-dir=${userDataDir || ''}"`,
   ];
-  if (task && task._launcherPid) {
-    commands.push(`kill_tree ${Number(task._launcherPid)} || true`);
+
+  // 1) Kill only this launcher process tree (covers python/node + child chrome when still parented)
+  if (launcherPid > 0) {
+    commands.push(`kill_tree ${launcherPid} || true`);
   }
-  if (scriptName) {
-    commands.push(`pkill -TERM -f ${shellEscape(path.join(workDir, scriptName))} || true`);
+
+  // 2) By unique run marker (env visible in /proc/*/environ for most children of the shell)
+  if (runMarker) {
+    commands.push(`pkill -TERM -f -- ${shellEscape(runMarker)} || true`);
   }
-  commands.push(`pkill -TERM -f ${shellEscape('/opt/google/chrome/chrome_crashpad_handler')} || true`);
-  commands.push(`pkill -TERM -f -- ${shellEscape(`--user-data-dir=${userDataDir}`)} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('/opt/google/chrome/chrome --')} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('/opt/google/chrome/chrome')} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('/usr/bin/google-chrome')} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('google-chrome')} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('chromedriver')} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('/seleniumbase/drivers/uc_driver')} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('uc_driver')} || true`);
-  commands.push(`${userPrefix}-TERM -f ${shellEscape('chrome_crashpad_handler')} || true`);
+
+  // 3) Temp profile dirs are per-task (task-N-tmp-profile). Safe even with shared script names.
+  //    Skip broad kill when using a shared persistent profile path (could hit another task).
+  if (userDataDir && useTempProfile) {
+    const udMarker = `--user-data-dir=${userDataDir}`;
+    commands.push(`pkill -TERM -f -- ${shellEscape(udMarker)} || true`);
+  }
+
   commands.push('sleep 1');
-  if (scriptName) {
-    commands.push(`pkill -KILL -f ${shellEscape(path.join(workDir, scriptName))} || true`);
+
+  if (launcherPid > 0) {
+    commands.push(`kill_tree_kill ${launcherPid} || true`);
   }
-  if (task && task._launcherPid) {
-    commands.push(`kill_tree_kill ${Number(task._launcherPid)} || true`);
+  if (runMarker) {
+    commands.push(`pkill -KILL -f -- ${shellEscape(runMarker)} || true`);
   }
-  commands.push(`pkill -KILL -f ${shellEscape('/opt/google/chrome/chrome_crashpad_handler')} || true`);
-  commands.push(`pkill -KILL -f -- ${shellEscape(`--user-data-dir=${userDataDir}`)} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('/opt/google/chrome/chrome --')} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('/opt/google/chrome/chrome')} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('/usr/bin/google-chrome')} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('google-chrome')} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('chromedriver')} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('/seleniumbase/drivers/uc_driver')} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('uc_driver')} || true`);
-  commands.push(`${userPrefix}-KILL -f ${shellEscape('chrome_crashpad_handler')} || true`);
+  if (userDataDir && useTempProfile) {
+    const udMarker = `--user-data-dir=${userDataDir}`;
+    commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
+  }
+
   return commands;
 }
 
@@ -370,8 +384,8 @@ function clearPendingTerminateTimers(taskId) {
 }
 
 /**
- * Schedule post-run process cleanup. Skips if a *newer* run for the same task
- * is already active (avoids pkill -f script.py killing the next attempt).
+ * Schedule post-run process cleanup (scoped to this run only).
+ * Skips if a *newer* run for the same task is already active.
  */
 function scheduleTerminateCommands(task, delayMs, generation = 0) {
   const snapshot = task ? { ...task } : null;
@@ -597,6 +611,9 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['TASK_RESULT_PATH', resultPath],
     // Unbuffered Python so GitHub scripts show logs immediately
     ['PYTHONUNBUFFERED', '1'],
+    // Unique run marker for scoped terminate (must not collide across concurrent tasks)
+    ['BAP_RUN_ID', String(runId || '')],
+    ['BAP_TASK_ID', String(task && task.id != null ? task.id : '')],
   ];
   // Expand proxy / chrome / artifact aliases for SeleniumBase & requests-style scripts
   if (effectiveProxy) {
@@ -747,6 +764,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       ...task,
       _launcherPid: child.pid,
       _runGeneration: runGeneration,
+      _runId: runId,
     };
     activeBrowserRuns.set(Number(task.id), {
       child,
