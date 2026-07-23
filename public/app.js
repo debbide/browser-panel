@@ -190,7 +190,7 @@ const tabContents = document.querySelectorAll('.tab-content');
 tabBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     const targetId = btn.getAttribute('data-tab');
-    
+
     tabBtns.forEach(b => {
       b.classList.remove('active');
       b.setAttribute('aria-selected', 'false');
@@ -200,15 +200,81 @@ tabBtns.forEach(btn => {
       c.hidden = true;
       c.setAttribute('aria-hidden', 'true');
     });
-    
+
     btn.classList.add('active');
     btn.setAttribute('aria-selected', 'true');
     const panel = document.getElementById(targetId);
     panel.classList.add('active');
     panel.hidden = false;
     panel.setAttribute('aria-hidden', 'false');
+
+    if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
+      window.__onConfigTabShow();
+    }
   });
 });
+
+/* ---------- Global config: sticky sub-nav + section scroll ---------- */
+function setupConfigSubnav() {
+  const root = document.getElementById('config-tab');
+  const nav = document.getElementById('config-subnav');
+  if (!root || !nav) return;
+
+  const buttons = Array.from(nav.querySelectorAll('.config-subnav-btn[data-config-target]'));
+  const sections = buttons
+    .map((btn) => document.getElementById(btn.getAttribute('data-config-target')))
+    .filter(Boolean);
+
+  function setActive(id) {
+    buttons.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-config-target') === id);
+    });
+  }
+
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const id = btn.getAttribute('data-config-target');
+      const el = document.getElementById(id);
+      if (!el) return;
+      setActive(id);
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  // Highlight section while scrolling (only when config tab is visible)
+  let ticking = false;
+  function updateActiveFromScroll() {
+    ticking = false;
+    if (root.hidden || !root.classList.contains('active')) return;
+    const marker = 96; // sticky nav offset
+    let current = sections[0]?.id;
+    for (const sec of sections) {
+      const top = sec.getBoundingClientRect().top;
+      if (top - marker <= 8) current = sec.id;
+    }
+    if (current) setActive(current);
+  }
+
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(updateActiveFromScroll);
+    },
+    { passive: true }
+  );
+
+  window.__onConfigTabShow = () => {
+    // keep current highlight; ensure first section active if none
+    const active = nav.querySelector('.config-subnav-btn.active');
+    if (!active && buttons[0]) setActive(buttons[0].getAttribute('data-config-target'));
+    requestAnimationFrame(updateActiveFromScroll);
+  };
+}
+
+setupConfigSubnav();
 
 let editingId = null;
 let tasksCache = [];
@@ -3155,13 +3221,20 @@ function wireTasksFsUi() {
     });
   }
 
-  // 进入全局配置时加载
+  // 进入全局配置时加载（与顶栏 tab 切换配合）
   const configTabBtn = document.getElementById('tab-config');
   if (configTabBtn) {
     configTabBtn.addEventListener('click', () => {
       loadTasksFs(fsCurrentPath);
       loadSchedulerSettings();
       loadSuccessHeuristicsSettings();
+      loadBrowserRuntimeSettings();
+      loadVisionSettings();
+      loadGlobalEnvSettings();
+      loadTelegramSettings();
+      if (typeof window.__onConfigTabShow === 'function') {
+        window.__onConfigTabShow();
+      }
     });
   }
 }

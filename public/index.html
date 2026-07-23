@@ -74,7 +74,16 @@
       </div>
 
       <div id="config-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-config" hidden>
-        <section class="modal-panel config-panel">
+        <nav class="config-subnav" id="config-subnav" aria-label="全局配置分段">
+          <button type="button" class="config-subnav-btn active" data-config-target="cfg-notify">通知</button>
+          <button type="button" class="config-subnav-btn" data-config-target="cfg-schedule">调度</button>
+          <button type="button" class="config-subnav-btn" data-config-target="cfg-vision">Vision</button>
+          <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量</button>
+          <button type="button" class="config-subnav-btn" data-config-target="cfg-scripts">脚本</button>
+          <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
+        </nav>
+
+        <section id="cfg-notify" class="modal-panel config-panel config-section" data-config-section="notify">
           <div class="section-header compact">
             <div>
               <h2>Telegram 通知</h2>
@@ -105,7 +114,8 @@
             </div>
           </form>
         </section>
-        <section class="modal-panel config-panel" style="margin-top:16px;">
+
+        <section id="cfg-schedule" class="modal-panel config-panel config-section" data-config-section="schedule">
           <div class="section-header compact">
             <div>
               <h2>任务调度</h2>
@@ -118,8 +128,7 @@
               允许并行运行多个任务
             </label>
             <div class="schedule-note" style="margin-top:4px;">
-              默认关闭（串行）：适合小 VPS，同一时间只跑一个任务。到点但正忙的任务会保持到期，空闲后按最早到期优先启动。手动「运行」在占线时会提示稍后。
-              开启后：不同任务可同时跑（仍禁止同一任务重复进入）。
+              默认串行（适合小 VPS）。开启后不同任务可同时跑，同一任务仍不会重复进入。
             </div>
             <div class="row" style="margin-top:8px;">
               <button type="submit" id="scheduler-save-btn" class="btn-primary btn-with-icon">
@@ -129,89 +138,7 @@
           </form>
         </section>
 
-        <section class="modal-panel config-panel" style="margin-top:16px;">
-          <div class="section-header compact">
-            <div>
-              <h2>GitHub 脚本兼容</h2>
-              <p class="muted" id="success-heuristics-status">状态：加载中...</p>
-            </div>
-          </div>
-          <form id="success-heuristics-form" class="grid single-col">
-            <label class="inline-check">
-              <input type="checkbox" id="sh-enabled" checked />
-              启用日志软成功（脚本打印成功后卡住/超时仍记成功）
-            </label>
-            <div class="schedule-note">
-              适合 GitHub Actions 风格脚本：不写 TASK_RESULT、业务成功后浏览器不退出。
-              匹配成功日志且无失败关键字时：超时或 grace 强退后仍记成功。
-            </div>
-            <div>
-              <label class="field-label" for="sh-grace-sec">成功后宽限强退（秒）</label>
-              <input id="sh-grace-sec" type="number" min="0" max="600" value="45" />
-              <div class="schedule-note" style="margin-top:4px;">命中成功日志后等待该秒数，进程仍在则 SIGTERM（仍记成功）。0=不提前强退，只靠总超时。</div>
-            </div>
-            <div>
-              <label class="field-label" for="sh-success-patterns">成功日志正则（每行一条）</label>
-              <textarea id="sh-success-patterns" rows="5" placeholder="续期后剩余&#10;✅&#10;SUCCESS"></textarea>
-            </div>
-            <div>
-              <label class="field-label" for="sh-failure-patterns">失败日志正则（命中则不作软成功）</label>
-              <textarea id="sh-failure-patterns" rows="4" placeholder="Traceback&#10;FAILED&#10;❌"></textarea>
-            </div>
-            <div class="row" style="margin-top:8px;">
-              <button type="submit" id="sh-save-btn" class="btn-primary btn-with-icon">
-                <i data-lucide="save" class="icon-sm"></i> 保存兼容设置
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section class="modal-panel config-panel" style="margin-top:16px;">
-          <div class="section-header compact">
-            <div>
-              <h2>浏览器运行时插件</h2>
-              <p class="muted" id="browser-runtime-status">状态：加载中...</p>
-            </div>
-          </div>
-          <form id="browser-runtime-form" class="grid single-col">
-            <div>
-              <label class="field-label" for="br-runtime-stack">运行栈</label>
-              <select id="br-runtime-stack" name="runtimeStack">
-                <option value="playwright">Playwright</option>
-                <option value="seleniumbase">SeleniumBase + ChromeDriver</option>
-              </select>
-            </div>
-            <label class="inline-check">
-              <input type="checkbox" id="br-use-playwright-extra" name="usePlaywrightExtra" />
-              启用 playwright-extra 运行时
-            </label>
-            <div>
-              <label class="field-label" for="br-plugin-packages">插件包名（逗号分隔）</label>
-              <input
-                type="text"
-                id="br-plugin-packages"
-                name="pluginPackages"
-                placeholder="例如：puppeteer-extra-plugin-stealth"
-              />
-              <div class="schedule-note" style="margin-top:4px;">
-                安装会更新本地 `node_modules` 和 `package.json`。
-              </div>
-            </div>
-            <div class="row" style="margin-top:8px;">
-              <button type="submit" id="br-save-btn" class="btn-primary btn-with-icon">
-                <i data-lucide="save" class="icon-sm"></i> 保存运行时配置
-              </button>
-              <button type="button" class="alt btn-with-icon" id="br-install-btn">
-                <i data-lucide="download" class="icon-sm"></i> 一键安装插件
-              </button>
-              <button type="button" class="alt btn-with-icon" id="br-install-browser-btn">
-                <i data-lucide="package-check" class="icon-sm"></i> 安装浏览器环境
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section class="modal-panel config-panel" style="margin-top:16px;">
+        <section id="cfg-vision" class="modal-panel config-panel config-section" data-config-section="vision">
           <div class="section-header compact">
             <div>
               <h2>Vision Model</h2>
@@ -230,13 +157,13 @@
             </div>
             <div class="row" style="margin-top:8px;">
               <button type="submit" id="vision-save-btn" class="btn-primary btn-with-icon">
-                <i data-lucide="save" class="icon-sm"></i> Save Vision Settings
+                <i data-lucide="save" class="icon-sm"></i> 保存 Vision
               </button>
             </div>
           </form>
         </section>
 
-        <section class="modal-panel config-panel" style="margin-top:16px;">
+        <section id="cfg-env" class="modal-panel config-panel config-section" data-config-section="env">
           <div class="section-header compact">
             <div>
               <h2>变量与密钥</h2>
@@ -261,16 +188,16 @@
               </button>
             </div>
             <div class="schedule-note">
-              脚本通过 <code>os.environ["NAME"]</code> / <code>process.env.NAME</code> 读取，无需改脚本。Secret 保存后只显示掩码，留空再保存表示不修改。
+              脚本通过 <code>os.environ["NAME"]</code> / <code>process.env.NAME</code> 读取。Secret 保存后只显示掩码，留空再保存表示不修改。
             </div>
           </div>
         </section>
 
-        <section class="modal-panel config-panel" style="margin-top:16px;">
+        <section id="cfg-scripts" class="modal-panel config-panel config-section" data-config-section="scripts">
           <div class="section-header compact">
             <div>
               <h2>脚本管理</h2>
-              <p class="muted">管理 <code>tasks/</code> 目录：支持文件夹（如 host2play_dp）、上传、下载、编辑、删除。</p>
+              <p class="muted">管理 <code>tasks/</code>：文件夹、上传、下载、编辑、删除。</p>
             </div>
           </div>
           <div class="files-toolbar row" style="gap:8px; flex-wrap:wrap; margin-bottom:10px;">
@@ -293,6 +220,100 @@
           </div>
           <div id="fs-breadcrumb" class="files-breadcrumb muted" style="margin-bottom:8px; font-size:13px;">tasks/</div>
           <div id="fs-list" class="files-list"></div>
+        </section>
+
+        <section id="cfg-advanced" class="modal-panel config-panel config-section config-advanced" data-config-section="advanced">
+          <div class="section-header compact">
+            <div>
+              <h2>高级</h2>
+              <p class="muted">冷配置：装依赖、脚本软成功。日常可忽略。</p>
+            </div>
+          </div>
+
+          <details class="config-details" id="cfg-details-runtime">
+            <summary>
+              <span class="config-details-title">浏览器运行时插件</span>
+              <span class="muted" id="browser-runtime-status">状态：加载中...</span>
+            </summary>
+            <div class="config-details-body">
+              <p class="schedule-note" style="margin-bottom:12px;">
+                仅影响面板托管的 Playwright / 手动开浏览器。脚本自己起 Chrome（如 hax）不读这里。
+                依赖已装好、插件为 0 时一般不用动。
+              </p>
+              <form id="browser-runtime-form" class="grid single-col">
+                <div>
+                  <label class="field-label" for="br-runtime-stack">运行栈</label>
+                  <select id="br-runtime-stack" name="runtimeStack">
+                    <option value="playwright">Playwright</option>
+                    <option value="seleniumbase">SeleniumBase + ChromeDriver</option>
+                  </select>
+                </div>
+                <label class="inline-check">
+                  <input type="checkbox" id="br-use-playwright-extra" name="usePlaywrightExtra" />
+                  启用 playwright-extra 运行时
+                </label>
+                <div>
+                  <label class="field-label" for="br-plugin-packages">插件包名（逗号分隔）</label>
+                  <input
+                    type="text"
+                    id="br-plugin-packages"
+                    name="pluginPackages"
+                    placeholder="例如：puppeteer-extra-plugin-stealth"
+                  />
+                  <div class="schedule-note" style="margin-top:4px;">
+                    安装会更新本地 <code>node_modules</code> 和 <code>package.json</code>。
+                  </div>
+                </div>
+                <div class="row" style="margin-top:8px; flex-wrap:wrap; gap:8px;">
+                  <button type="submit" id="br-save-btn" class="btn-primary btn-with-icon">
+                    <i data-lucide="save" class="icon-sm"></i> 保存运行时配置
+                  </button>
+                  <button type="button" class="alt btn-with-icon" id="br-install-btn">
+                    <i data-lucide="download" class="icon-sm"></i> 一键安装插件
+                  </button>
+                  <button type="button" class="alt btn-with-icon" id="br-install-browser-btn">
+                    <i data-lucide="package-check" class="icon-sm"></i> 安装浏览器环境
+                  </button>
+                </div>
+              </form>
+            </div>
+          </details>
+
+          <details class="config-details" id="cfg-details-github" style="margin-top:12px;">
+            <summary>
+              <span class="config-details-title">GitHub 脚本兼容</span>
+              <span class="muted" id="success-heuristics-status">状态：加载中...</span>
+            </summary>
+            <div class="config-details-body">
+              <form id="success-heuristics-form" class="grid single-col">
+                <label class="inline-check">
+                  <input type="checkbox" id="sh-enabled" checked />
+                  启用日志软成功（脚本打印成功后卡住/超时仍记成功）
+                </label>
+                <div class="schedule-note">
+                  适合 GitHub Actions 风格脚本：不写 TASK_RESULT、业务成功后浏览器不退出。
+                </div>
+                <div>
+                  <label class="field-label" for="sh-grace-sec">成功后宽限强退（秒）</label>
+                  <input id="sh-grace-sec" type="number" min="0" max="600" value="45" />
+                  <div class="schedule-note" style="margin-top:4px;">0=不提前强退，只靠总超时。</div>
+                </div>
+                <div>
+                  <label class="field-label" for="sh-success-patterns">成功日志正则（每行一条）</label>
+                  <textarea id="sh-success-patterns" rows="4" placeholder="续期后剩余&#10;✅&#10;SUCCESS"></textarea>
+                </div>
+                <div>
+                  <label class="field-label" for="sh-failure-patterns">失败日志正则（命中则不作软成功）</label>
+                  <textarea id="sh-failure-patterns" rows="3" placeholder="Traceback&#10;FAILED&#10;❌"></textarea>
+                </div>
+                <div class="row" style="margin-top:8px;">
+                  <button type="submit" id="sh-save-btn" class="btn-primary btn-with-icon">
+                    <i data-lucide="save" class="icon-sm"></i> 保存兼容设置
+                  </button>
+                </div>
+              </form>
+            </div>
+          </details>
         </section>
       </div>
     </main>

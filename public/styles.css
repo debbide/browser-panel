@@ -342,6 +342,120 @@ a:hover { text-decoration: underline; }
   transition: var(--transition);
 }
 
+/* Global config: sticky section nav + spacing */
+#config-tab {
+  scroll-margin-top: 12px;
+}
+
+.config-subnav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.config-subnav-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.config-subnav-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+}
+
+.config-subnav-btn.active {
+  background: rgba(59, 130, 246, 0.22);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #fff;
+}
+
+.config-section {
+  margin-top: 16px;
+  scroll-margin-top: 72px;
+}
+
+.config-section:first-of-type {
+  margin-top: 0;
+}
+
+.config-advanced .config-details {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md, 12px);
+  background: rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.config-details > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 14px 16px;
+  user-select: none;
+}
+
+.config-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.config-details > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.config-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.config-details-title {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.config-details-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 14px;
+}
+
+@media (max-width: 640px) {
+  .config-subnav {
+    top: 0;
+    gap: 6px;
+    padding: 8px;
+  }
+  .config-subnav-btn {
+    padding: 6px 11px;
+    font-size: 12px;
+  }
+  .config-section {
+    scroll-margin-top: 96px;
+  }
+}
+
 .task-card, .script-card, .run-card {
   padding: 18px; /* Compact padding for standard cards */
   display: flex;
