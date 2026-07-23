@@ -320,329 +320,356 @@
   </div>
 
   <div id="modal-mask" class="modal-mask" hidden></div>
-  <section id="task-modal" class="modal modal-wide" aria-hidden="true">
+  <section id="task-modal" class="modal modal-wide task-modal" aria-hidden="true">
     <div class="modal-header">
       <div>
         <h2 id="modal-title">新建任务</h2>
+        <p class="muted" id="form-hint" style="margin:4px 0 0;">名称 + 脚本即可保存；定时 / 条件按需展开。</p>
       </div>
       <button id="modal-close-btn" class="icon-btn" type="button" data-testid="modal-close-btn" aria-label="关闭">
         <i data-lucide="x" class="icon-md"></i>
       </button>
     </div>
-    <div class="modal-body">
-      <div class="modal-layout two-col-modal">
-        <section class="modal-panel">
-          <h3 id="form-title">任务信息</h3>
-          <p class="muted" id="form-hint">只填任务名和定时规则。</p>
-          <form id="task-form" class="stack-form">
-            <div class="grid single-col">
-              <input name="name" placeholder="任务名称" required data-testid="task-name-input" />
+    <div class="modal-body task-modal-body">
+      <div class="modal-layout two-col-modal task-modal-grid">
+        <section class="modal-panel task-modal-main">
+          <form id="task-form" class="task-modal-form stack-form">
+            <input type="hidden" name="type" value="javascript" />
+            <input type="hidden" name="script_path" required />
+            <input type="hidden" name="browser_profile_id" id="task-profile-id" value="" />
+            <input type="hidden" name="use_persistent" id="task-use-persistent" value="0" />
+            <input type="hidden" name="cron_expr" />
+
+            <div class="section-header compact">
               <div>
-                <label class="field-label" for="task-profile-mode">浏览器数据模式</label>
-                <select id="task-profile-mode" name="profile_mode" style="width:100%;">
-                  <option value="temp" selected>临时配置（推荐）— 每次独立目录，跑完隔离，不污染已有登录态</option>
-                  <option value="persistent">持久配置 — 使用下方选定的浏览器配置目录</option>
-                </select>
-                <p class="schedule-note" id="task-profile-mode-hint" style="margin-top:4px;">
-                  临时模式：每次运行使用独立临时 profile，适合探测/测试脚本，避免把 Cookie 写进正式配置。
-                </p>
-              </div>
-              <div id="task-profile-persistent-fields">
-                <label class="field-label" for="task-profile-select">浏览器配置</label>
-                <select id="task-profile-select" style="width:100%;">
-                  <option value="">默认配置</option>
-                </select>
-              </div>
-              <div id="task-proxy-fields">
-                <label class="field-label" for="task-proxy-input">代理（可选）</label>
-                <div class="row" style="gap:8px; align-items:center;">
-                  <input
-                    id="task-proxy-input"
-                    type="text"
-                    style="flex:1; width:100%;"
-                    placeholder="例如 socks5://127.0.0.1:20004 或 http://127.0.0.1:7890"
-                    autocomplete="off"
-                  />
-                  <button type="button" id="task-proxy-from-profile" class="alt" style="white-space:nowrap;">
-                    从配置填入
-                  </button>
-                </div>
-                <p class="schedule-note" id="task-proxy-hint" style="margin-top:4px;">
-                  临时模式可单独设代理，不必绑定会写数据的浏览器配置。留空则用配置/系统默认。
-                </p>
-              </div>
-              <input type="hidden" name="type" value="javascript" />
-              <input type="hidden" name="script_path" required />
-              <input type="hidden" name="browser_profile_id" id="task-profile-id" value="" />
-              <input type="hidden" name="use_persistent" id="task-use-persistent" value="0" />
-              <div>
-                <label class="field-label" for="task-timeout-sec">任务超时（秒）</label>
-                <input
-                  id="task-timeout-sec"
-                  name="timeout_sec"
-                  type="number"
-                  min="30"
-                  max="86400"
-                  step="1"
-                  value="300"
-                  data-testid="task-timeout-input"
-                  style="width:100%;"
-                />
-                <p class="schedule-note" style="margin-top:4px;">
-                  整次任务最长运行时间，到点面板会结束进程。Host2Play 打码建议 ≥ 900，需要更长可填 1800。
-                </p>
-              </div>
-
-            <div id="task-params-block" class="config-block">
-              <div class="section-header compact">
-                <div>
-                  <h4>环境变量</h4>
-                  <p class="muted" id="task-params-hint">键值会注入脚本进程 env（覆盖全局 / 浏览器配置同名项）</p>
-                </div>
-                <div class="row" style="gap:6px; flex-wrap:wrap;">
-                  <button type="button" id="task-env-add-row" class="alt btn-with-icon" style="padding:4px 10px;">
-                    <i data-lucide="plus" class="icon-sm"></i> 添加
-                  </button>
-                  <button type="button" id="task-env-template-host2play" class="alt btn-with-icon" style="padding:4px 10px;" hidden>
-                    Host2Play 模板
-                  </button>
-                </div>
-              </div>
-              <label class="inline-check" style="margin:8px 0;">
-                <input type="checkbox" id="task-use-global-telegram" checked />
-                使用全局 Telegram（脚本可读 TG_TOKEN / TG_CHAT_ID）
-              </label>
-              <p class="schedule-note" id="task-use-global-telegram-hint" style="margin:0 0 8px;">
-                勾选：注入面板「全局配置 → Telegram」。不勾选：仅用下方任务变量里的 TG_*；都不填则脚本不发通知。
-              </p>
-              <div id="task-env-editor" class="env-editor" data-env-scope="task"></div>
-              <details class="env-advanced" style="margin-top:8px;">
-                <summary class="muted">高级：导入 / 导出 .env 或 JSON</summary>
-                <textarea id="param-json-raw" rows="5" placeholder="KEY=value 或 {&quot;KEY&quot;:&quot;value&quot;}"></textarea>
-                <div class="row" style="margin-top:6px; gap:8px;">
-                  <button type="button" id="task-env-apply-raw" class="alt">应用到表格</button>
-                  <button type="button" id="task-env-export-raw" class="alt">导出到文本</button>
-                </div>
-              </details>
-            </div>
-            </div>
-
-            <div class="config-block">
-              <div class="section-header compact">
-                <div>
-                  <h4>定时规则</h4>
-                  <p>不启用就手动运行。</p>
-                </div>
-              </div>
-
-              <label class="inline-check"><input type="checkbox" name="enabled" data-testid="schedule-enabled-checkbox" /> 启用定时</label>
-              <p class="schedule-note" style="margin:4px 0 8px;">不启用则仅手动运行；可与下方「条件触发」叠加（到点后再检测）。</p>
-
-              <div class="grid single-col schedule-mode-select-wrap">
-                <select name="schedule_mode" id="schedule-mode-select" data-testid="schedule-mode-select">
-                  <option value="fixed">固定周期</option>
-                  <option value="interval">随机区间</option>
-                  <option value="daily_window">每天特定时段随机</option>
-                </select>
-              </div>
-
-              <div id="fixed-schedule-fields" class="schedule-pane">
-                <p class="schedule-note">固定周期：按固定间隔重复执行。</p>
-                <div class="grid three-col-tight">
-                  <div>
-                    <label class="field-label">天</label>
-                    <input name="fixed_days" type="number" min="0" value="0" data-testid="fixed-days-input" />
-                  </div>
-                  <div>
-                    <label class="field-label">时</label>
-                    <input name="fixed_hours" type="number" min="0" value="4" data-testid="fixed-hours-input" />
-                  </div>
-                  <div>
-                    <label class="field-label">分</label>
-                    <input name="fixed_minutes" type="number" min="0" value="0" data-testid="fixed-minutes-input" />
-                  </div>
-                </div>
-                <div id="fixed-schedule-summary" class="field-span-2 muted">每隔 0 天 4 小时 0 分钟执行一次</div>
-              </div>
-
-              <div id="interval-schedule-fields" class="schedule-pane" hidden>
-                <p class="schedule-note">随机区间：每次在最小值到最大值之间随机取一个间隔。</p>
-                <div class="grid interval-range-grid">
-                  <div>
-                    <label class="field-label">最小值</label>
-                    <input name="interval_min" type="number" min="1" value="5" data-testid="interval-min-input" />
-                  </div>
-                  <div class="range-sep">至</div>
-                  <div>
-                    <label class="field-label">最大值</label>
-                    <input name="interval_max" type="number" min="1" value="10" data-testid="interval-max-input" />
-                  </div>
-                  <div>
-                    <label class="field-label">单位</label>
-                    <select name="interval_unit" data-testid="interval-unit-select">
-                      <option value="minutes">分钟</option>
-                      <option value="hours">小时</option>
-                      <option value="days">天</option>
-                    </select>
-                  </div>
-                </div>
-                <div id="interval-schedule-summary" class="field-span-2 muted">每次检查将在 5 - 10 分钟内随机触发</div>
-              </div>
-
-              <div id="daily-window-schedule-fields" class="schedule-pane" hidden>
-                <p class="schedule-note">每天特定时段随机：在每天指定的时间窗口内随机触发一次。</p>
-                <div class="grid interval-range-grid">
-                  <div>
-                    <label class="field-label">开始时间</label>
-                    <input name="daily_time_start" type="time" value="08:00" data-testid="daily-time-start-input" />
-                  </div>
-                  <div class="range-sep">至</div>
-                  <div>
-                    <label class="field-label">结束时间</label>
-                    <input name="daily_time_end" type="time" value="12:00" data-testid="daily-time-end-input" />
-                  </div>
-                </div>
-              </div>
-
-              <input type="hidden" name="cron_expr" />
-            </div>
-
-            <div class="config-block" style="margin-top:16px;">
-              <div class="section-header compact">
-                <div>
-                  <h4>条件触发</h4>
-                  <p>HTTP 检测失败时自动启动任务；可与定时叠加。</p>
-                </div>
-              </div>
-
-              <label class="inline-check">
-                <input type="checkbox" name="condition_enabled" id="condition-enabled" data-testid="condition-enabled-checkbox" />
-                启用条件触发
-              </label>
-
-              <div id="condition-fields" class="grid single-col" style="margin-top:8px;">
-                <div>
-                  <label class="field-label" for="condition-type">类型</label>
-                  <select id="condition-type" name="condition_type">
-                    <option value="http_check">HTTP 检测（失败触发）</option>
-                  </select>
-                </div>
-                <div class="grid interval-range-grid">
-                  <div>
-                    <label class="field-label" for="condition-check-interval">检测间隔</label>
-                    <input id="condition-check-interval" name="condition_check_interval" type="number" min="1" value="5" />
-                  </div>
-                  <div>
-                    <label class="field-label" for="condition-check-unit">单位</label>
-                    <select id="condition-check-unit" name="condition_check_unit">
-                      <option value="minutes">分钟</option>
-                      <option value="hours">小时</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="field-label" for="condition-cooldown">冷却</label>
-                    <input id="condition-cooldown" name="condition_cooldown" type="number" min="0" value="10" />
-                  </div>
-                  <div>
-                    <label class="field-label" for="condition-cooldown-unit">单位</label>
-                    <select id="condition-cooldown-unit" name="condition_cooldown_unit">
-                      <option value="minutes">分钟</option>
-                      <option value="hours">小时</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="schedule-note">冷却：失败触发任务后，多久内不再因条件重复启动。定时「到点但检测正常」跳过不占用冷却。</div>
-                <div>
-                  <label class="field-label" for="condition-url">检测 URL</label>
-                  <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
-                  <div class="schedule-note" style="margin-top:4px;">
-                    检测默认走<strong>任务代理</strong>（任务 BROWSER_PROXY → 浏览器配置代理 → 全局代理）。纯 IPv6 VPS 必须给任务配 HTTP 代理，否则直连会误报失败。SOCKS 暂不支持检测通道。
-                  </div>
-                </div>
-                <div>
-                  <label class="field-label" for="condition-proxy">检测代理覆盖（可选）</label>
-                  <input id="condition-proxy" name="condition_proxy" type="text" placeholder="留空=用任务代理；例 http://127.0.0.1:7890" />
-                </div>
-                <div class="grid interval-range-grid">
-                  <div>
-                    <label class="field-label" for="condition-method">方法</label>
-                    <select id="condition-method" name="condition_method">
-                      <option value="GET">GET</option>
-                      <option value="HEAD">HEAD</option>
-                      <option value="POST">POST</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="field-label" for="condition-timeout">超时（秒）</label>
-                    <input id="condition-timeout" name="condition_timeout" type="number" min="1" max="60" value="10" />
-                  </div>
-                  <div>
-                    <label class="field-label" for="condition-success-statuses">成功状态码</label>
-                    <input id="condition-success-statuses" name="condition_success_statuses" type="text" value="200-399" placeholder="200-399" />
-                  </div>
-                </div>
-                <div>
-                  <label class="field-label" for="condition-expect-body">响应须包含（可选）</label>
-                  <input id="condition-expect-body" name="condition_expect_body" type="text" placeholder="留空则只看状态码" />
-                </div>
-                <div class="row" style="margin-top:4px; gap:8px; align-items:center; flex-wrap:wrap;">
-                  <button type="button" id="condition-test-btn" class="alt btn-with-icon">
-                    <i data-lucide="radar" class="icon-sm"></i> 测试检测
-                  </button>
-                  <span class="muted" id="condition-last-status-text">最近：—</span>
-                </div>
+                <h3 id="form-title">任务设置</h3>
               </div>
             </div>
 
-            <div class="row">
-              <button type="submit" id="save-btn" class="btn-primary btn-with-icon" data-testid="save-task-btn">
-                <i data-lucide="check" class="icon-sm"></i> 保存任务
-              </button>
-              <button type="button" class="alt btn-with-icon" id="reset-btn" data-testid="cancel-task-btn">
-                <i data-lucide="x" class="icon-sm"></i> 取消
-              </button>
+            <nav class="task-subnav" id="task-subnav" aria-label="任务设置分段">
+              <button type="button" class="task-subnav-btn active" data-task-target="task-sec-basic">基本</button>
+              <button type="button" class="task-subnav-btn" data-task-target="task-sec-browser">浏览器</button>
+              <button type="button" class="task-subnav-btn" data-task-target="task-sec-env">变量</button>
+              <button type="button" class="task-subnav-btn" data-task-target="task-sec-schedule">定时</button>
+              <button type="button" class="task-subnav-btn" data-task-target="task-sec-condition">条件</button>
+            </nav>
+
+            <div class="task-sections">
+              <section id="task-sec-basic" class="task-section config-block" data-task-section="basic">
+                <h4 class="task-section-title">基本</h4>
+                <div class="grid single-col">
+                  <div>
+                    <label class="field-label" for="task-name-input">任务名称</label>
+                    <input id="task-name-input" name="name" placeholder="例如 hax 续期" required data-testid="task-name-input" />
+                  </div>
+                  <div>
+                    <label class="field-label" for="task-timeout-sec">任务超时（秒）</label>
+                    <input
+                      id="task-timeout-sec"
+                      name="timeout_sec"
+                      type="number"
+                      min="30"
+                      max="86400"
+                      step="1"
+                      value="300"
+                      data-testid="task-timeout-input"
+                      style="width:100%;"
+                    />
+                    <p class="schedule-note" style="margin-top:4px;">到点面板结束进程。打码类建议 ≥ 900。</p>
+                  </div>
+                  <div class="task-script-summary muted" id="task-script-summary">
+                    脚本：未选择（右侧导入或选中）
+                  </div>
+                </div>
+              </section>
+
+              <section id="task-sec-browser" class="task-section config-block" data-task-section="browser">
+                <h4 class="task-section-title">浏览器</h4>
+                <div class="grid single-col">
+                  <div>
+                    <label class="field-label" for="task-profile-mode">数据模式</label>
+                    <select id="task-profile-mode" name="profile_mode" style="width:100%;">
+                      <option value="temp" selected>临时（推荐）— 每次独立目录</option>
+                      <option value="persistent">持久 — 使用选定浏览器配置</option>
+                    </select>
+                    <p class="schedule-note" id="task-profile-mode-hint" style="margin-top:4px;">
+                      临时：跑完隔离，不污染正式登录态。
+                    </p>
+                  </div>
+                  <div id="task-profile-persistent-fields">
+                    <label class="field-label" for="task-profile-select">浏览器配置</label>
+                    <select id="task-profile-select" style="width:100%;">
+                      <option value="">默认配置</option>
+                    </select>
+                  </div>
+                  <div id="task-proxy-fields">
+                    <label class="field-label" for="task-proxy-input">代理（可选）</label>
+                    <div class="row" style="gap:8px; align-items:center;">
+                      <input
+                        id="task-proxy-input"
+                        type="text"
+                        style="flex:1; width:100%;"
+                        placeholder="socks5://127.0.0.1:20004 或 http://127.0.0.1:7890"
+                        autocomplete="off"
+                      />
+                      <button type="button" id="task-proxy-from-profile" class="alt" style="white-space:nowrap;">
+                        从配置填入
+                      </button>
+                    </div>
+                    <p class="schedule-note" id="task-proxy-hint" style="margin-top:4px;">
+                      留空则用配置/系统默认。
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section id="task-sec-env" class="task-section config-block" data-task-section="env">
+                <div class="section-header compact" style="margin-bottom:8px;">
+                  <div>
+                    <h4 class="task-section-title" style="margin:0;">环境变量</h4>
+                    <p class="muted" id="task-params-hint">注入脚本 env，覆盖全局同名项</p>
+                  </div>
+                  <div class="row" style="gap:6px; flex-wrap:wrap;">
+                    <button type="button" id="task-env-add-row" class="alt btn-with-icon" style="padding:4px 10px;">
+                      <i data-lucide="plus" class="icon-sm"></i> 添加
+                    </button>
+                    <button type="button" id="task-env-template-host2play" class="alt btn-with-icon" style="padding:4px 10px;" hidden>
+                      Host2Play 模板
+                    </button>
+                  </div>
+                </div>
+                <div id="task-params-block">
+                  <label class="inline-check" style="margin:8px 0;">
+                    <input type="checkbox" id="task-use-global-telegram" checked />
+                    使用全局 Telegram
+                  </label>
+                  <p class="schedule-note" id="task-use-global-telegram-hint" style="margin:0 0 8px;">
+                    勾选则注入全局 TG 配置；否则只用任务变量里的 TG_*。
+                  </p>
+                  <div id="task-env-editor" class="env-editor" data-env-scope="task"></div>
+                  <details class="env-advanced" style="margin-top:8px;">
+                    <summary class="muted">高级：导入 / 导出 .env 或 JSON</summary>
+                    <textarea id="param-json-raw" rows="4" placeholder="KEY=value 或 {&quot;KEY&quot;:&quot;value&quot;}"></textarea>
+                    <div class="row" style="margin-top:6px; gap:8px;">
+                      <button type="button" id="task-env-apply-raw" class="alt">应用到表格</button>
+                      <button type="button" id="task-env-export-raw" class="alt">导出到文本</button>
+                    </div>
+                  </details>
+                </div>
+              </section>
+
+              <section id="task-sec-schedule" class="task-section config-block" data-task-section="schedule">
+                <h4 class="task-section-title">定时规则</h4>
+                <label class="inline-check">
+                  <input type="checkbox" name="enabled" id="schedule-enabled" data-testid="schedule-enabled-checkbox" />
+                  启用定时
+                </label>
+                <p class="schedule-note" style="margin:4px 0 8px;">关闭则仅手动运行；可与条件触发叠加。</p>
+
+                <div id="schedule-details" class="schedule-details" hidden>
+                  <div class="grid single-col schedule-mode-select-wrap">
+                    <label class="field-label" for="schedule-mode-select">模式</label>
+                    <select name="schedule_mode" id="schedule-mode-select" data-testid="schedule-mode-select">
+                      <option value="fixed">固定周期</option>
+                      <option value="interval">随机区间</option>
+                      <option value="daily_window">每天特定时段随机</option>
+                    </select>
+                  </div>
+
+                  <div id="fixed-schedule-fields" class="schedule-pane">
+                    <div class="grid three-col-tight">
+                      <div>
+                        <label class="field-label">天</label>
+                        <input name="fixed_days" type="number" min="0" value="0" data-testid="fixed-days-input" />
+                      </div>
+                      <div>
+                        <label class="field-label">时</label>
+                        <input name="fixed_hours" type="number" min="0" value="4" data-testid="fixed-hours-input" />
+                      </div>
+                      <div>
+                        <label class="field-label">分</label>
+                        <input name="fixed_minutes" type="number" min="0" value="0" data-testid="fixed-minutes-input" />
+                      </div>
+                    </div>
+                    <div id="fixed-schedule-summary" class="field-span-2 muted">每隔 0 天 4 小时 0 分钟执行一次</div>
+                  </div>
+
+                  <div id="interval-schedule-fields" class="schedule-pane" hidden>
+                    <div class="grid interval-range-grid">
+                      <div>
+                        <label class="field-label">最小值</label>
+                        <input name="interval_min" type="number" min="1" value="5" data-testid="interval-min-input" />
+                      </div>
+                      <div class="range-sep">至</div>
+                      <div>
+                        <label class="field-label">最大值</label>
+                        <input name="interval_max" type="number" min="1" value="10" data-testid="interval-max-input" />
+                      </div>
+                      <div>
+                        <label class="field-label">单位</label>
+                        <select name="interval_unit" data-testid="interval-unit-select">
+                          <option value="minutes">分钟</option>
+                          <option value="hours">小时</option>
+                          <option value="days">天</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div id="interval-schedule-summary" class="field-span-2 muted">每次检查将在 5 - 10 分钟内随机触发</div>
+                  </div>
+
+                  <div id="daily-window-schedule-fields" class="schedule-pane" hidden>
+                    <div class="grid interval-range-grid">
+                      <div>
+                        <label class="field-label">开始时间</label>
+                        <input name="daily_time_start" type="time" value="08:00" data-testid="daily-time-start-input" />
+                      </div>
+                      <div class="range-sep">至</div>
+                      <div>
+                        <label class="field-label">结束时间</label>
+                        <input name="daily_time_end" type="time" value="12:00" data-testid="daily-time-end-input" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section id="task-sec-condition" class="task-section config-block" data-task-section="condition">
+                <h4 class="task-section-title">条件触发</h4>
+                <label class="inline-check">
+                  <input type="checkbox" name="condition_enabled" id="condition-enabled" data-testid="condition-enabled-checkbox" />
+                  启用条件触发（HTTP 失败时启动）
+                </label>
+                <p class="schedule-note" style="margin:4px 0 8px;">可与定时叠加：到点后再检测。</p>
+
+                <div id="condition-fields" class="grid single-col condition-details" style="margin-top:8px;" hidden>
+                  <div>
+                    <label class="field-label" for="condition-type">类型</label>
+                    <select id="condition-type" name="condition_type">
+                      <option value="http_check">HTTP 检测（失败触发）</option>
+                    </select>
+                  </div>
+                  <div class="grid interval-range-grid">
+                    <div>
+                      <label class="field-label" for="condition-check-interval">检测间隔</label>
+                      <input id="condition-check-interval" name="condition_check_interval" type="number" min="1" value="5" />
+                    </div>
+                    <div>
+                      <label class="field-label" for="condition-check-unit">单位</label>
+                      <select id="condition-check-unit" name="condition_check_unit">
+                        <option value="minutes">分钟</option>
+                        <option value="hours">小时</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="field-label" for="condition-cooldown">冷却</label>
+                      <input id="condition-cooldown" name="condition_cooldown" type="number" min="0" value="10" />
+                    </div>
+                    <div>
+                      <label class="field-label" for="condition-cooldown-unit">单位</label>
+                      <select id="condition-cooldown-unit" name="condition_cooldown_unit">
+                        <option value="minutes">分钟</option>
+                        <option value="hours">小时</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="schedule-note">冷却：触发后多久内不再因条件重复启动。</div>
+                  <div>
+                    <label class="field-label" for="condition-url">检测 URL</label>
+                    <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
+                    <div class="schedule-note" style="margin-top:4px;">
+                      默认走任务代理。纯 IPv6 需 HTTP 代理；SOCKS 暂不支持检测通道。
+                    </div>
+                  </div>
+                  <div>
+                    <label class="field-label" for="condition-proxy">检测代理覆盖（可选）</label>
+                    <input id="condition-proxy" name="condition_proxy" type="text" placeholder="留空=用任务代理；例 http://127.0.0.1:7890" />
+                  </div>
+                  <div class="grid interval-range-grid">
+                    <div>
+                      <label class="field-label" for="condition-method">方法</label>
+                      <select id="condition-method" name="condition_method">
+                        <option value="GET">GET</option>
+                        <option value="HEAD">HEAD</option>
+                        <option value="POST">POST</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="field-label" for="condition-timeout">超时（秒）</label>
+                      <input id="condition-timeout" name="condition_timeout" type="number" min="1" max="60" value="10" />
+                    </div>
+                    <div>
+                      <label class="field-label" for="condition-success-statuses">成功状态码</label>
+                      <input id="condition-success-statuses" name="condition_success_statuses" type="text" value="200-399" placeholder="200-399" />
+                    </div>
+                  </div>
+                  <div>
+                    <label class="field-label" for="condition-expect-body">响应须包含（可选）</label>
+                    <input id="condition-expect-body" name="condition_expect_body" type="text" placeholder="留空则只看状态码" />
+                  </div>
+                  <div class="row" style="margin-top:4px; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <button type="button" id="condition-test-btn" class="alt btn-with-icon">
+                      <i data-lucide="radar" class="icon-sm"></i> 测试检测
+                    </button>
+                    <span class="muted" id="condition-last-status-text">最近：—</span>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="task-modal-footer">
+              <div class="task-modal-footer-summary muted" id="task-form-summary">
+                未选脚本 · 手动运行 · 无条件
+              </div>
+              <div class="row" style="gap:8px; flex-wrap:wrap;">
+                <button type="button" class="alt btn-with-icon" id="reset-btn" data-testid="cancel-task-btn">
+                  <i data-lucide="x" class="icon-sm"></i> 取消
+                </button>
+                <button type="submit" id="save-btn" class="btn-primary btn-with-icon" data-testid="save-task-btn">
+                  <i data-lucide="check" class="icon-sm"></i> 保存任务
+                </button>
+              </div>
             </div>
           </form>
         </section>
 
-        <section class="modal-panel">
-           <div class="section-header compact">
-             <div>
-               <h3>脚本</h3>
-               <p>导入一个脚本，或选择已有脚本。</p>
-             </div>
-            <button type="button" class="alt" id="refresh-scripts-modal-btn" data-testid="refresh-scripts-btn">刷新列表</button>
-          </div>
+          <section class="modal-panel task-modal-script">
+            <div class="section-header compact">
+              <div>
+                <h3>脚本</h3>
+                <p class="muted">导入或选择已有脚本。</p>
+              </div>
+              <button type="button" class="alt" id="refresh-scripts-modal-btn" data-testid="refresh-scripts-btn">刷新</button>
+            </div>
 
-          <form id="modal-import-form" class="stack-form">
-            <select name="type" data-testid="script-type-select">
-              <option value="javascript">JavaScript</option>
-              <option value="python">Python</option>
-            </select>
-            <textarea name="content" rows="12" placeholder="粘贴脚本内容" required data-testid="script-content-textarea"></textarea>
-            <div class="row">
-               <button type="submit" id="modal-import-btn" data-testid="import-script-btn">导入脚本</button>
-            </div>
-          </form>
+            <form id="modal-import-form" class="stack-form">
+              <select name="type" data-testid="script-type-select">
+                <option value="javascript">JavaScript</option>
+                <option value="python">Python</option>
+              </select>
+              <textarea name="content" rows="10" placeholder="粘贴脚本内容" required data-testid="script-content-textarea"></textarea>
+              <div class="row">
+                <button type="submit" id="modal-import-btn" data-testid="import-script-btn">导入脚本</button>
+              </div>
+            </form>
 
-          <div class="section-header compact with-top-gap">
-            <div>
-               <h4>已有脚本</h4>
-               <p>直接选，不要大卡片。</p>
+            <div class="section-header compact with-top-gap">
+              <div>
+                <h4>已有脚本</h4>
+                <p class="muted">选择后写入本任务。</p>
+              </div>
             </div>
-          </div>
-          <div class="script-picker">
-            <select id="script-select" data-testid="script-select">
-              <option value="">请选择脚本</option>
-            </select>
-            <div class="row script-picker-actions">
-              <button type="button" class="alt" id="use-script-btn">选中脚本</button>
-              <button type="button" class="alt" id="edit-script-btn">编辑脚本</button>
-              <button type="button" class="alt danger" id="delete-script-btn">删除脚本</button>
+            <div class="script-picker">
+              <select id="script-select" data-testid="script-select">
+                <option value="">请选择脚本</option>
+              </select>
+              <div class="row script-picker-actions">
+                <button type="button" class="alt" id="use-script-btn">选中脚本</button>
+                <button type="button" class="alt" id="edit-script-btn">编辑脚本</button>
+                <button type="button" class="alt danger" id="delete-script-btn">删除脚本</button>
+              </div>
             </div>
-          </div>
-        </section>
-      </div>
+          </section>
+        </div>
     </div>
   </section>
 

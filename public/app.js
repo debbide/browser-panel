@@ -376,6 +376,12 @@ function openModal(mode = 'create') {
   modal.classList.add('open');
   modalMask.hidden = false;
   modalTitle.textContent = mode === 'edit' ? '编辑任务' : '新建任务';
+  updateScheduleDetailsUI();
+  updateConditionFieldsUI();
+  updateTaskFormSummary();
+  if (typeof window.__onTaskModalShow === 'function') {
+    window.__onTaskModalShow();
+  }
 }
 
 function closeModal() {
@@ -618,7 +624,9 @@ function resetConditionForm() {
 function updateConditionFieldsUI() {
   const on = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
   if (conditionFieldsEl) {
-    conditionFieldsEl.style.opacity = on ? '1' : '0.55';
+    // Progressive disclosure: hide details until enabled
+    conditionFieldsEl.hidden = !on;
+    conditionFieldsEl.style.opacity = '1';
   }
   const controls = [
     conditionTypeEl, conditionCheckIntervalEl, conditionCheckUnitEl,
@@ -626,9 +634,112 @@ function updateConditionFieldsUI() {
     conditionTimeoutEl, conditionSuccessStatusesEl, conditionExpectBodyEl, conditionTestBtn,
   ];
   for (const el of controls) {
-    if (el) el.disabled = false; // keep editable even when off so user can prefill
+    if (el) el.disabled = false; // keep editable when shown so user can prefill
+  }
+  updateTaskFormSummary();
+}
+
+function isScheduleEnabled() {
+  const el = form?.elements?.enabled || document.getElementById('schedule-enabled');
+  return Boolean(el && el.checked);
+}
+
+function updateScheduleDetailsUI() {
+  const details = document.getElementById('schedule-details');
+  if (details) details.hidden = !isScheduleEnabled();
+  updateTaskFormSummary();
+}
+
+function updateTaskFormSummary() {
+  const summaryEl = document.getElementById('task-form-summary');
+  const scriptSummaryEl = document.getElementById('task-script-summary');
+  const scriptPath = String(form?.elements?.script_path?.value || '').trim();
+  const scriptLabel = scriptPath
+    ? scriptPath.split(/[/\\]/).filter(Boolean).pop() || scriptPath
+    : '';
+  const timeout = String(form?.elements?.timeout_sec?.value || '300').trim() || '300';
+  const schedOn = isScheduleEnabled();
+  const mode = getScheduleMode();
+  const modeLabel = mode === 'daily_window'
+    ? '每天时段'
+    : (mode === 'interval' ? '随机区间' : '固定周期');
+  const condOn = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
+  const temp = isTaskTempProfileMode();
+
+  if (scriptSummaryEl) {
+    scriptSummaryEl.textContent = scriptPath
+      ? `脚本：${scriptLabel} · 超时 ${timeout}s`
+      : '脚本：未选择（右侧导入或选中）';
+  }
+  if (summaryEl) {
+    const bits = [
+      scriptPath ? `脚本 ${scriptLabel}` : '未选脚本',
+      `超时 ${timeout}s`,
+      temp ? '临时目录' : '持久配置',
+      schedOn ? `定时·${modeLabel}` : '手动运行',
+      condOn ? '条件触发' : '无条件',
+    ];
+    summaryEl.textContent = bits.join(' · ');
   }
 }
+
+function setupTaskModalSubnav() {
+  const nav = document.getElementById('task-subnav');
+  if (!nav) return;
+  const buttons = Array.from(nav.querySelectorAll('.task-subnav-btn[data-task-target]'));
+  const sections = buttons
+    .map((btn) => document.getElementById(btn.getAttribute('data-task-target')))
+    .filter(Boolean);
+
+  function setActive(id) {
+    buttons.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-task-target') === id);
+    });
+  }
+
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const id = btn.getAttribute('data-task-target');
+      const el = document.getElementById(id);
+      if (!el) return;
+      setActive(id);
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  let ticking = false;
+  function updateFromScroll() {
+    ticking = false;
+    if (!modal || !modal.classList.contains('open')) return;
+    const body = modal.querySelector('.task-modal-body');
+    const marker = 120;
+    let current = sections[0]?.id;
+    for (const sec of sections) {
+      const top = sec.getBoundingClientRect().top;
+      if (top - marker <= 8) current = sec.id;
+    }
+    if (current) setActive(current);
+  }
+
+  const scrollRoot = modal?.querySelector('.task-modal-body') || window;
+  scrollRoot.addEventListener(
+    'scroll',
+    () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(updateFromScroll);
+    },
+    { passive: true }
+  );
+
+  window.__onTaskModalShow = () => {
+    if (buttons[0]) setActive(buttons[0].getAttribute('data-task-target'));
+    requestAnimationFrame(updateFromScroll);
+  };
+}
+
+setupTaskModalSubnav();
 
 function updateConditionLastStatusText(task) {
   if (!conditionLastStatusText) return;
@@ -2322,6 +2433,7 @@ function useScript(scriptPath, type) {
   // Must pass full env rows (array), not flat params — secrets have empty value in UI
   syncTaskParamsUI(scriptPath, collectSafeCurrentEnvRows());
   renderScripts();
+  updateTaskFormSummary();
   openModal(editingId ? 'edit' : 'create');
 }
 
@@ -2356,6 +2468,7 @@ async function loadScriptIntoEditor(scriptPath, options = {}) {
   modalImportForm.elements.content.value = content;
   if (!preserveHint) formHint.textContent = `正在编辑脚本：${getScriptLabel(scriptPath)}`;
   renderScripts();
+  updateTaskFormSummary();
   if (reopenModal) openModal(editingId ? 'edit' : 'create');
 }
 
@@ -2526,6 +2639,7 @@ modalImportForm.addEventListener('submit', async (event) => {
     // called replaceEnvEntries and deleted those keys from DB. Keep full env rows instead.
     syncTaskParamsUI(result.data.path, collectSafeCurrentEnvRows());
     if (!form.name.value.trim()) form.name.value = result.data.name.replace(/\.(js|py)$/i, '');
+    updateTaskFormSummary();
     openModal(editingId ? 'edit' : 'create');
     formHint.textContent = result.data.overwritten
       ? `已覆盖脚本：${getScriptLabel(result.data.path)}`
@@ -2578,11 +2692,25 @@ if (deleteScriptBtn) {
     deleteSelectedScript();
   });
 }
-scheduleModeSelect.addEventListener('change', updateScheduleModeUI);
+scheduleModeSelect.addEventListener('change', () => {
+  updateScheduleModeUI();
+  updateTaskFormSummary();
+});
+
+const scheduleEnabledEl = form?.elements?.enabled || document.getElementById('schedule-enabled');
+if (scheduleEnabledEl) {
+  scheduleEnabledEl.addEventListener('change', updateScheduleDetailsUI);
+}
 
 if (conditionEnabledEl) {
   conditionEnabledEl.addEventListener('change', updateConditionFieldsUI);
 }
+
+// Keep footer summary in sync with common fields
+['name', 'timeout_sec'].forEach((name) => {
+  const el = form?.elements?.[name];
+  if (el) el.addEventListener('input', updateTaskFormSummary);
+});
 
 if (conditionTestBtn) {
   conditionTestBtn.addEventListener('click', async () => {
@@ -2866,7 +2994,10 @@ if (brInstallBrowserBtn) {
 }
 
 if (taskProfileModeSelect) {
-  taskProfileModeSelect.addEventListener('change', () => updateTaskProfileModeUI());
+  taskProfileModeSelect.addEventListener('change', () => {
+    updateTaskProfileModeUI();
+    updateTaskFormSummary();
+  });
   updateTaskProfileModeUI();
 }
 if (taskProfileSelect) {
@@ -2875,6 +3006,7 @@ if (taskProfileSelect) {
       form.elements.browser_profile_id.value = taskProfileSelect.value || '';
     }
     updateTaskProfileModeUI();
+    updateTaskFormSummary();
   });
 }
 if (taskProxyFromProfileBtn) {
