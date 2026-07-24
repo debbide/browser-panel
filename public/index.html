@@ -623,11 +623,12 @@
                   <div id="condition-remaining-fields" class="condition-type-panel" data-condition-type="remaining_callback" hidden>
                     <div class="field-label panel-title">剩余时间回调配置</div>
                     <div class="schedule-note">
-                      阈值 T = 续期窗口 − 随机提前。脚本上报 remaining_sec 后，剩余 ≤ T 时启动。请先手动探测一次。
+                      站点只允许「到期前 W 内」续期。触发点在<strong>窗口内部</strong>：T = W − 随机偏移（不是 W + 偏移）。
+                      例：W=30 分、偏移 5～10 → 剩余约 20～25 分钟时启动（仍可续期）。请先手动探测一次。
                     </div>
                     <div class="grid interval-range-grid">
                       <div>
-                        <label class="field-label" for="condition-window-value">续期窗口</label>
+                        <label class="field-label" for="condition-window-value">续期窗口 W</label>
                         <input id="condition-window-value" name="condition_window_value" type="number" min="1" value="30" />
                       </div>
                       <div>
@@ -641,11 +642,11 @@
                     </div>
                     <div class="grid interval-range-grid">
                       <div>
-                        <label class="field-label" for="condition-jitter-min">随机提前 min</label>
+                        <label class="field-label" for="condition-jitter-min">窗口内偏移 min</label>
                         <input id="condition-jitter-min" name="condition_jitter_min" type="number" min="0" value="5" />
                       </div>
                       <div>
-                        <label class="field-label" for="condition-jitter-max">随机提前 max</label>
+                        <label class="field-label" for="condition-jitter-max">窗口内偏移 max</label>
                         <input id="condition-jitter-max" name="condition_jitter_max" type="number" min="0" value="10" />
                       </div>
                       <div>
@@ -657,6 +658,7 @@
                         </select>
                       </div>
                     </div>
+                    <div class="schedule-note" id="condition-threshold-preview">预计触发：到期前 —</div>
                     <label class="inline-check" style="margin-top:4px;">
                       <input type="checkbox" id="condition-trigger-if-expired" name="condition_trigger_if_expired" />
                       已过期仍触发（一般关闭）

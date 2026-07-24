@@ -6,8 +6,10 @@
  *
  * Config:
  *   window_value/unit  — site renew window W (e.g. last 30 minutes)
- *   jitter_min/max/unit — random early offset R inside the window → threshold T = W - R
+ *   jitter_min/max/unit — random offset R *inside* the window → threshold T = W - R
+ *                         (NOT W + R; that would fire before the site allows renew)
  *
+ * Example: W=30m, R∈[5,10] → T∈[20,25] → fire when remaining is about 20–25 minutes.
  * Trigger when estimated remaining_now <= T (and still > 0 unless trigger_if_expired).
  */
 

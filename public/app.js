@@ -564,6 +564,44 @@ function getConditionType() {
   return String(conditionTypeEl?.value || 'http_check').trim() || 'http_check';
 }
 
+/** Preview T = W - R for remaining_callback (inside window, not W+R). */
+function updateRemainingThresholdPreview() {
+  const el = document.getElementById('condition-threshold-preview');
+  if (!el) return;
+  const unitLabel = (u) => (u === 'hours' ? '小时' : (u === 'days' ? '天' : '分钟'));
+  const wUnit = conditionWindowUnitEl?.value || 'minutes';
+  const jUnit = conditionJitterUnitEl?.value || wUnit;
+  const w = Number(conditionWindowValueEl?.value || 0);
+  let jMin = Number(conditionJitterMinEl?.value || 0);
+  let jMax = Number(conditionJitterMaxEl?.value || 0);
+  if (!Number.isFinite(w) || w <= 0) {
+    el.textContent = '预计触发：请填写有效的续期窗口 W';
+    return;
+  }
+  if (!Number.isFinite(jMin) || jMin < 0) jMin = 0;
+  if (!Number.isFinite(jMax) || jMax < 0) jMax = 0;
+  if (jMax < jMin) {
+    const t = jMin;
+    jMin = jMax;
+    jMax = t;
+  }
+  // Same unit compare when units match; otherwise only show formula in window unit when jitter unit differs
+  if (wUnit === jUnit) {
+    if (jMax > w) {
+      el.textContent = `预计触发：偏移不能大于窗口（当前 max=${jMax} > W=${w}）`;
+      el.style.color = 'var(--danger, #f87171)';
+      return;
+    }
+    el.style.color = '';
+    const tMin = Math.max(0, w - jMax);
+    const tMax = Math.max(0, w - jMin);
+    el.textContent = `预计触发：到期前 ${tMin}～${tMax} ${unitLabel(wUnit)}（T=W−偏移，仍在 ${w} ${unitLabel(wUnit)} 窗口内）`;
+    return;
+  }
+  el.style.color = '';
+  el.textContent = `预计触发：T = ${w} ${unitLabel(wUnit)} − 偏移 ${jMin}～${jMax} ${unitLabel(jUnit)}（窗口内，非 W+偏移）`;
+}
+
 function buildConditionPayloadFromForm() {
   const enabled = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
   if (!enabled) {
@@ -706,13 +744,14 @@ function updateConditionFieldsUI() {
   setPanelVisible(commonNoteEl, on && !isRemaining);
   setPanelVisible(conditionHttpFieldsEl, on && !isRemaining);
   setPanelVisible(conditionRemainingFieldsEl, on && isRemaining);
+  if (on && isRemaining) updateRemainingThresholdPreview();
 
   const hintEl = document.getElementById('condition-type-hint');
   if (hintEl) {
     hintEl.textContent = !on
       ? '启用后选择类型，只显示该类型的配置。'
       : (isRemaining
-        ? '当前：剩余时间回调。只需配置窗口与随机提前；调度跟脚本 remaining 回调走。'
+        ? '当前：剩余时间回调。T=窗口−偏移（窗口内触发，不是窗口外提前）。'
         : '当前：HTTP 检测。配置检测间隔、冷却与 URL。');
   }
 
@@ -2848,6 +2887,17 @@ if (conditionEnabledEl) {
 if (conditionTypeEl) {
   conditionTypeEl.addEventListener('change', updateConditionFieldsUI);
 }
+[
+  conditionWindowValueEl,
+  conditionWindowUnitEl,
+  conditionJitterMinEl,
+  conditionJitterMaxEl,
+  conditionJitterUnitEl,
+].forEach((el) => {
+  if (!el) return;
+  el.addEventListener('input', updateRemainingThresholdPreview);
+  el.addEventListener('change', updateRemainingThresholdPreview);
+});
 
 // Keep footer summary in sync with common fields
 ['name', 'timeout_sec'].forEach((name) => {
