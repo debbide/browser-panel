@@ -323,9 +323,11 @@ function buildTerminateCommandsByTask(task) {
     commands.push(`pkill -TERM -f -- ${shellEscape(runMarker)} || true`);
   }
 
-  // 3) Temp profile dirs are per-task (task-N-tmp-profile). Safe even with shared script names.
-  //    Skip broad kill when using a shared persistent profile path (could hit another task).
-  if (userDataDir && useTempProfile) {
+  // 3) Always kill Chrome bound to THIS task's user-data-dir.
+  //    Temp profiles are unique per task. Persistent profiles also must be cleaned when
+  //    the run ends — SeleniumBase UC reparents chrome to init so PID-tree kill misses them.
+  //    Sharing one persistent profile across concurrent tasks is unsupported.
+  if (userDataDir) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -TERM -f -- ${shellEscape(udMarker)} || true`);
   }
@@ -338,71 +340,134 @@ function buildTerminateCommandsByTask(task) {
   if (runMarker) {
     commands.push(`pkill -KILL -f -- ${shellEscape(runMarker)} || true`);
   }
-  if (userDataDir && useTempProfile) {
+  if (userDataDir) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
   }
 
-  // 4) SeleniumBase UC orphans: chrome with --user-data-dir=/tmp/tmp* whose parent is gone.
-  //    Python dies → chrome reparents to init; PID-tree kill misses them. 1.5G VPS dies next run.
-  //    Only orphans (ppid 1 / parent missing) — never mass-kill concurrent tasks' live trees.
-  commands.push(...buildOrphanSbChromeCleanupCommands({ aggressive: false }));
+  // 4) SeleniumBase UC orphans: chrome reparented to init after python dies.
+  //    Covers /tmp/tmp* AND persistent profiles under browser work dir.
+  commands.push(...buildOrphanSbChromeCleanupCommands({
+    aggressive: false,
+    extraUserDataDirs: userDataDir ? [userDataDir] : [],
+  }));
 
   return commands;
 }
 
 /**
- * Kill SeleniumBase leftover Chrome under /tmp/tmp* safely.
- * @param {{ aggressive?: boolean }} opts
- *   aggressive=true: only when NO other browser task is active — sweep all /tmp/tmp* chrome.
+ * Kill SeleniumBase leftover Chrome safely.
+ * @param {{ aggressive?: boolean, extraUserDataDirs?: string[] }} opts
+ *   aggressive=true: only when NO other browser task is active — sweep SB leftovers harder.
  *   aggressive=false: only kill orphans (parent dead / ppid 1).
+ *   extraUserDataDirs: also match these profile paths (persistent profiles).
+ *
+ * Why this exists: SB UC launches chrome as a detached tree. When python exits,
+ * chrome reparents to init (ppid=1). PID-tree kill misses them. Persistent
+ * profiles (not only /tmp/tmp*) leave multi-GB orphans on small VPS.
  */
 function buildOrphanSbChromeCleanupCommands(opts = {}) {
   const aggressive = Boolean(opts.aggressive);
   const browserUser = (config.browser && config.browser.user)
     ? String(config.browser.user).trim()
     : 'browser';
-  // Inline bash: find chrome cmdlines with /tmp/tmp user-data-dir, kill orphans (or all if aggressive)
+  const workDir = (config.browser && config.browser.workDir)
+    ? String(config.browser.workDir).trim()
+    : '';
+  const extraDirs = Array.isArray(opts.extraUserDataDirs)
+    ? opts.extraUserDataDirs.map((d) => String(d || '').trim()).filter(Boolean)
+    : [];
+
+  // Patterns: SB temp profiles, browser work profiles, optional exact dirs from this run
+  const matchHints = [
+    '--user-data-dir=/tmp/tmp',
+    workDir ? `--user-data-dir=${workDir}` : '',
+    ...extraDirs.map((d) => `--user-data-dir=${d}`),
+  ].filter(Boolean);
+
   const script = [
-    'cleanup_sb_tmp_chrome() {',
+    'cleanup_sb_orphan_chrome() {',
     `  local aggressive="${aggressive ? '1' : '0'}"`,
     `  local buser=${shellEscape(browserUser)}`,
-    '  local line pid ppid udir',
-    '  # Match main + child chrome that still show a /tmp/tmp* profile',
-    '  pgrep -af -- "--user-data-dir=/tmp/tmp" 2>/dev/null | while IFS= read -r line; do',
+    '  local line pid ppid udir owner cmd',
+    '  is_browser_related() {',
+    '    case "$1" in',
+    '      *chrome*|*chromium*|*chromedriver*|*uc_driver*|*chrome_crashpad*) return 0 ;;',
+    '      *) return 1 ;;',
+    '    esac',
+    '  }',
+    '  is_target_udir() {',
+    '    # $1 = full cmdline',
+    `    case "$1" in`,
+    ...matchHints.map((hint) => `      *${hint.replace(/'/g, '')}*) return 0 ;;`),
+    '      *) return 1 ;;',
+    '    esac',
+    '  }',
+    '  should_consider() {',
+    '    is_browser_related "$1" || return 1',
+    '    # Always consider SB temp profiles + workdir profiles + this-run dirs',
+    '    if is_target_udir "$1"; then return 0; fi',
+    '    # Aggressive + no concurrent tasks: any browser-user chrome is fair game if orphan',
+    '    if [ "$aggressive" = "1" ]; then return 0; fi',
+    '    return 1',
+    '  }',
+    '  owner_ok() {',
+    '    local p="$1"',
+    '    [ -z "$buser" ] && return 0',
+    '    [ ! -r "/proc/$p" ] && return 0',
+    '    owner=$(stat -c %U "/proc/$p" 2>/dev/null || true)',
+    '    [ -z "$owner" ] && return 0',
+    '    [ "$owner" = "$buser" ] || [ "$owner" = "root" ]',
+    '  }',
+    '  is_orphan() {',
+    '    local p="$1" pp',
+    '    pp=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d " ")',
+    '    if [ -z "$pp" ] || [ "$pp" = "1" ] || [ "$pp" = "0" ]; then return 0; fi',
+    '    if ! kill -0 "$pp" 2>/dev/null; then return 0; fi',
+    '    return 1',
+    '  }',
+    '  # Pass 1: TERM orphans / aggressive matches',
+    '  pgrep -af -- "chrome|chromium|chromedriver|uc_driver|chrome_crashpad" 2>/dev/null | while IFS= read -r line; do',
     '    pid="${line%% *}"',
     '    case "$pid" in ""|*[!0-9]*) continue;; esac',
-    '    # Optional: only browser user',
-    '    if [ -n "$buser" ] && [ -r "/proc/$pid" ]; then',
-    '      owner=$(stat -c %U "/proc/$pid" 2>/dev/null || true)',
-    '      if [ -n "$owner" ] && [ "$owner" != "$buser" ] && [ "$owner" != "root" ]; then',
-    '        continue',
-    '      fi',
-    '    fi',
-    '    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d " ")',
+    '    cmd="${line#* }"',
+    '    should_consider "$cmd" || continue',
+    '    owner_ok "$pid" || continue',
     '    orphan=0',
-    '    if [ -z "$ppid" ] || [ "$ppid" = "1" ] || [ "$ppid" = "0" ]; then',
-    '      orphan=1',
-    '    elif ! kill -0 "$ppid" 2>/dev/null; then',
-    '      orphan=1',
-    '    fi',
+    '    if is_orphan "$pid"; then orphan=1; fi',
     '    if [ "$aggressive" = "1" ] || [ "$orphan" = "1" ]; then',
-    '      # Extract user-data-dir for logging / rmdir later',
-    '      udir=$(printf "%s" "$line" | sed -n "s/.*--user-data-dir=\\([^ ]*\\).*/\\1/p" | head -1)',
-    '      echo "[terminate] sb-tmp chrome pid=$pid orphan=$orphan aggressive=$aggressive udir=$udir"',
+    '      udir=$(printf "%s" "$cmd" | sed -n "s/.*--user-data-dir=\\([^ ]*\\).*/\\1/p" | head -1)',
+    '      echo "[terminate] sb-orphan chrome pid=$pid orphan=$orphan aggressive=$aggressive udir=$udir"',
     '      kill -TERM "$pid" 2>/dev/null || true',
     '    fi',
     '  done',
     '  sleep 1',
-    '  pgrep -af -- "--user-data-dir=/tmp/tmp" 2>/dev/null | while IFS= read -r line; do',
+    '  # Pass 2: KILL survivors',
+    '  pgrep -af -- "chrome|chromium|chromedriver|uc_driver|chrome_crashpad" 2>/dev/null | while IFS= read -r line; do',
     '    pid="${line%% *}"',
     '    case "$pid" in ""|*[!0-9]*) continue;; esac',
-    '    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d " ")',
+    '    cmd="${line#* }"',
+    '    should_consider "$cmd" || continue',
+    '    owner_ok "$pid" || continue',
     '    orphan=0',
-    '    if [ -z "$ppid" ] || [ "$ppid" = "1" ] || [ "$ppid" = "0" ]; then orphan=1; fi',
+    '    if is_orphan "$pid"; then orphan=1; fi',
     '    if [ "$aggressive" = "1" ] || [ "$orphan" = "1" ]; then',
     '      kill -KILL "$pid" 2>/dev/null || true',
     '    fi',
+    '  done',
+    '  # Driver leftovers often orphan without user-data-dir',
+    '  for pat in chromedriver uc_driver chrome_crashpad_handler; do',
+    '    pgrep -af -- "$pat" 2>/dev/null | while IFS= read -r line; do',
+    '      pid="${line%% *}"',
+    '      case "$pid" in ""|*[!0-9]*) continue;; esac',
+    '      owner_ok "$pid" || continue',
+    '      if [ "$aggressive" = "1" ] || is_orphan "$pid"; then',
+    '        echo "[terminate] sb-orphan driver pid=$pid pat=$pat"',
+    '        kill -TERM "$pid" 2>/dev/null || true',
+    '        sleep 0.2',
+    '        kill -KILL "$pid" 2>/dev/null || true',
+    '      fi',
+    '    done',
     '  done',
     '  # Remove stale /tmp/tmp* dirs that no longer have a live chrome',
     '  now=$(date +%s)',
@@ -413,14 +478,13 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
     '    if pgrep -af -- "--user-data-dir=$d" >/dev/null 2>&1; then continue; fi',
     '    mtime=$(stat -c %Y "$d" 2>/dev/null || echo 0)',
     '    age=$((now - mtime))',
-    '    # aggressive: any idle dir; else only if older than 45s (avoid racing new concurrent SB)',
     '    if [ "$aggressive" = "1" ] || [ "$age" -ge 45 ]; then',
     '      rm -rf "$d" 2>/dev/null || true',
     '      echo "[terminate] removed stale sb profile $d age=${age}s"',
     '    fi',
     '  done',
     '}',
-    'cleanup_sb_tmp_chrome || true',
+    'cleanup_sb_orphan_chrome || true',
   ];
   return script;
 }
@@ -625,7 +689,7 @@ function cleanupBrowserTempDirs(task = null, options = {}) {
 
 /**
  * After a run ends: if no other browser task is active, aggressively sweep
- * SeleniumBase /tmp/tmp* chrome leftovers (orphans + abandoned profiles).
+ * SeleniumBase chrome leftovers (orphans + /tmp profiles + workdir profiles).
  */
 function scheduleOrphanSbChromeSweep(delayMs = 2500) {
   const wait = Math.max(0, Number(delayMs) || 0);
@@ -633,16 +697,16 @@ function scheduleOrphanSbChromeSweep(delayMs = 2500) {
     try {
       if (activeBrowserRuns.size > 0) {
         console.log(
-          `[browser-launcher] skip aggressive sb-tmp sweep: ${activeBrowserRuns.size} active run(s)`
+          `[browser-launcher] skip aggressive sb-orphan sweep: ${activeBrowserRuns.size} active run(s)`
         );
         // Still safe: only kill orphans (parent dead)
         runTerminateCommands(buildOrphanSbChromeCleanupCommands({ aggressive: false }));
         return;
       }
-      console.log('[browser-launcher] aggressive sb-tmp chrome sweep (no active browser runs)');
+      console.log('[browser-launcher] aggressive sb-orphan chrome sweep (no active browser runs)');
       runTerminateCommands(buildOrphanSbChromeCleanupCommands({ aggressive: true }));
     } catch (err) {
-      console.warn('[browser-launcher] sb-tmp sweep error:', err.message);
+      console.warn('[browser-launcher] sb-orphan sweep error:', err.message);
     }
   }, wait);
 }
