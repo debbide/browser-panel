@@ -932,6 +932,30 @@ a:hover { text-decoration: underline; }
   gap: 12px;
 }
 
+/* .grid sets display:grid and would override the native [hidden] attribute */
+.condition-details[hidden],
+.condition-type-panel[hidden],
+#condition-http-fields[hidden],
+#condition-remaining-fields[hidden] {
+  display: none !important;
+}
+
+.condition-type-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.condition-type-panel > .field-label.panel-title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.92;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

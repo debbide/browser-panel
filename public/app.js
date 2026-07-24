@@ -682,25 +682,47 @@ function resetConditionForm() {
   updateConditionFieldsUI();
 }
 
+function setPanelVisible(el, visible) {
+  if (!el) return;
+  el.hidden = !visible;
+  // Belt-and-suspenders: some CSS display:grid rules can fight [hidden]
+  el.style.display = visible ? '' : 'none';
+}
+
 function updateConditionFieldsUI() {
   const on = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
-  if (conditionFieldsEl) {
-    conditionFieldsEl.hidden = !on;
-    conditionFieldsEl.style.opacity = '1';
-  }
+  setPanelVisible(conditionFieldsEl, on);
+  if (conditionFieldsEl) conditionFieldsEl.style.opacity = '1';
+
   const type = getConditionType();
   const isRemaining = type === 'remaining_callback';
-  if (conditionHttpFieldsEl) conditionHttpFieldsEl.hidden = isRemaining;
-  if (conditionRemainingFieldsEl) conditionRemainingFieldsEl.hidden = !isRemaining;
-  if (conditionTestBtn) {
+
+  // Exclusive type panels — only the selected type is shown
+  setPanelVisible(conditionHttpFieldsEl, on && !isRemaining);
+  setPanelVisible(conditionRemainingFieldsEl, on && isRemaining);
+
+  const hintEl = document.getElementById('condition-type-hint');
+  if (hintEl) {
+    hintEl.textContent = !on
+      ? '启用后选择类型，只显示该类型的配置。'
+      : (isRemaining
+        ? '当前：剩余时间回调。脚本上报 remaining_sec，面板在进入窗口时启动。'
+        : '当前：HTTP 检测。检测失败时启动任务。');
+  }
+
+  const testLabelEl = document.getElementById('condition-test-btn-label');
+  if (testLabelEl) {
+    testLabelEl.textContent = isRemaining ? '测试回调条件' : '测试 HTTP 检测';
+  } else if (conditionTestBtn) {
     conditionTestBtn.disabled = false;
-    const label = isRemaining ? '测试回调条件' : '测试检测';
-    // preserve icon if present
     const icon = conditionTestBtn.querySelector('i');
+    const label = isRemaining ? '测试回调条件' : '测试 HTTP 检测';
     conditionTestBtn.textContent = '';
     if (icon) conditionTestBtn.appendChild(icon);
     conditionTestBtn.append(` ${label}`);
   }
+  if (conditionTestBtn) conditionTestBtn.disabled = false;
+
   updateTaskFormSummary();
 }
 

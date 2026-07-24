@@ -544,17 +544,18 @@
                   <input type="checkbox" name="condition_enabled" id="condition-enabled" data-testid="condition-enabled-checkbox" />
                   启用条件触发
                 </label>
-                <p class="schedule-note" style="margin:4px 0 8px;">开关开启后按类型采用；脚本 remaining 回调始终可上报，是否调度由类型决定。</p>
+                <p class="schedule-note" id="condition-type-hint" style="margin:4px 0 8px;">先选类型，只显示该类型的配置项。</p>
 
                 <div id="condition-fields" class="grid single-col condition-details" style="margin-top:8px;" hidden>
                   <div>
-                    <label class="field-label" for="condition-type">类型</label>
+                    <label class="field-label" for="condition-type">条件类型</label>
                     <select id="condition-type" name="condition_type">
                       <option value="http_check">HTTP 检测（失败触发）</option>
                       <option value="remaining_callback">剩余时间回调（进入窗口触发）</option>
                     </select>
                   </div>
-                  <div class="grid interval-range-grid">
+
+                  <div class="grid interval-range-grid" id="condition-common-fields">
                     <div>
                       <label class="field-label" for="condition-check-interval">检测间隔</label>
                       <input id="condition-check-interval" name="condition_check_interval" type="number" min="1" value="5" />
@@ -578,15 +579,16 @@
                       </select>
                     </div>
                   </div>
-                  <div class="schedule-note">冷却：触发后多久内不再因条件重复启动。</div>
+                  <div class="schedule-note" id="condition-common-note">冷却：触发后多久内不再因条件重复启动。</div>
 
-                  <!-- HTTP check fields -->
-                  <div id="condition-http-fields" class="grid single-col">
+                  <!-- HTTP only -->
+                  <div id="condition-http-fields" class="condition-type-panel" data-condition-type="http_check">
+                    <div class="field-label panel-title">HTTP 检测配置</div>
                     <div>
                       <label class="field-label" for="condition-url">检测 URL</label>
                       <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
                       <div class="schedule-note" style="margin-top:4px;">
-                        默认走任务代理。纯 IPv6 需 HTTP 代理；SOCKS 暂不支持检测通道。
+                        检测失败时启动任务。默认走任务代理；纯 IPv6 需 HTTP 代理。
                       </div>
                     </div>
                     <div>
@@ -617,11 +619,11 @@
                     </div>
                   </div>
 
-                  <!-- Remaining-time callback fields -->
-                  <div id="condition-remaining-fields" class="grid single-col" hidden>
+                  <!-- Remaining callback only -->
+                  <div id="condition-remaining-fields" class="condition-type-panel" data-condition-type="remaining_callback" hidden>
+                    <div class="field-label panel-title">剩余时间回调配置</div>
                     <div class="schedule-note">
-                      站点续期窗口 W，随机提前 R∈[min,max]，触发阈值 T=W−R。
-                      脚本上报 remaining_sec 后，面板在剩余 ≤ T 时启动任务。先手动探测一次写入剩余时间。
+                      阈值 T = 续期窗口 − 随机提前。脚本上报 remaining_sec 后，剩余 ≤ T 时启动。请先手动探测一次。
                     </div>
                     <div class="grid interval-range-grid">
                       <div>
@@ -664,7 +666,8 @@
 
                   <div class="row" style="margin-top:4px; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button type="button" id="condition-test-btn" class="alt btn-with-icon">
-                      <i data-lucide="radar" class="icon-sm"></i> 测试检测
+                      <i data-lucide="radar" class="icon-sm"></i>
+                      <span id="condition-test-btn-label">测试 HTTP 检测</span>
                     </button>
                     <span class="muted" id="condition-last-status-text">最近：—</span>
                   </div>
