@@ -520,7 +520,16 @@ function resolveTaskScriptPath(taskName, type, currentScriptPath = '', existingT
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(config.paths.publicDir));
+// Avoid stale panel UI after deploys (especially app.js / styles.css / index.html)
+app.use(express.static(config.paths.publicDir, {
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    if (/\.(html|js|css)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 app.use('/tasks', express.static(config.paths.tasksDir));
 app.use('/logs', express.static(config.paths.logsDir));
 app.use('/screenshots', express.static(config.paths.screenshotsDir));

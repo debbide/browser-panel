@@ -736,12 +736,8 @@ function updateConditionFieldsUI() {
 
   const type = getConditionType();
   const isRemaining = type === 'remaining_callback';
-  const commonFieldsEl = document.getElementById('condition-common-fields');
-  const commonNoteEl = document.getElementById('condition-common-note');
 
-  // HTTP needs poll interval/cooldown; remaining callback does not show them.
-  setPanelVisible(commonFieldsEl, on && !isRemaining);
-  setPanelVisible(commonNoteEl, on && !isRemaining);
+  // Interval/cooldown are nested inside HTTP panel; remaining panel is exclusive.
   setPanelVisible(conditionHttpFieldsEl, on && !isRemaining);
   setPanelVisible(conditionRemainingFieldsEl, on && isRemaining);
   if (on && isRemaining) updateRemainingThresholdPreview();

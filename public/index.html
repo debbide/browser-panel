@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=20260724c" />
 </head>
 <body>
   <div class="shell">
@@ -555,35 +555,34 @@
                     </select>
                   </div>
 
-                  <!-- HTTP only: poll interval + cooldown + request fields -->
-                  <div id="condition-common-fields" class="grid interval-range-grid" data-condition-type="http_check">
-                    <div>
-                      <label class="field-label" for="condition-check-interval">检测间隔</label>
-                      <input id="condition-check-interval" name="condition_check_interval" type="number" min="1" value="5" />
-                    </div>
-                    <div>
-                      <label class="field-label" for="condition-check-unit">单位</label>
-                      <select id="condition-check-unit" name="condition_check_unit">
-                        <option value="minutes">分钟</option>
-                        <option value="hours">小时</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label class="field-label" for="condition-cooldown">冷却</label>
-                      <input id="condition-cooldown" name="condition_cooldown" type="number" min="0" value="10" />
-                    </div>
-                    <div>
-                      <label class="field-label" for="condition-cooldown-unit">单位</label>
-                      <select id="condition-cooldown-unit" name="condition_cooldown_unit">
-                        <option value="minutes">分钟</option>
-                        <option value="hours">小时</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div class="schedule-note" id="condition-common-note" data-condition-type="http_check">冷却：触发后多久内不再因条件重复启动。</div>
-
+                  <!-- HTTP only: interval/cooldown live inside this panel so remaining-callback never shows them -->
                   <div id="condition-http-fields" class="condition-type-panel" data-condition-type="http_check">
                     <div class="field-label panel-title">HTTP 检测配置</div>
+                    <div id="condition-common-fields" class="grid interval-range-grid">
+                      <div>
+                        <label class="field-label" for="condition-check-interval">检测间隔</label>
+                        <input id="condition-check-interval" name="condition_check_interval" type="number" min="1" value="5" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-check-unit">单位</label>
+                        <select id="condition-check-unit" name="condition_check_unit">
+                          <option value="minutes">分钟</option>
+                          <option value="hours">小时</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-cooldown">冷却</label>
+                        <input id="condition-cooldown" name="condition_cooldown" type="number" min="0" value="10" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-cooldown-unit">单位</label>
+                        <select id="condition-cooldown-unit" name="condition_cooldown_unit">
+                          <option value="minutes">分钟</option>
+                          <option value="hours">小时</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="schedule-note" id="condition-common-note">冷却：触发后多久内不再因条件重复启动。</div>
                     <div>
                       <label class="field-label" for="condition-url">检测 URL</label>
                       <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
@@ -720,7 +719,7 @@
     </div>
   </section>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260724c"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();
