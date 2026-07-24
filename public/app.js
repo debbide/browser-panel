@@ -923,15 +923,19 @@ function updateConditionCallbackStatusText(task) {
 function describeCondition(task) {
   if (!task || !Number(task.condition_enabled)) return '';
   const cond = task.condition || {};
-  const check = intervalToUnitValue(cond.check_interval_sec || 300);
-  const unitLabel = check.unit === 'hours' ? '小时' : '分';
   if (cond.type === 'remaining_callback') {
     const cfg = cond.config || {};
     const w = cfg.window_value ?? 30;
     const wu = cfg.window_unit === 'hours' ? '时' : (cfg.window_unit === 'days' ? '天' : '分');
-    return `剩余时间回调 · 窗口${w}${wu} / 检${check.value}${unitLabel}`;
+    const jMin = cfg.jitter_min ?? 5;
+    const jMax = cfg.jitter_max ?? 10;
+    const ju = cfg.jitter_unit === 'hours' ? '时' : (cfg.jitter_unit === 'days' ? '天' : '分');
+    // No poll-interval wording: callback scheduling follows remaining_sec / trigger_at
+    return `剩余时间回调 · 窗口${w}${wu} · 偏移${jMin}~${jMax}${ju}`;
   }
-  return `HTTP失败检测 / ${check.value}${unitLabel}`;
+  const check = intervalToUnitValue(cond.check_interval_sec || 300);
+  const unitLabel = check.unit === 'hours' ? '小时' : '分';
+  return `HTTP失败检测 / 检${check.value}${unitLabel}`;
 }
 
 function conditionStatusClass(task) {
@@ -1966,7 +1970,11 @@ function taskCard(task) {
           <span class="metric-value">${Number(task.condition_enabled)
             ? escapeHtml(task.condition_last_status
               ? `${task.condition_last_status}${task.condition_last_detail ? ' · ' + task.condition_last_detail : ''}`
-              : (task.condition_next_check_at ? `下次检测 ${shortTime(task.condition_next_check_at)}` : '等待检测'))
+              : (task.condition?.type === 'remaining_callback'
+                ? (task.callback_trigger_at
+                  ? `预计触发 ${shortTime(task.callback_trigger_at)}`
+                  : '等待脚本上报 remaining_sec')
+                : (task.condition_next_check_at ? `下次检测 ${shortTime(task.condition_next_check_at)}` : '等待检测')))
             : '—'}</span>
         </div>
       </div>
