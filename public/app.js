@@ -939,11 +939,40 @@ function describeCondition(task) {
 }
 
 function conditionStatusClass(task) {
+  // Prefer live callback data over a stale last_status string
+  if (task && task.condition?.type === 'remaining_callback' && task.callback_remaining_sec != null && task.callback_remaining_sec !== '') {
+    return 'active';
+  }
   const s = task && task.condition_last_status;
-  if (s === 'ok' || s === 'waiting') return 'active';
-  if (s === 'due') return 'active';
+  if (s === 'ok' || s === 'waiting' || s === 'due') return 'active';
   if (s === 'fail' || s === 'error' || s === 'expired') return 'failed';
   return 'idle';
+}
+
+/** One-line condition value for task cards (remaining_callback prefers stored callback fields). */
+function describeConditionValue(task) {
+  if (!task || !Number(task.condition_enabled)) return '—';
+  const cond = task.condition || {};
+  if (cond.type === 'remaining_callback') {
+    if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
+      return '等待脚本上报 remaining_sec';
+    }
+    const rem = Number(task.callback_remaining_sec);
+    const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
+    let est = rem;
+    if (Number.isFinite(reportedAt)) {
+      est = rem - (Date.now() - reportedAt) / 1000;
+    }
+    const bits = [`现余约 ${formatRemainingSec(est)}`];
+    if (task.callback_trigger_at) bits.push(`预计 ${shortTime(task.callback_trigger_at)}`);
+    if (task.callback_action) bits.push(String(task.callback_action));
+    return bits.join(' · ');
+  }
+  if (task.condition_last_status) {
+    return `${task.condition_last_status}${task.condition_last_detail ? ` · ${task.condition_last_detail}` : ''}`;
+  }
+  if (task.condition_next_check_at) return `下次检测 ${shortTime(task.condition_next_check_at)}`;
+  return '等待检测';
 }
 
 function describeNextRun(task) {
@@ -1967,15 +1996,7 @@ function taskCard(task) {
             <span class="dot ${Number(task.condition_enabled) ? conditionStatusClass(task) : 'idle'}"></span>
             <span>${Number(task.condition_enabled) ? escapeHtml(describeCondition(task) || '已启用') : '未启用'}</span>
           </div>
-          <span class="metric-value">${Number(task.condition_enabled)
-            ? escapeHtml(task.condition_last_status
-              ? `${task.condition_last_status}${task.condition_last_detail ? ' · ' + task.condition_last_detail : ''}`
-              : (task.condition?.type === 'remaining_callback'
-                ? (task.callback_trigger_at
-                  ? `预计触发 ${shortTime(task.callback_trigger_at)}`
-                  : '等待脚本上报 remaining_sec')
-                : (task.condition_next_check_at ? `下次检测 ${shortTime(task.condition_next_check_at)}` : '等待检测')))
-            : '—'}</span>
+          <span class="metric-value">${escapeHtml(describeConditionValue(task))}</span>
         </div>
       </div>
       <div class="task-actions">

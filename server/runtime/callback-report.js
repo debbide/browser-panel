@@ -99,18 +99,33 @@ function ingestTaskResultCallback(taskId, taskResult) {
   }
 
   const updated = db.applyTaskCallbackReport(taskId, report);
+  if (!updated) return null;
 
-  // If adopting remaining_callback, advance condition_next_check toward trigger
-  if (updated && enabled && type === 'remaining_callback' && report.trigger_at) {
-    const triggerMs = new Date(report.trigger_at).getTime();
-    if (Number.isFinite(triggerMs)) {
-      const nextCheckMs = Math.max(Date.now() + 30_000, triggerMs - 30_000);
-      db.updateTask(taskId, {
-        ...updated,
-        condition_next_check_at: new Date(nextCheckMs).toISOString(),
-      });
-      return db.getTask(taskId);
+  // Refresh condition last_* so task cards don't keep a stale "waiting for report" line
+  // after the script has already written remaining_sec.
+  if (enabled && type === 'remaining_callback') {
+    const rem = Number(report.remaining_sec);
+    const remLabel = Number.isFinite(rem)
+      ? (rem >= 3600
+        ? `${Math.floor(rem / 3600)}h${Math.floor((rem % 3600) / 60)}m`
+        : `${Math.max(0, Math.floor(rem / 60))}m`)
+      : '?';
+    const patch = {
+      ...updated,
+      condition_last_status: 'ok',
+      condition_last_detail: report.trigger_at
+        ? `已上报 remaining≈${remLabel}，预计触发 ${report.trigger_at}`
+        : `已上报 remaining≈${remLabel}`,
+      condition_last_checked_at: report.reported_at || new Date().toISOString(),
+    };
+    if (report.trigger_at) {
+      const triggerMs = new Date(report.trigger_at).getTime();
+      if (Number.isFinite(triggerMs)) {
+        const nextCheckMs = Math.max(Date.now() + 30_000, triggerMs - 30_000);
+        patch.condition_next_check_at = new Date(nextCheckMs).toISOString();
+      }
     }
+    return db.updateTask(taskId, patch);
   }
 
   return updated;

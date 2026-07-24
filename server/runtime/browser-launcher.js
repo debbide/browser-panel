@@ -218,10 +218,16 @@ function ensureRuntimeFiles(task) {
     }
 
     // Shared helpers used by Python scripts (panel_callback, etc.)
+    // Prefer tasks/lib; fall back to packaged copy under server/runtime/py_lib
+    // (upgrade keeps tasks/ intact, so tasks/lib may be missing on older installs).
     const tasksLibDir = path.join(config.paths.tasksDir, 'lib');
-    if (fs.existsSync(tasksLibDir)) {
+    const packagedLibDir = path.join(config.paths.root, 'server', 'runtime', 'py_lib');
+    const libFrom = fs.existsSync(path.join(tasksLibDir, 'panel_callback.py'))
+      ? tasksLibDir
+      : (fs.existsSync(path.join(packagedLibDir, 'panel_callback.py')) ? packagedLibDir : '');
+    if (libFrom) {
       files.push({
-        from: tasksLibDir,
+        from: libFrom,
         to: path.join(workerRoot, 'lib'),
       });
     }
@@ -793,6 +799,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['TASK_RESULT_PATH', resultPath],
     // Unbuffered Python so GitHub scripts show logs immediately
     ['PYTHONUNBUFFERED', '1'],
+    // workDir contains copied lib/ for `from lib.panel_callback import ...`
+    ['PYTHONPATH', [workDir, process.env.PYTHONPATH || ''].filter(Boolean).join(path.delimiter)],
     // Unique run marker for scoped terminate (must not collide across concurrent tasks)
     ['BAP_RUN_ID', String(runId || '')],
     ['BAP_TASK_ID', String(task && task.id != null ? task.id : '')],
