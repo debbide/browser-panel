@@ -923,17 +923,9 @@ function updateConditionCallbackStatusText(task) {
 function describeCondition(task) {
   if (!task || !Number(task.condition_enabled)) return '';
   const cond = task.condition || {};
-  if (cond.type === 'remaining_callback') {
-    const cfg = cond.config || {};
-    const w = cfg.window_value ?? 30;
-    const wu = cfg.window_unit === 'hours' ? '小时' : (cfg.window_unit === 'days' ? '天' : '分');
-    const jMin = cfg.jitter_min ?? 5;
-    const jMax = cfg.jitter_max ?? 10;
-    return `剩余时间回调 · 窗口${w}${wu} · 偏移${jMin}~${jMax}`;
-  }
-  const check = intervalToUnitValue(cond.check_interval_sec || 300);
-  const unitLabel = check.unit === 'hours' ? '小时' : '分';
-  return `HTTP 检测 · 每${check.value}${unitLabel}`;
+  if (cond.type === 'remaining_callback') return '剩余时间回调';
+  if (cond.type === 'http_check') return 'HTTP 检测';
+  return cond.type || '条件';
 }
 
 function conditionStatusClass(task) {
@@ -947,30 +939,32 @@ function conditionStatusClass(task) {
   return 'idle';
 }
 
-/** Condition value for task cards (readable; full text still on title tooltip). */
+/** Condition value for task cards — only key next-action info. */
 function describeConditionValue(task) {
   if (!task || !Number(task.condition_enabled)) return '—';
   const cond = task.condition || {};
   if (cond.type === 'remaining_callback') {
-    if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
-      return '等待脚本上报 remaining_sec';
+    if (task.callback_trigger_at) {
+      return `下次触发 ${shortTime(task.callback_trigger_at)}`;
     }
+    if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
+      return '等待上报';
+    }
+    // Have remaining but no trigger yet
     const rem = Number(task.callback_remaining_sec);
     const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
     let est = rem;
     if (Number.isFinite(reportedAt)) {
       est = rem - (Date.now() - reportedAt) / 1000;
     }
-    const bits = [`现余约 ${formatRemainingSec(est)}`];
-    if (task.callback_trigger_at) bits.push(`预计 ${shortTime(task.callback_trigger_at)}`);
-    if (task.callback_action) bits.push(String(task.callback_action));
-    return bits.join(' · ');
+    return `现余约 ${formatRemainingSec(est)}`;
   }
-  if (task.condition_last_status) {
-    const detail = task.condition_last_detail ? String(task.condition_last_detail) : '';
-    return detail
-      ? `${task.condition_last_status} · ${detail.length > 64 ? `${detail.slice(0, 64)}…` : detail}`
-      : String(task.condition_last_status);
+  // HTTP: show last status briefly, or next check time
+  if (task.condition_last_status === 'ok' || task.condition_last_status === 'fail' || task.condition_last_status === 'error') {
+    if (task.condition_next_check_at) {
+      return `${task.condition_last_status} · 下次 ${shortTime(task.condition_next_check_at)}`;
+    }
+    return String(task.condition_last_status);
   }
   if (task.condition_next_check_at) return `下次检测 ${shortTime(task.condition_next_check_at)}`;
   return '等待检测';
