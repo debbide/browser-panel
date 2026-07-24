@@ -477,30 +477,104 @@ a:hover { text-decoration: underline; }
   align-items: flex-start;
 }
 
+.task-card-head-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .task-title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 4px;
+  gap: 8px;
+  min-width: 0;
+  /* Keep title row one line so profile slot below stays fixed */
+  flex-wrap: nowrap;
 }
 
 .task-title-row h3, .script-card h3, .run-head strong {
   margin: 0;
   font-size: 18px;
   letter-spacing: -0.3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
-/* Metrics inside task card */
+.task-title-row .pill {
+  flex-shrink: 0;
+}
+
+/* Fixed second-line slot: persistent/temp profile never jumps into title chips */
+.task-profile-slot {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  min-width: 0;
+}
+
+.task-profile-pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Metrics: only used blocks are rendered (schedule/condition hidden when off). */
 .task-metrics {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin: 16px 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+}
+
+/* Result only */
+.task-metrics:not(.has-schedule):not(.has-condition) {
+  grid-template-columns: 1fr;
+}
+.task-metrics:not(.has-schedule):not(.has-condition) .metric-card {
+  min-height: 72px;
+}
+
+/* Result + schedule (no condition) */
+.task-metrics.has-schedule:not(.has-condition) {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 84px;
+}
+
+/* Result + condition (no schedule): condition full width under result */
+.task-metrics.has-condition:not(.has-schedule) {
+  grid-template-columns: 1fr;
+  grid-template-rows: 72px 72px;
+}
+
+/* Result + schedule + condition: condition spans bottom */
+.task-metrics.has-schedule.has-condition {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 84px 72px;
+}
+.task-metrics.has-schedule.has-condition .metric-condition {
+  grid-column: 1 / -1;
+}
+
+.task-metrics .metric-card {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .metric-card {
-  padding: 10px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   background: rgba(0, 0, 0, 0.25);
   box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
@@ -511,10 +585,18 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-main);
-  margin-bottom: 4px;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.status-indicator > span:not(.dot) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .status-indicator .dot {
@@ -536,20 +618,39 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  flex-shrink: 0;
 }
 
 .metric-card .metric-value {
-  display: block;
-  font-size: 13px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-size: 12px;
   color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.4;
+  margin-top: auto;
+  line-height: 1.35;
   word-break: break-word;
 }
 
 .metric-card.success { border-bottom: 2px solid rgba(34, 197, 94, 0.5); }
 .metric-card.failed { border-bottom: 2px solid rgba(239, 68, 68, 0.5); }
+
+/* Keep task cards in a row the same visual height within the grid */
+.task-grid {
+  align-items: stretch;
+}
+.task-card {
+  min-height: 280px;
+}
+.task-card .task-actions {
+  margin-top: auto;
+}
+.task-card .task-subtitle {
+  display: none; /* script binding no longer shown on card */
+}
 
 /* Pills & Tags */
 .pill {

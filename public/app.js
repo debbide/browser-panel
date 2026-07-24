@@ -929,13 +929,12 @@ function describeCondition(task) {
     const wu = cfg.window_unit === 'hours' ? '时' : (cfg.window_unit === 'days' ? '天' : '分');
     const jMin = cfg.jitter_min ?? 5;
     const jMax = cfg.jitter_max ?? 10;
-    const ju = cfg.jitter_unit === 'hours' ? '时' : (cfg.jitter_unit === 'days' ? '天' : '分');
-    // No poll-interval wording: callback scheduling follows remaining_sec / trigger_at
-    return `剩余时间回调 · 窗口${w}${wu} · 偏移${jMin}~${jMax}${ju}`;
+    // Compact card title; full detail lives in metric-value + title tooltip
+    return `回调 · W${w}${wu} · R${jMin}~${jMax}`;
   }
   const check = intervalToUnitValue(cond.check_interval_sec || 300);
-  const unitLabel = check.unit === 'hours' ? '小时' : '分';
-  return `HTTP失败检测 / 检${check.value}${unitLabel}`;
+  const unitLabel = check.unit === 'hours' ? '时' : '分';
+  return `HTTP · 每${check.value}${unitLabel}`;
 }
 
 function conditionStatusClass(task) {
@@ -949,13 +948,13 @@ function conditionStatusClass(task) {
   return 'idle';
 }
 
-/** One-line condition value for task cards (remaining_callback prefers stored callback fields). */
+/** Compact condition value for task cards (full text via title tooltip). */
 function describeConditionValue(task) {
   if (!task || !Number(task.condition_enabled)) return '—';
   const cond = task.condition || {};
   if (cond.type === 'remaining_callback') {
     if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
-      return '等待脚本上报 remaining_sec';
+      return '待上报 remaining';
     }
     const rem = Number(task.callback_remaining_sec);
     const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
@@ -963,10 +962,45 @@ function describeConditionValue(task) {
     if (Number.isFinite(reportedAt)) {
       est = rem - (Date.now() - reportedAt) / 1000;
     }
-    const bits = [`现余约 ${formatRemainingSec(est)}`];
-    if (task.callback_trigger_at) bits.push(`预计 ${shortTime(task.callback_trigger_at)}`);
+    const bits = [`余${formatRemainingSec(est)}`];
+    if (task.callback_trigger_at) bits.push(`触${shortTime(task.callback_trigger_at)}`);
     if (task.callback_action) bits.push(String(task.callback_action));
     return bits.join(' · ');
+  }
+  if (task.condition_last_status) {
+    const detail = task.condition_last_detail ? String(task.condition_last_detail) : '';
+    // Keep card short; long HTTP details belong in tooltip
+    return detail
+      ? `${task.condition_last_status} · ${detail.length > 36 ? `${detail.slice(0, 36)}…` : detail}`
+      : String(task.condition_last_status);
+  }
+  if (task.condition_next_check_at) return `下次 ${shortTime(task.condition_next_check_at)}`;
+  return '等待检测';
+}
+
+function describeConditionValueFull(task) {
+  if (!task || !Number(task.condition_enabled)) return '';
+  const cond = task.condition || {};
+  if (cond.type === 'remaining_callback') {
+    if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
+      return '等待脚本上报 remaining_sec（请先手动探测）';
+    }
+    const rem = Number(task.callback_remaining_sec);
+    const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
+    let est = rem;
+    if (Number.isFinite(reportedAt)) {
+      est = rem - (Date.now() - reportedAt) / 1000;
+    }
+    const parts = [
+      `估算剩余 ${formatRemainingSec(est)}`,
+      `上报剩余 ${formatRemainingSec(rem)}`,
+    ];
+    if (task.callback_valid_until) parts.push(`Valid until ${task.callback_valid_until}`);
+    if (task.callback_trigger_at) parts.push(`预计触发 ${shortTime(task.callback_trigger_at)}`);
+    if (task.callback_threshold_sec != null) parts.push(`阈值 ${formatRemainingSec(task.callback_threshold_sec)}`);
+    if (task.callback_action) parts.push(`action=${task.callback_action}`);
+    if (task.condition_next_check_at) parts.push(`下次检查 ${shortTime(task.condition_next_check_at)}`);
+    return parts.join(' · ');
   }
   if (task.condition_last_status) {
     return `${task.condition_last_status}${task.condition_last_detail ? ` · ${task.condition_last_detail}` : ''}`;
@@ -1949,32 +1983,66 @@ function latestRunSummary(taskId) {
 function taskCard(task) {
   const isRunning = runningTaskIds.has(task.id) || Boolean(task.is_running);
   const latest = latestRunSummary(task.id);
-  const scriptLabel = task.script_path ? `已绑定脚本 · ${getScriptLabel(task.script_path)}` : '未绑定脚本';
   const isPersistent = Boolean(Number(task.use_persistent));
   const profileName = (() => {
     if (!task.browser_profile_id) return isPersistent ? '默认配置' : '临时目录';
     const p = profilesCache.find((x) => Number(x.id) === Number(task.browser_profile_id));
     return p ? p.name : `#${task.browser_profile_id}`;
   })();
-  const profilePill = isPersistent
-    ? `<span class="pill pill-persistent" title="持久浏览器配置">持久 · ${escapeHtml(profileName)}</span>`
-    : `<span class="pill pill-temp" title="临时 profile，不写持久目录">临时 · ${escapeHtml(profileName)}</span>`;
+  const profileMode = isPersistent ? '持久' : '临时';
+  const profileTitle = isPersistent
+    ? `持久浏览器配置 · ${profileName}`
+    : `临时 profile · ${profileName}`;
+  const scheduleOn = Boolean(Number(task.enabled));
+  const conditionOn = Boolean(Number(task.condition_enabled));
+  const scheduleModeLabel = task.schedule_mode === 'daily_window'
+    ? '每天时段'
+    : (task.schedule_mode === 'interval' ? '随机区间' : '固定周期');
+  // Only render schedule/condition blocks when actually used — keeps cards compact and even.
+  const scheduleMetric = scheduleOn
+    ? `<div class="metric-card" title="${escapeHtml(describeNextRun(task) || '')}">
+          <span class="metric-label">定时</span>
+          <div class="status-indicator">
+            <span class="dot active"></span>
+            <span>${escapeHtml(scheduleModeLabel)}</span>
+          </div>
+          <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
+        </div>`
+    : '';
+  const conditionMetric = conditionOn
+    ? `<div class="metric-card metric-condition" title="${escapeHtml(describeConditionValueFull(task) || describeCondition(task) || '')}">
+          <span class="metric-label">条件</span>
+          <div class="status-indicator">
+            <span class="dot ${conditionStatusClass(task)}"></span>
+            <span>${escapeHtml(describeCondition(task) || '已启用')}</span>
+          </div>
+          <span class="metric-value">${escapeHtml(describeConditionValue(task))}</span>
+        </div>`
+    : '';
+  const metricsMod = [
+    'task-metrics',
+    scheduleOn ? 'has-schedule' : '',
+    conditionOn ? 'has-condition' : '',
+  ].filter(Boolean).join(' ');
   return `
     <article class="task-card ${isRunning ? 'task-running' : ''}" data-testid="task-card" data-task-id="${task.id}">
       <div class="task-card-top">
-        <div>
+        <div class="task-card-head-main">
           <div class="task-title-row">
-            <h3>${escapeHtml(task.name)}</h3>
+            <h3 title="${escapeHtml(task.name)}">${escapeHtml(task.name)}</h3>
             <span class="pill pill-type">${escapeHtml(task.type)}</span>
-            ${profilePill}
             ${isRunning ? '<span class="pill pill-running">运行中</span>' : ''}
           </div>
-          <div class="task-subtitle">${escapeHtml(scriptLabel)}</div>
+          <div class="task-profile-slot" title="${escapeHtml(profileTitle)}">
+            <span class="pill ${isPersistent ? 'pill-persistent' : 'pill-temp'} task-profile-pill">
+              ${escapeHtml(profileMode)} · ${escapeHtml(profileName)}
+            </span>
+          </div>
         </div>
         <button class="icon-btn" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="edit-task-btn">编辑</button>
       </div>
-      <div class="task-metrics">
-        <div class="metric-card ${latest.className}">
+      <div class="${metricsMod}">
+        <div class="metric-card ${latest.className}" title="${escapeHtml(latest.detail || '')}">
           <span class="metric-label">最新结果</span>
           <div class="status-indicator">
             <span class="dot ${latest.className}"></span>
@@ -1982,22 +2050,8 @@ function taskCard(task) {
           </div>
           <span class="metric-value">${escapeHtml(latest.detail)}</span>
         </div>
-        <div class="metric-card">
-          <span class="metric-label">定时</span>
-          <div class="status-indicator">
-            <span class="dot ${task.enabled ? 'active' : 'idle'}"></span>
-            <span>${task.enabled ? (task.schedule_mode === 'daily_window' ? '每天随机时段' : (task.schedule_mode === 'interval' ? '随机区间' : '固定周期')) : '未启用'}</span>
-          </div>
-          <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">条件</span>
-          <div class="status-indicator">
-            <span class="dot ${Number(task.condition_enabled) ? conditionStatusClass(task) : 'idle'}"></span>
-            <span>${Number(task.condition_enabled) ? escapeHtml(describeCondition(task) || '已启用') : '未启用'}</span>
-          </div>
-          <span class="metric-value">${escapeHtml(describeConditionValue(task))}</span>
-        </div>
+        ${scheduleMetric}
+        ${conditionMetric}
       </div>
       <div class="task-actions">
         <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>
