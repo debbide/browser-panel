@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260724k" />
+  <link rel="stylesheet" href="/styles.css?v=20260724m" />
 </head>
 <body>
   <div class="shell">
@@ -241,6 +241,21 @@
                 依赖已装好、插件为 0 时一般不用动。
               </p>
               <form id="browser-runtime-form" class="grid single-col">
+                <div>
+                  <label class="field-label" for="br-chrome-path">Chrome 可执行文件路径</label>
+                  <input
+                    type="text"
+                    id="br-chrome-path"
+                    name="chromePath"
+                    placeholder="/usr/bin/google-chrome-stable"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <div class="schedule-note" style="margin-top:4px;">
+                    本机 Chrome/Chromium 二进制路径。留空则用环境变量 / 安装默认路径。
+                    保存后立即用于新任务，无需改服务器配置文件。
+                  </div>
+                </div>
                 <div>
                   <label class="field-label" for="br-runtime-stack">运行栈</label>
                   <select id="br-runtime-stack" name="runtimeStack">
@@ -719,7 +734,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260724k"></script>
+  <script src="/app.js?v=20260724m"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

@@ -609,16 +609,33 @@ function normalizePackageList(value) {
     .join(',');
 }
 
+function normalizeChromePath(value, fallback = '') {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  if (!text) return String(fallback || '').trim();
+  // Reject obvious garbage; keep paths portable (no shell metachar requirement).
+  if (/[\r\n\0]/.test(text)) return String(fallback || '').trim();
+  return text.slice(0, 512);
+}
+
 function getBrowserRuntimeSettings() {
   const pluginPackages = normalizePackageList(getSetting('browser_plugin_packages'));
   const hasPluginPackages = pluginPackages.length > 0;
   const runtimeStack = normalizeRuntimeStack(getSetting('browser_runtime_stack'));
   const usePlaywrightExtra = runtimeStack === 'playwright'
     && (toBool(getSetting('browser_use_playwright_extra')) || hasPluginPackages);
+  // DB override first; empty = fall back to env/config default path
+  const chromePath = normalizeChromePath(
+    getSetting('browser_chrome_path'),
+    (config.browser && config.browser.chromePath) || ''
+  );
   return {
     runtimeStack,
     usePlaywrightExtra,
     pluginPackages,
+    chromePath,
+    chromePathSource: String(getSetting('browser_chrome_path') || '').trim()
+      ? 'panel'
+      : 'env',
   };
 }
 
@@ -626,6 +643,11 @@ function setBrowserRuntimeSettings(payload = {}) {
   const usePlaywrightExtra = payload.usePlaywrightExtra ? '1' : '0';
   const pluginPackages = normalizePackageList(payload.pluginPackages);
   const runtimeStack = normalizeRuntimeStack(payload.runtimeStack);
+  // Empty string clears panel override and reverts to env/config default
+  if (payload.chromePath !== undefined) {
+    const chromePath = normalizeChromePath(payload.chromePath, '');
+    setSetting('browser_chrome_path', chromePath || null);
+  }
   setSetting('browser_runtime_stack', runtimeStack);
   setSetting('browser_use_playwright_extra', usePlaywrightExtra);
   setSetting('browser_plugin_packages', pluginPackages);

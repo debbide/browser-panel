@@ -438,6 +438,9 @@ function normalizeBrowserRuntimeSettingsPayload(payload = {}, fallback = null) {
   const runtimeStack = normalizeRuntimeStack(payload.runtimeStack === undefined ? base.runtimeStack : payload.runtimeStack);
   const usePlaywrightExtra = parseBooleanFlag(payload.usePlaywrightExtra, Boolean(base.usePlaywrightExtra));
   const pluginPackages = normalizePluginPackages(payload.pluginPackages === undefined ? base.pluginPackages : payload.pluginPackages);
+  const chromePath = payload.chromePath === undefined
+    ? (base.chromePath || '')
+    : String(payload.chromePath || '').trim().slice(0, 512);
 
   if (pluginPackages.includes('playwright-stealth')) {
     throw new Error('playwright-stealth 这个包是占位包，请改用 puppeteer-extra-plugin-stealth');
@@ -448,10 +451,15 @@ function normalizeBrowserRuntimeSettingsPayload(payload = {}, fallback = null) {
     throw new Error(`插件包名不合法: ${invalidPackage}`);
   }
 
+  if (chromePath && /[\r\n\0]/.test(chromePath)) {
+    throw new Error('Chrome 路径含非法字符');
+  }
+
   return {
     runtimeStack,
     usePlaywrightExtra: runtimeStack === 'playwright' && (usePlaywrightExtra || pluginPackages.length > 0),
     pluginPackages: pluginPackages.join(','),
+    chromePath,
   };
 }
 

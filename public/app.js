@@ -2186,11 +2186,14 @@ function setBrowserRuntimeStatus(text, color) {
   if (color) browserRuntimeStatus.style.color = color;
 }
 
+const brChromePath = document.getElementById('br-chrome-path');
+
 function collectBrowserRuntimeFormPayload() {
   return {
     runtimeStack: brRuntimeStack?.value || 'playwright',
     usePlaywrightExtra: Boolean(brUsePlaywrightExtra?.checked),
     pluginPackages: normalizePluginPackagesForUi(brPluginPackages?.value),
+    chromePath: String(brChromePath?.value || '').trim(),
   };
 }
 
@@ -2202,6 +2205,7 @@ async function loadBrowserRuntimeSettings() {
     if (brRuntimeStack) brRuntimeStack.value = data.runtimeStack || 'playwright';
     if (brUsePlaywrightExtra) brUsePlaywrightExtra.checked = Boolean(data.usePlaywrightExtra);
     if (brPluginPackages) brPluginPackages.value = normalizePluginPackagesForUi(data.pluginPackages);
+    if (brChromePath) brChromePath.value = data.chromePath || '';
     const packageCount = normalizePluginPackagesForUi(data.pluginPackages).split(',').map(s => s.trim()).filter(Boolean).length;
     const runtimeStack = data.runtimeStack || 'playwright';
     const stackLabel = runtimeStack === 'seleniumbase'
@@ -2210,7 +2214,10 @@ async function loadBrowserRuntimeSettings() {
     const pluginStatus = runtimeStack === 'seleniumbase'
       ? 'Playwright 插件配置已保留'
       : (data.usePlaywrightExtra ? '已启用 playwright-extra' : '使用原生 playwright');
-    setBrowserRuntimeStatus(`状态：${stackLabel}，${pluginStatus}，插件数：${packageCount}`, '#94a3b8');
+    const chromeLabel = data.chromePath
+      ? `Chrome: ${data.chromePath}${data.chromePathSource === 'panel' ? '（面板）' : '（默认）'}`
+      : 'Chrome: 未设置';
+    setBrowserRuntimeStatus(`状态：${stackLabel}，${pluginStatus}，插件数：${packageCount}，${chromeLabel}`, '#94a3b8');
   } catch (error) {
     setBrowserRuntimeStatus('状态：加载失败', '#ef4444');
     console.error('Failed to load browser runtime settings:', error);

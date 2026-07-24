@@ -774,8 +774,16 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   // System keys first, then user layers (user may set script vars; system keys re-forced after).
   // GitHub-style aliases: BROWSER_PROXY → PROXY / HTTP_PROXY / … (only if panel has a proxy).
   const proxyAliasEnv = { BROWSER_PROXY: effectiveProxy || '' };
-  if (config.browser && config.browser.chromePath) {
-    proxyAliasEnv.BROWSER_CHROME_PATH = config.browser.chromePath;
+  const chromePathEffective = (() => {
+    try {
+      const br = db.getBrowserRuntimeSettings();
+      return (br && br.chromePath) || (config.browser && config.browser.chromePath) || '';
+    } catch {
+      return (config.browser && config.browser.chromePath) || '';
+    }
+  })();
+  if (chromePathEffective) {
+    proxyAliasEnv.BROWSER_CHROME_PATH = chromePathEffective;
   }
   if (workerScreenshotDir) {
     proxyAliasEnv.TASK_SCREENSHOT_DIR = workerScreenshotDir;
@@ -786,7 +794,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['DISPLAY', config.browser.display],
     ['XAUTHORITY', config.browser.xauthority],
     ['BROWSER_USER_DATA_DIR', effectiveUserDataDir],
-    ['BROWSER_CHROME_PATH', config.browser.chromePath],
+    ['BROWSER_CHROME_PATH', chromePathEffective],
     ['BROWSER_PROXY', effectiveProxy],
     ['BROWSER_PROFILE_NAME', effectiveProfileName],
     ['BROWSER_LOCALE', effectiveLocale],

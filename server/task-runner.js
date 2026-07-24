@@ -482,7 +482,12 @@ function buildEnv(task, screenshotPath) {
     env.BROWSER_DISPLAY = config.browser.display;
     env.BROWSER_XAUTHORITY = config.browser.xauthority;
     env.BROWSER_USER = config.browser.user;
-    env.BROWSER_CHROME_PATH = config.browser.chromePath;
+    try {
+      const br = db.getBrowserRuntimeSettings();
+      env.BROWSER_CHROME_PATH = (br && br.chromePath) || config.browser.chromePath;
+    } catch {
+      env.BROWSER_CHROME_PATH = config.browser.chromePath;
+    }
     env.BROWSER_HEADLESS = 'false';
   }
   env.APP_ROOT = config.paths.root;

@@ -379,7 +379,14 @@ async function openManualBrowser(profile) {
     DISPLAY: String(config.browser.display || ':1.0'),
     XAUTHORITY: String(config.browser.xauthority || ''),
     BROWSER_USER_DATA_DIR: effectiveUserDataDir,
-    BROWSER_CHROME_PATH: String(config.browser.chromePath || ''),
+    BROWSER_CHROME_PATH: String((() => {
+      try {
+        const br = db.getBrowserRuntimeSettings();
+        return (br && br.chromePath) || config.browser.chromePath || '';
+      } catch {
+        return config.browser.chromePath || '';
+      }
+    })()),
     BROWSER_PROXY: effectiveProxy || '',
     BROWSER_LOCALE: effectiveLocale,
     BROWSER_TIMEZONE: effectiveTimezone,

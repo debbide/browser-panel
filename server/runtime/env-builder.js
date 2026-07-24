@@ -295,7 +295,13 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
     system.BROWSER_USER_DATA_DIR = useTempProfile
       ? '' // caller may still set temp path; keep empty to force later
       : (profile && profile.user_data_dir) || (task.use_persistent ? config.browser.userDataDir : '');
-    system.BROWSER_CHROME_PATH = config.browser.chromePath;
+    // Panel global setting (DB) overrides env/config default when set
+    try {
+      const br = db.getBrowserRuntimeSettings();
+      system.BROWSER_CHROME_PATH = (br && br.chromePath) || config.browser.chromePath;
+    } catch {
+      system.BROWSER_CHROME_PATH = config.browser.chromePath;
+    }
     system.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
     system.BROWSER_LOCALE = (profile && profile.locale) || config.browser.locale;
     system.BROWSER_TIMEZONE = (profile && profile.timezone_id) || config.browser.timezoneId;
