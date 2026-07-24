@@ -1990,32 +1990,28 @@ function taskCard(task) {
   const scheduleModeLabel = task.schedule_mode === 'daily_window'
     ? '每天时段'
     : (task.schedule_mode === 'interval' ? '随机区间' : '固定周期');
-  // Only render schedule/condition blocks when actually used — keeps cards compact and even.
-  const scheduleMetric = scheduleOn
-    ? `<div class="metric-card" title="${escapeHtml(describeNextRun(task) || '')}">
-          <span class="metric-label">定时</span>
-          <div class="status-indicator">
-            <span class="dot active"></span>
-            <span>${escapeHtml(scheduleModeLabel)}</span>
-          </div>
-          <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
-        </div>`
-    : '';
-  const conditionMetric = conditionOn
-    ? `<div class="metric-card metric-condition" title="${escapeHtml(describeConditionValueFull(task) || describeCondition(task) || '')}">
+  // Schedule / HTTP / remaining-callback are treated as one "trigger" slot (mutually exclusive UI).
+  // Prefer condition when enabled; otherwise show schedule. Never side-by-side.
+  let triggerMetric = '';
+  if (conditionOn) {
+    triggerMetric = `<div class="metric-card metric-condition" title="${escapeHtml(describeConditionValueFull(task) || describeCondition(task) || '')}">
           <span class="metric-label">条件</span>
           <div class="status-indicator">
             <span class="dot ${conditionStatusClass(task)}"></span>
             <span>${escapeHtml(describeCondition(task) || '已启用')}</span>
           </div>
           <span class="metric-value">${escapeHtml(describeConditionValue(task))}</span>
-        </div>`
-    : '';
-  const metricsMod = [
-    'task-metrics',
-    scheduleOn ? 'has-schedule' : '',
-    conditionOn ? 'has-condition' : '',
-  ].filter(Boolean).join(' ');
+        </div>`;
+  } else if (scheduleOn) {
+    triggerMetric = `<div class="metric-card metric-schedule" title="${escapeHtml(describeNextRun(task) || '')}">
+          <span class="metric-label">定时</span>
+          <div class="status-indicator">
+            <span class="dot active"></span>
+            <span>${escapeHtml(scheduleModeLabel)}</span>
+          </div>
+          <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
+        </div>`;
+  }
   return `
     <article class="task-card ${isRunning ? 'task-running' : ''}" data-testid="task-card" data-task-id="${task.id}">
       <div class="task-card-top">
@@ -2033,7 +2029,7 @@ function taskCard(task) {
         </div>
         <button class="icon-btn" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="edit-task-btn">编辑</button>
       </div>
-      <div class="${metricsMod}">
+      <div class="task-metrics">
         <div class="metric-card ${latest.className}" title="${escapeHtml(latest.detail || '')}">
           <span class="metric-label">最新结果</span>
           <div class="status-indicator">
@@ -2042,8 +2038,7 @@ function taskCard(task) {
           </div>
           <span class="metric-value">${escapeHtml(latest.detail)}</span>
         </div>
-        ${scheduleMetric}
-        ${conditionMetric}
+        ${triggerMetric}
       </div>
       <div class="task-actions">
         <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>

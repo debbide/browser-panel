@@ -524,10 +524,14 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 
-/* Metrics: only used blocks are rendered (schedule/condition hidden when off). */
+/*
+ * Metrics layout: always stacked full-width rows.
+ * Schedule / HTTP / remaining-callback are mutually exclusive in practice —
+ * only one "when it runs" block is shown under latest result (same as therose).
+ */
 .task-metrics {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   margin: 16px 0;
   flex: 1 1 auto;
@@ -535,43 +539,19 @@ a:hover { text-decoration: underline; }
   align-content: start;
 }
 
-/* Result only */
-.task-metrics:not(.has-schedule):not(.has-condition) {
-  grid-template-columns: 1fr;
-}
-.task-metrics:not(.has-schedule):not(.has-condition) .metric-card {
-  min-height: 96px;
-}
-
-/* Result + schedule (no condition) */
-.task-metrics.has-schedule:not(.has-condition) {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: minmax(100px, auto);
-}
-
-/* Result + condition (no schedule): condition full width under result */
-.task-metrics.has-condition:not(.has-schedule) {
-  grid-template-columns: 1fr;
-  grid-template-rows: minmax(92px, auto) minmax(96px, auto);
-}
-
-/* Result + schedule + condition: condition spans bottom */
-.task-metrics.has-schedule.has-condition {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: minmax(100px, auto) minmax(96px, auto);
-}
-.task-metrics.has-schedule.has-condition .metric-condition {
-  grid-column: 1 / -1;
-}
-
 .task-metrics .metric-card {
-  min-height: 96px;
+  min-height: 88px;
   height: auto;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 12px 14px;
+}
+
+.task-metrics .metric-schedule,
+.task-metrics .metric-condition {
+  min-height: 88px;
 }
 
 .metric-card {
