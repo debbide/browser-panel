@@ -20,7 +20,8 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 
 - 默认目录：`/opt/browser-panel`
 - 换目录：`PANEL_ROOT=/data/panel curl -fsSL ... | bash`
-- 更新**不会删除** `tasks/`、`data/`、日志与截图
+- 更新**不会删除** `tasks/`（业务脚本）、`data/`、日志与截图
+- 例外：共享库 `tasks/lib/` 会随面板版本**合并更新**（不删你放在 lib 里的其它文件）
 
 打开：`http://服务器IP:3210`
 

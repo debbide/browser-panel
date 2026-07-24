@@ -41,6 +41,28 @@ preserve() {
   esac
 }
 
+# tasks/ is preserved as a whole (user scripts), but shared helpers under tasks/lib/
+# must still track the panel version — otherwise `from lib.panel_callback` breaks
+# after upgrade on existing installs.
+merge_tasks_lib() {
+  local src="$1/tasks/lib"
+  local dst="$ROOT/tasks/lib"
+  if [[ ! -d "$src" ]]; then
+    log "no tasks/lib in package (skip merge)"
+    return 0
+  fi
+  mkdir -p "$dst"
+  # Only refresh files shipped by the panel; never delete user extras in tasks/lib.
+  # -a preserves mode; do not use --delete.
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "$src"/ "$dst"/
+  else
+    # portable fallback: copy tree over (overwrite same names only)
+    cp -a "$src"/. "$dst"/
+  fi
+  log "merged tasks/lib → $dst"
+}
+
 download_and_merge() {
   local tag tmp
   tag="$(resolve_tag || true)"
@@ -63,7 +85,7 @@ download_and_merge() {
 
   mkdir -p "$ROOT"
   if [[ -f "$ROOT/package.json" ]]; then
-    log "upgrade in place (keep tasks/data)"
+    log "upgrade in place (keep tasks/data; merge tasks/lib)"
     shopt -s dotglob nullglob
     for p in "$tmp/tree"/*; do
       n="$(basename "$p")"
@@ -76,6 +98,8 @@ download_and_merge() {
       fi
     done
     shopt -u dotglob nullglob
+    # After skipping whole tasks/, refresh shared helpers only.
+    merge_tasks_lib "$tmp/tree"
   else
     log "fresh install → $ROOT"
     shopt -s dotglob
@@ -83,6 +107,8 @@ download_and_merge() {
     shopt -u dotglob
   fi
   mkdir -p "$ROOT/tasks" "$ROOT/data" "$ROOT/logs" "$ROOT/screenshots" "$ROOT/runtime-data"
+  # Fresh install already has tasks/lib if present in package; ensure dir exists either way.
+  mkdir -p "$ROOT/tasks/lib"
 }
 
 install_deps() {
