@@ -20,12 +20,14 @@ data/*.db*
 *.py[cod]
 *.egg-info/
 
-# Task automation scripts (keep only templates/examples)
+# Task automation scripts (keep only templates/examples + shared helpers)
 tasks/**
 !tasks/template.js
 !tasks/example.js
 !tasks/template.py
 !tasks/example.py
+!tasks/lib/
+!tasks/lib/**
 
 # Optional local tools not part of panel runtime
 # automa-recorder/   # uncomment to ignore if not publishing

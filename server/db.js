@@ -108,6 +108,13 @@ if (!taskTableColumns.includes('condition_last_status')) db.exec('ALTER TABLE ta
 if (!taskTableColumns.includes('condition_last_detail')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_detail TEXT');
 if (!taskTableColumns.includes('condition_last_checked_at')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_checked_at TEXT');
 if (!taskTableColumns.includes('condition_cooldown_until')) db.exec('ALTER TABLE tasks ADD COLUMN condition_cooldown_until TEXT');
+// Script remaining-time callback (always stored when script reports; scheduling uses condition switch)
+if (!taskTableColumns.includes('callback_remaining_sec')) db.exec('ALTER TABLE tasks ADD COLUMN callback_remaining_sec REAL');
+if (!taskTableColumns.includes('callback_reported_at')) db.exec('ALTER TABLE tasks ADD COLUMN callback_reported_at TEXT');
+if (!taskTableColumns.includes('callback_trigger_at')) db.exec('ALTER TABLE tasks ADD COLUMN callback_trigger_at TEXT');
+if (!taskTableColumns.includes('callback_threshold_sec')) db.exec('ALTER TABLE tasks ADD COLUMN callback_threshold_sec REAL');
+if (!taskTableColumns.includes('callback_valid_until')) db.exec('ALTER TABLE tasks ADD COLUMN callback_valid_until TEXT');
+if (!taskTableColumns.includes('callback_action')) db.exec('ALTER TABLE tasks ADD COLUMN callback_action TEXT');
 
 const browserProfileColumns = db.prepare('PRAGMA table_info(browser_profiles)').all().map(row => row.name);
 if (!browserProfileColumns.includes('runtime_stack')) db.exec("ALTER TABLE browser_profiles ADD COLUMN runtime_stack TEXT NOT NULL DEFAULT ''");
@@ -120,6 +127,8 @@ const taskColumns = [
   'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id',
   'condition_enabled', 'condition_json', 'condition_next_check_at',
   'condition_last_status', 'condition_last_detail', 'condition_last_checked_at', 'condition_cooldown_until',
+  'callback_remaining_sec', 'callback_reported_at', 'callback_trigger_at',
+  'callback_threshold_sec', 'callback_valid_until', 'callback_action',
 ];
 
 function listTasks() {
@@ -138,6 +147,8 @@ function createTask(payload) {
       enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id,
       condition_enabled, condition_json, condition_next_check_at,
       condition_last_status, condition_last_detail, condition_last_checked_at, condition_cooldown_until,
+      callback_remaining_sec, callback_reported_at, callback_trigger_at,
+      callback_threshold_sec, callback_valid_until, callback_action,
       updated_at
     )
     VALUES (
@@ -146,6 +157,8 @@ function createTask(payload) {
       @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id,
       @condition_enabled, @condition_json, @condition_next_check_at,
       @condition_last_status, @condition_last_detail, @condition_last_checked_at, @condition_cooldown_until,
+      @callback_remaining_sec, @callback_reported_at, @callback_trigger_at,
+      @callback_threshold_sec, @callback_valid_until, @callback_action,
       CURRENT_TIMESTAMP
     )
   `);
@@ -157,9 +170,49 @@ function createTask(payload) {
     condition_last_detail: null,
     condition_last_checked_at: null,
     condition_cooldown_until: null,
+    callback_remaining_sec: null,
+    callback_reported_at: null,
+    callback_trigger_at: null,
+    callback_threshold_sec: null,
+    callback_valid_until: null,
+    callback_action: null,
     ...payload,
   });
   return getTask(result.lastInsertRowid);
+}
+
+/**
+ * Persist script remaining-time callback. Always stores report; trigger fields optional.
+ * Does not clear fields that are undefined in patch (only overwrites provided keys).
+ */
+function applyTaskCallbackReport(taskId, report = {}) {
+  const id = Number(taskId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const current = getTask(id);
+  if (!current) return null;
+
+  const patch = { ...current };
+  if (report.remaining_sec !== undefined && report.remaining_sec !== null && report.remaining_sec !== '') {
+    const n = Number(report.remaining_sec);
+    if (Number.isFinite(n)) patch.callback_remaining_sec = n;
+  }
+  if (report.reported_at !== undefined) {
+    patch.callback_reported_at = report.reported_at || null;
+  }
+  if (report.trigger_at !== undefined) {
+    patch.callback_trigger_at = report.trigger_at || null;
+  }
+  if (report.threshold_sec !== undefined && report.threshold_sec !== null && report.threshold_sec !== '') {
+    const n = Number(report.threshold_sec);
+    patch.callback_threshold_sec = Number.isFinite(n) ? n : null;
+  }
+  if (report.valid_until !== undefined) {
+    patch.callback_valid_until = report.valid_until ? String(report.valid_until).slice(0, 120) : null;
+  }
+  if (report.action !== undefined) {
+    patch.callback_action = report.action ? String(report.action).slice(0, 64) : null;
+  }
+  return updateTask(id, patch);
 }
 
 function updateTask(id, payload) {
@@ -719,6 +772,7 @@ module.exports = {
   getTask,
   createTask,
   updateTask,
+  applyTaskCallbackReport,
   deleteTask,
   createRun,
   updateRun,

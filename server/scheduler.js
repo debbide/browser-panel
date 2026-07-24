@@ -303,7 +303,15 @@ async function processPureConditionTasks(tasks, runTaskById, now, evalBudget) {
       // optimistically leave next_check as-is until success path advances it;
       // if started, fireTask success sets next_check; if skipped, stays due.
     } else {
-      setConditionNextCheck(task.id, new Date(now + getCheckIntervalSec(task) * 1000));
+      // remaining_callback may suggest next_check_at near trigger_at
+      const metaNext = result.meta && result.meta.next_check_at
+        ? parseIsoMs(result.meta.next_check_at)
+        : NaN;
+      if (Number.isFinite(metaNext) && metaNext > now) {
+        setConditionNextCheck(task.id, new Date(metaNext));
+      } else {
+        setConditionNextCheck(task.id, new Date(now + getCheckIntervalSec(task) * 1000));
+      }
     }
   }
   return used;

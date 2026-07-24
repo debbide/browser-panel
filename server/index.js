@@ -19,6 +19,7 @@ const {
   parseConditionJson,
   listTypes: listConditionTypes,
 } = require('./conditions');
+const remainingCallback = require('./conditions/types/remaining_callback');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
@@ -270,6 +271,12 @@ function decorateTaskForApi(task) {
     condition_last_checked_at: task.condition_last_checked_at || null,
     condition_next_check_at: task.condition_next_check_at || null,
     condition_cooldown_until: task.condition_cooldown_until || null,
+    callback_remaining_sec: task.callback_remaining_sec ?? null,
+    callback_reported_at: task.callback_reported_at || null,
+    callback_trigger_at: task.callback_trigger_at || null,
+    callback_threshold_sec: task.callback_threshold_sec ?? null,
+    callback_valid_until: task.callback_valid_until || null,
+    callback_action: task.callback_action || null,
   };
 }
 
@@ -296,7 +303,31 @@ function buildConditionFieldsFromPayload(payload = {}, existing = null) {
       : parseConditionJson(existing?.condition_json));
 
   const normalized = normalizeConditionPayload(raw || {});
-  const nextCheck = existing?.condition_next_check_at || new Date().toISOString();
+  let nextCheck = existing?.condition_next_check_at || new Date().toISOString();
+
+  // When enabling remaining_callback with an existing remaining report, recompute trigger once.
+  const extraCallback = {};
+  if (
+    normalized.type === 'remaining_callback'
+    && existing
+    && existing.callback_remaining_sec != null
+    && existing.callback_reported_at
+  ) {
+    const computed = remainingCallback.computeTriggerFromReport(
+      existing.callback_remaining_sec,
+      normalized.config || {},
+      existing.callback_reported_at
+    );
+    extraCallback.callback_trigger_at = computed.trigger_at;
+    extraCallback.callback_threshold_sec = computed.threshold_sec;
+    if (computed.trigger_at) {
+      const triggerMs = new Date(computed.trigger_at).getTime();
+      if (Number.isFinite(triggerMs)) {
+        nextCheck = new Date(Math.max(Date.now() + 30_000, triggerMs - 30_000)).toISOString();
+      }
+    }
+  }
+
   return {
     condition_enabled: 1,
     condition_json: JSON.stringify(normalized),
@@ -305,6 +336,7 @@ function buildConditionFieldsFromPayload(payload = {}, existing = null) {
     condition_last_detail: existing?.condition_last_detail || null,
     condition_last_checked_at: existing?.condition_last_checked_at || null,
     condition_cooldown_until: existing?.condition_cooldown_until || null,
+    ...extraCallback,
   };
 }
 
@@ -1013,6 +1045,13 @@ app.put('/api/tasks/:id', (req, res) => {
       timeout_sec: Number(payload.timeout_sec || 300),
       params_json: existing.params_json || '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
+      // preserve script callback state across form saves
+      callback_remaining_sec: existing.callback_remaining_sec ?? null,
+      callback_reported_at: existing.callback_reported_at || null,
+      callback_trigger_at: existing.callback_trigger_at || null,
+      callback_threshold_sec: existing.callback_threshold_sec ?? null,
+      callback_valid_until: existing.callback_valid_until || null,
+      callback_action: existing.callback_action || null,
       ...conditionFields,
     });
     if (payload.env !== undefined || payload.params !== undefined || payload.params_json !== undefined) {

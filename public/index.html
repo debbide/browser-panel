@@ -542,15 +542,16 @@
                 <h4 class="task-section-title">条件触发</h4>
                 <label class="inline-check">
                   <input type="checkbox" name="condition_enabled" id="condition-enabled" data-testid="condition-enabled-checkbox" />
-                  启用条件触发（HTTP 失败时启动）
+                  启用条件触发
                 </label>
-                <p class="schedule-note" style="margin:4px 0 8px;">可与定时叠加：到点后再检测。</p>
+                <p class="schedule-note" style="margin:4px 0 8px;">开关开启后按类型采用；脚本 remaining 回调始终可上报，是否调度由类型决定。</p>
 
                 <div id="condition-fields" class="grid single-col condition-details" style="margin-top:8px;" hidden>
                   <div>
                     <label class="field-label" for="condition-type">类型</label>
                     <select id="condition-type" name="condition_type">
                       <option value="http_check">HTTP 检测（失败触发）</option>
+                      <option value="remaining_callback">剩余时间回调（进入窗口触发）</option>
                     </select>
                   </div>
                   <div class="grid interval-range-grid">
@@ -578,39 +579,89 @@
                     </div>
                   </div>
                   <div class="schedule-note">冷却：触发后多久内不再因条件重复启动。</div>
-                  <div>
-                    <label class="field-label" for="condition-url">检测 URL</label>
-                    <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
-                    <div class="schedule-note" style="margin-top:4px;">
-                      默认走任务代理。纯 IPv6 需 HTTP 代理；SOCKS 暂不支持检测通道。
-                    </div>
-                  </div>
-                  <div>
-                    <label class="field-label" for="condition-proxy">检测代理覆盖（可选）</label>
-                    <input id="condition-proxy" name="condition_proxy" type="text" placeholder="留空=用任务代理；例 http://127.0.0.1:7890" />
-                  </div>
-                  <div class="grid interval-range-grid">
+
+                  <!-- HTTP check fields -->
+                  <div id="condition-http-fields" class="grid single-col">
                     <div>
-                      <label class="field-label" for="condition-method">方法</label>
-                      <select id="condition-method" name="condition_method">
-                        <option value="GET">GET</option>
-                        <option value="HEAD">HEAD</option>
-                        <option value="POST">POST</option>
-                      </select>
+                      <label class="field-label" for="condition-url">检测 URL</label>
+                      <input id="condition-url" name="condition_url" type="url" placeholder="https://example.com/health" data-testid="condition-url-input" />
+                      <div class="schedule-note" style="margin-top:4px;">
+                        默认走任务代理。纯 IPv6 需 HTTP 代理；SOCKS 暂不支持检测通道。
+                      </div>
                     </div>
                     <div>
-                      <label class="field-label" for="condition-timeout">超时（秒）</label>
-                      <input id="condition-timeout" name="condition_timeout" type="number" min="1" max="60" value="10" />
+                      <label class="field-label" for="condition-proxy">检测代理覆盖（可选）</label>
+                      <input id="condition-proxy" name="condition_proxy" type="text" placeholder="留空=用任务代理；例 http://127.0.0.1:7890" />
+                    </div>
+                    <div class="grid interval-range-grid">
+                      <div>
+                        <label class="field-label" for="condition-method">方法</label>
+                        <select id="condition-method" name="condition_method">
+                          <option value="GET">GET</option>
+                          <option value="HEAD">HEAD</option>
+                          <option value="POST">POST</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-timeout">超时（秒）</label>
+                        <input id="condition-timeout" name="condition_timeout" type="number" min="1" max="60" value="10" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-success-statuses">成功状态码</label>
+                        <input id="condition-success-statuses" name="condition_success_statuses" type="text" value="200-399" placeholder="200-399" />
+                      </div>
                     </div>
                     <div>
-                      <label class="field-label" for="condition-success-statuses">成功状态码</label>
-                      <input id="condition-success-statuses" name="condition_success_statuses" type="text" value="200-399" placeholder="200-399" />
+                      <label class="field-label" for="condition-expect-body">响应须包含（可选）</label>
+                      <input id="condition-expect-body" name="condition_expect_body" type="text" placeholder="留空则只看状态码" />
                     </div>
                   </div>
-                  <div>
-                    <label class="field-label" for="condition-expect-body">响应须包含（可选）</label>
-                    <input id="condition-expect-body" name="condition_expect_body" type="text" placeholder="留空则只看状态码" />
+
+                  <!-- Remaining-time callback fields -->
+                  <div id="condition-remaining-fields" class="grid single-col" hidden>
+                    <div class="schedule-note">
+                      站点续期窗口 W，随机提前 R∈[min,max]，触发阈值 T=W−R。
+                      脚本上报 remaining_sec 后，面板在剩余 ≤ T 时启动任务。先手动探测一次写入剩余时间。
+                    </div>
+                    <div class="grid interval-range-grid">
+                      <div>
+                        <label class="field-label" for="condition-window-value">续期窗口</label>
+                        <input id="condition-window-value" name="condition_window_value" type="number" min="1" value="30" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-window-unit">单位</label>
+                        <select id="condition-window-unit" name="condition_window_unit">
+                          <option value="minutes" selected>分钟</option>
+                          <option value="hours">小时</option>
+                          <option value="days">天</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="grid interval-range-grid">
+                      <div>
+                        <label class="field-label" for="condition-jitter-min">随机提前 min</label>
+                        <input id="condition-jitter-min" name="condition_jitter_min" type="number" min="0" value="5" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-jitter-max">随机提前 max</label>
+                        <input id="condition-jitter-max" name="condition_jitter_max" type="number" min="0" value="10" />
+                      </div>
+                      <div>
+                        <label class="field-label" for="condition-jitter-unit">单位</label>
+                        <select id="condition-jitter-unit" name="condition_jitter_unit">
+                          <option value="minutes" selected>分钟</option>
+                          <option value="hours">小时</option>
+                          <option value="days">天</option>
+                        </select>
+                      </div>
+                    </div>
+                    <label class="inline-check" style="margin-top:4px;">
+                      <input type="checkbox" id="condition-trigger-if-expired" name="condition_trigger_if_expired" />
+                      已过期仍触发（一般关闭）
+                    </label>
+                    <div class="schedule-note" id="condition-callback-status-text">回调：—</div>
                   </div>
+
                   <div class="row" style="margin-top:4px; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button type="button" id="condition-test-btn" class="alt btn-with-icon">
                       <i data-lucide="radar" class="icon-sm"></i> 测试检测

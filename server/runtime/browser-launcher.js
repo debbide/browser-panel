@@ -216,6 +216,15 @@ function ensureRuntimeFiles(task) {
         to: path.join(workerRoot, 'host2play_dp'),
       });
     }
+
+    // Shared helpers used by Python scripts (panel_callback, etc.)
+    const tasksLibDir = path.join(config.paths.tasksDir, 'lib');
+    if (fs.existsSync(tasksLibDir)) {
+      files.push({
+        from: tasksLibDir,
+        to: path.join(workerRoot, 'lib'),
+      });
+    }
   }
 
   for (const file of files) {

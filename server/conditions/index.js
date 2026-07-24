@@ -1,4 +1,5 @@
 const httpCheck = require('./types/http_check');
+const remainingCallback = require('./types/remaining_callback');
 
 // Pluggable condition types. future: task_dependency, file_exists, ...
 const registry = new Map();
@@ -11,6 +12,7 @@ function register(typeModule) {
 }
 
 register(httpCheck);
+register(remainingCallback);
 
 function listTypes() {
   return Array.from(registry.values()).map((mod) => ({

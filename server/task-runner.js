@@ -11,6 +11,7 @@ const {
   buildForegroundEnv,
 } = require('./runtime/env-builder');
 const { evaluateLogSuccess } = require('./runtime/success-heuristics');
+const { ingestTaskResultCallback } = require('./runtime/callback-report');
 
 const activeChildren = new Map();
 
@@ -676,6 +677,23 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
   }
   if (taskResultParseError) {
     appendLog(logPath, `parse_error: ${taskResultParseError}\n`);
+  }
+
+  // Always store remaining_sec callback when present; scheduling adoption is panel switch.
+  if (taskResult && task && task.id != null) {
+    try {
+      const cbTask = ingestTaskResultCallback(task.id, taskResult);
+      if (cbTask && cbTask.callback_remaining_sec != null) {
+        appendLog(
+          logPath,
+          `[panel] callback remaining_sec=${cbTask.callback_remaining_sec}`
+            + (cbTask.callback_trigger_at ? ` trigger_at=${cbTask.callback_trigger_at}` : ' (not scheduling)')
+            + '\n'
+        );
+      }
+    } catch (cbErr) {
+      appendLog(logPath, `[panel] callback ingest error: ${cbErr.message || cbErr}\n`);
+    }
   }
 
   if (result.errorCode === 'stopped') {

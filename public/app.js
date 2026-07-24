@@ -181,6 +181,15 @@ const conditionMethodEl = document.getElementById('condition-method');
 const conditionTimeoutEl = document.getElementById('condition-timeout');
 const conditionSuccessStatusesEl = document.getElementById('condition-success-statuses');
 const conditionExpectBodyEl = document.getElementById('condition-expect-body');
+const conditionHttpFieldsEl = document.getElementById('condition-http-fields');
+const conditionRemainingFieldsEl = document.getElementById('condition-remaining-fields');
+const conditionWindowValueEl = document.getElementById('condition-window-value');
+const conditionWindowUnitEl = document.getElementById('condition-window-unit');
+const conditionJitterMinEl = document.getElementById('condition-jitter-min');
+const conditionJitterMaxEl = document.getElementById('condition-jitter-max');
+const conditionJitterUnitEl = document.getElementById('condition-jitter-unit');
+const conditionTriggerIfExpiredEl = document.getElementById('condition-trigger-if-expired');
+const conditionCallbackStatusText = document.getElementById('condition-callback-status-text');
 const conditionTestBtn = document.getElementById('condition-test-btn');
 const conditionLastStatusText = document.getElementById('condition-last-status-text');
 
@@ -551,23 +560,60 @@ function unitValueToSec(value, unit, minSec = 0) {
   return Math.max(minSec, sec);
 }
 
+function getConditionType() {
+  return String(conditionTypeEl?.value || 'http_check').trim() || 'http_check';
+}
+
 function buildConditionPayloadFromForm() {
   const enabled = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
   if (!enabled) {
     return { condition_enabled: false };
   }
+  const type = getConditionType();
   const checkUnit = conditionCheckUnitEl?.value || 'minutes';
   const coolUnit = conditionCooldownUnitEl?.value || 'minutes';
   const checkSec = unitValueToSec(conditionCheckIntervalEl?.value || 5, checkUnit, 30);
   const coolSec = unitValueToSec(conditionCooldownEl?.value || 10, coolUnit, 0);
+
+  if (type === 'remaining_callback') {
+    const windowValue = Number(conditionWindowValueEl?.value || 30);
+    const jitterMin = Number(conditionJitterMinEl?.value || 5);
+    const jitterMax = Number(conditionJitterMaxEl?.value || 10);
+    if (!Number.isFinite(windowValue) || windowValue <= 0) {
+      throw new Error('续期窗口必须大于 0');
+    }
+    if (!Number.isFinite(jitterMin) || jitterMin < 0 || !Number.isFinite(jitterMax) || jitterMax < 0) {
+      throw new Error('随机提前区间无效');
+    }
+    if (jitterMax < jitterMin) {
+      throw new Error('随机提前上限不能小于下限');
+    }
+    return {
+      condition_enabled: true,
+      condition: {
+        type: 'remaining_callback',
+        check_interval_sec: checkSec,
+        cooldown_sec: coolSec,
+        config: {
+          window_value: windowValue,
+          window_unit: conditionWindowUnitEl?.value || 'minutes',
+          jitter_min: jitterMin,
+          jitter_max: jitterMax,
+          jitter_unit: conditionJitterUnitEl?.value || 'minutes',
+          trigger_if_expired: Boolean(conditionTriggerIfExpiredEl?.checked),
+        },
+      },
+    };
+  }
+
   const url = String(conditionUrlEl?.value || '').trim();
   if (!url) {
-    throw new Error('启用条件触发时请填写检测 URL');
+    throw new Error('启用 HTTP 条件时请填写检测 URL');
   }
   return {
     condition_enabled: true,
     condition: {
-      type: conditionTypeEl?.value || 'http_check',
+      type: 'http_check',
       check_interval_sec: checkSec,
       cooldown_sec: coolSec,
       config: {
@@ -587,7 +633,8 @@ function fillConditionForm(task) {
   if (conditionEnabledEl) conditionEnabledEl.checked = enabled;
   const cond = (task && task.condition) || {};
   const cfg = cond.config || {};
-  if (conditionTypeEl) conditionTypeEl.value = cond.type || 'http_check';
+  const type = cond.type || 'http_check';
+  if (conditionTypeEl) conditionTypeEl.value = type;
   const check = intervalToUnitValue(cond.check_interval_sec || 300);
   const cool = intervalToUnitValue(cond.cooldown_sec || 600);
   if (conditionCheckIntervalEl) conditionCheckIntervalEl.value = check.value;
@@ -600,7 +647,14 @@ function fillConditionForm(task) {
   if (conditionTimeoutEl) conditionTimeoutEl.value = Math.round((Number(cfg.timeout_ms) || 10000) / 1000);
   if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = cfg.success_statuses || '200-399';
   if (conditionExpectBodyEl) conditionExpectBodyEl.value = cfg.expect_body_includes || '';
+  if (conditionWindowValueEl) conditionWindowValueEl.value = cfg.window_value ?? 30;
+  if (conditionWindowUnitEl) conditionWindowUnitEl.value = cfg.window_unit || 'minutes';
+  if (conditionJitterMinEl) conditionJitterMinEl.value = cfg.jitter_min ?? 5;
+  if (conditionJitterMaxEl) conditionJitterMaxEl.value = cfg.jitter_max ?? 10;
+  if (conditionJitterUnitEl) conditionJitterUnitEl.value = cfg.jitter_unit || cfg.window_unit || 'minutes';
+  if (conditionTriggerIfExpiredEl) conditionTriggerIfExpiredEl.checked = Boolean(cfg.trigger_if_expired);
   updateConditionLastStatusText(task);
+  updateConditionCallbackStatusText(task);
   updateConditionFieldsUI();
 }
 
@@ -617,24 +671,35 @@ function resetConditionForm() {
   if (conditionTimeoutEl) conditionTimeoutEl.value = 10;
   if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = '200-399';
   if (conditionExpectBodyEl) conditionExpectBodyEl.value = '';
+  if (conditionWindowValueEl) conditionWindowValueEl.value = 30;
+  if (conditionWindowUnitEl) conditionWindowUnitEl.value = 'minutes';
+  if (conditionJitterMinEl) conditionJitterMinEl.value = 5;
+  if (conditionJitterMaxEl) conditionJitterMaxEl.value = 10;
+  if (conditionJitterUnitEl) conditionJitterUnitEl.value = 'minutes';
+  if (conditionTriggerIfExpiredEl) conditionTriggerIfExpiredEl.checked = false;
   updateConditionLastStatusText(null);
+  updateConditionCallbackStatusText(null);
   updateConditionFieldsUI();
 }
 
 function updateConditionFieldsUI() {
   const on = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
   if (conditionFieldsEl) {
-    // Progressive disclosure: hide details until enabled
     conditionFieldsEl.hidden = !on;
     conditionFieldsEl.style.opacity = '1';
   }
-  const controls = [
-    conditionTypeEl, conditionCheckIntervalEl, conditionCheckUnitEl,
-    conditionCooldownEl, conditionCooldownUnitEl, conditionUrlEl, conditionProxyEl, conditionMethodEl,
-    conditionTimeoutEl, conditionSuccessStatusesEl, conditionExpectBodyEl, conditionTestBtn,
-  ];
-  for (const el of controls) {
-    if (el) el.disabled = false; // keep editable when shown so user can prefill
+  const type = getConditionType();
+  const isRemaining = type === 'remaining_callback';
+  if (conditionHttpFieldsEl) conditionHttpFieldsEl.hidden = isRemaining;
+  if (conditionRemainingFieldsEl) conditionRemainingFieldsEl.hidden = !isRemaining;
+  if (conditionTestBtn) {
+    conditionTestBtn.disabled = false;
+    const label = isRemaining ? '测试回调条件' : '测试检测';
+    // preserve icon if present
+    const icon = conditionTestBtn.querySelector('i');
+    conditionTestBtn.textContent = '';
+    if (icon) conditionTestBtn.appendChild(icon);
+    conditionTestBtn.append(` ${label}`);
   }
   updateTaskFormSummary();
 }
@@ -752,18 +817,65 @@ function updateConditionLastStatusText(task) {
   conditionLastStatusText.textContent = `最近：${task.condition_last_status}${detail ? ` · ${detail}` : ''}${when ? ` · ${when}` : ''}`;
 }
 
+function formatRemainingSec(sec) {
+  const s = Math.floor(Number(sec));
+  if (!Number.isFinite(s)) return '—';
+  const abs = Math.abs(s);
+  const sign = s < 0 ? '-' : '';
+  if (abs < 60) return `${sign}${abs}s`;
+  if (abs < 3600) return `${sign}${Math.floor(abs / 60)}m`;
+  if (abs < 86400) {
+    const h = Math.floor(abs / 3600);
+    const m = Math.floor((abs % 3600) / 60);
+    return m ? `${sign}${h}h${m}m` : `${sign}${h}h`;
+  }
+  const d = Math.floor(abs / 86400);
+  const h = Math.floor((abs % 86400) / 3600);
+  return h ? `${sign}${d}d${h}h` : `${sign}${d}d`;
+}
+
+function updateConditionCallbackStatusText(task) {
+  if (!conditionCallbackStatusText) return;
+  if (!task || task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
+    conditionCallbackStatusText.textContent = '回调：尚未上报 remaining_sec（请先手动探测）';
+    return;
+  }
+  const rem = Number(task.callback_remaining_sec);
+  const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
+  let est = rem;
+  if (Number.isFinite(reportedAt)) {
+    est = rem - (Date.now() - reportedAt) / 1000;
+  }
+  const parts = [
+    `回调：上报剩余 ${formatRemainingSec(rem)}`,
+    `估算现余 ${formatRemainingSec(est)}`,
+  ];
+  if (task.callback_valid_until) parts.push(`到期 ${task.callback_valid_until}`);
+  if (task.callback_trigger_at) parts.push(`预计触发 ${shortTime(task.callback_trigger_at)}`);
+  if (task.callback_threshold_sec != null) parts.push(`阈值 ${formatRemainingSec(task.callback_threshold_sec)}`);
+  if (task.callback_action) parts.push(`action=${task.callback_action}`);
+  conditionCallbackStatusText.textContent = parts.join(' · ');
+}
+
 function describeCondition(task) {
   if (!task || !Number(task.condition_enabled)) return '';
   const cond = task.condition || {};
   const check = intervalToUnitValue(cond.check_interval_sec || 300);
   const unitLabel = check.unit === 'hours' ? '小时' : '分';
+  if (cond.type === 'remaining_callback') {
+    const cfg = cond.config || {};
+    const w = cfg.window_value ?? 30;
+    const wu = cfg.window_unit === 'hours' ? '时' : (cfg.window_unit === 'days' ? '天' : '分');
+    return `剩余时间回调 · 窗口${w}${wu} / 检${check.value}${unitLabel}`;
+  }
   return `HTTP失败检测 / ${check.value}${unitLabel}`;
 }
 
 function conditionStatusClass(task) {
   const s = task && task.condition_last_status;
-  if (s === 'ok') return 'active';
-  if (s === 'fail' || s === 'error') return 'failed';
+  if (s === 'ok' || s === 'waiting') return 'active';
+  if (s === 'due') return 'active';
+  if (s === 'fail' || s === 'error' || s === 'expired') return 'failed';
   return 'idle';
 }
 
@@ -2705,6 +2817,9 @@ if (scheduleEnabledEl) {
 if (conditionEnabledEl) {
   conditionEnabledEl.addEventListener('change', updateConditionFieldsUI);
 }
+if (conditionTypeEl) {
+  conditionTypeEl.addEventListener('change', updateConditionFieldsUI);
+}
 
 // Keep footer summary in sync with common fields
 ['name', 'timeout_sec'].forEach((name) => {
@@ -2717,15 +2832,23 @@ if (conditionTestBtn) {
     try {
       let conditionPayload;
       try {
-        conditionPayload = buildConditionPayloadFromForm();
+        // Force enabled for test payload construction
+        const was = conditionEnabledEl ? conditionEnabledEl.checked : true;
+        if (conditionEnabledEl) conditionEnabledEl.checked = true;
+        try {
+          conditionPayload = buildConditionPayloadFromForm();
+        } finally {
+          if (conditionEnabledEl) conditionEnabledEl.checked = was;
+        }
       } catch (err) {
-        // allow test with URL even if checkbox off
+        // allow test with URL even if checkbox off (http only)
+        if (getConditionType() === 'remaining_callback') throw err;
         const url = String(conditionUrlEl?.value || '').trim();
         if (!url) throw err;
         conditionPayload = {
           condition_enabled: true,
           condition: {
-            type: conditionTypeEl?.value || 'http_check',
+            type: 'http_check',
             check_interval_sec: unitValueToSec(conditionCheckIntervalEl?.value || 5, conditionCheckUnitEl?.value || 'minutes', 30),
             cooldown_sec: unitValueToSec(conditionCooldownEl?.value || 10, conditionCooldownUnitEl?.value || 'minutes', 0),
             config: {
@@ -2740,7 +2863,7 @@ if (conditionTestBtn) {
         };
       }
       if (!conditionPayload.condition) {
-        toast('请先填写检测 URL', 'warn');
+        toast(getConditionType() === 'remaining_callback' ? '请先配置剩余时间回调' : '请先填写检测 URL', 'warn');
         return;
       }
       conditionTestBtn.disabled = true;
