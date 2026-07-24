@@ -528,7 +528,7 @@ a:hover { text-decoration: underline; }
 .task-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 12px;
   margin: 16px 0;
   flex: 1 1 auto;
   min-height: 0;
@@ -540,37 +540,38 @@ a:hover { text-decoration: underline; }
   grid-template-columns: 1fr;
 }
 .task-metrics:not(.has-schedule):not(.has-condition) .metric-card {
-  min-height: 72px;
+  min-height: 96px;
 }
 
 /* Result + schedule (no condition) */
 .task-metrics.has-schedule:not(.has-condition) {
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 84px;
+  grid-template-rows: minmax(100px, auto);
 }
 
 /* Result + condition (no schedule): condition full width under result */
 .task-metrics.has-condition:not(.has-schedule) {
   grid-template-columns: 1fr;
-  grid-template-rows: 72px 72px;
+  grid-template-rows: minmax(92px, auto) minmax(96px, auto);
 }
 
 /* Result + schedule + condition: condition spans bottom */
 .task-metrics.has-schedule.has-condition {
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 84px 72px;
+  grid-template-rows: minmax(100px, auto) minmax(96px, auto);
 }
 .task-metrics.has-schedule.has-condition .metric-condition {
   grid-column: 1 / -1;
 }
 
 .task-metrics .metric-card {
-  min-height: 0;
-  height: 100%;
+  min-height: 96px;
+  height: auto;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  padding: 12px 14px;
 }
 
 .metric-card {
@@ -585,7 +586,7 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-main);
   margin-bottom: 0;
@@ -625,13 +626,13 @@ a:hover { text-decoration: underline; }
 .metric-card .metric-value {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
   margin-top: auto;
-  line-height: 1.35;
+  line-height: 1.4;
   word-break: break-word;
 }
 
@@ -643,7 +644,7 @@ a:hover { text-decoration: underline; }
   align-items: stretch;
 }
 .task-card {
-  min-height: 280px;
+  min-height: 300px;
 }
 .task-card .task-actions {
   margin-top: auto;

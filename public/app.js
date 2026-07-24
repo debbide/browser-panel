@@ -926,15 +926,14 @@ function describeCondition(task) {
   if (cond.type === 'remaining_callback') {
     const cfg = cond.config || {};
     const w = cfg.window_value ?? 30;
-    const wu = cfg.window_unit === 'hours' ? '时' : (cfg.window_unit === 'days' ? '天' : '分');
+    const wu = cfg.window_unit === 'hours' ? '小时' : (cfg.window_unit === 'days' ? '天' : '分');
     const jMin = cfg.jitter_min ?? 5;
     const jMax = cfg.jitter_max ?? 10;
-    // Compact card title; full detail lives in metric-value + title tooltip
-    return `回调 · W${w}${wu} · R${jMin}~${jMax}`;
+    return `剩余时间回调 · 窗口${w}${wu} · 偏移${jMin}~${jMax}`;
   }
   const check = intervalToUnitValue(cond.check_interval_sec || 300);
-  const unitLabel = check.unit === 'hours' ? '时' : '分';
-  return `HTTP · 每${check.value}${unitLabel}`;
+  const unitLabel = check.unit === 'hours' ? '小时' : '分';
+  return `HTTP 检测 · 每${check.value}${unitLabel}`;
 }
 
 function conditionStatusClass(task) {
@@ -948,13 +947,13 @@ function conditionStatusClass(task) {
   return 'idle';
 }
 
-/** Compact condition value for task cards (full text via title tooltip). */
+/** Condition value for task cards (readable; full text still on title tooltip). */
 function describeConditionValue(task) {
   if (!task || !Number(task.condition_enabled)) return '—';
   const cond = task.condition || {};
   if (cond.type === 'remaining_callback') {
     if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
-      return '待上报 remaining';
+      return '等待脚本上报 remaining_sec';
     }
     const rem = Number(task.callback_remaining_sec);
     const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
@@ -962,19 +961,18 @@ function describeConditionValue(task) {
     if (Number.isFinite(reportedAt)) {
       est = rem - (Date.now() - reportedAt) / 1000;
     }
-    const bits = [`余${formatRemainingSec(est)}`];
-    if (task.callback_trigger_at) bits.push(`触${shortTime(task.callback_trigger_at)}`);
+    const bits = [`现余约 ${formatRemainingSec(est)}`];
+    if (task.callback_trigger_at) bits.push(`预计 ${shortTime(task.callback_trigger_at)}`);
     if (task.callback_action) bits.push(String(task.callback_action));
     return bits.join(' · ');
   }
   if (task.condition_last_status) {
     const detail = task.condition_last_detail ? String(task.condition_last_detail) : '';
-    // Keep card short; long HTTP details belong in tooltip
     return detail
-      ? `${task.condition_last_status} · ${detail.length > 36 ? `${detail.slice(0, 36)}…` : detail}`
+      ? `${task.condition_last_status} · ${detail.length > 64 ? `${detail.slice(0, 64)}…` : detail}`
       : String(task.condition_last_status);
   }
-  if (task.condition_next_check_at) return `下次 ${shortTime(task.condition_next_check_at)}`;
+  if (task.condition_next_check_at) return `下次检测 ${shortTime(task.condition_next_check_at)}`;
   return '等待检测';
 }
 
