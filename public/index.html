@@ -555,7 +555,8 @@
                     </select>
                   </div>
 
-                  <div class="grid interval-range-grid" id="condition-common-fields">
+                  <!-- HTTP only: poll interval + cooldown + request fields -->
+                  <div id="condition-common-fields" class="grid interval-range-grid" data-condition-type="http_check">
                     <div>
                       <label class="field-label" for="condition-check-interval">检测间隔</label>
                       <input id="condition-check-interval" name="condition_check_interval" type="number" min="1" value="5" />
@@ -579,9 +580,8 @@
                       </select>
                     </div>
                   </div>
-                  <div class="schedule-note" id="condition-common-note">冷却：触发后多久内不再因条件重复启动。</div>
+                  <div class="schedule-note" id="condition-common-note" data-condition-type="http_check">冷却：触发后多久内不再因条件重复启动。</div>
 
-                  <!-- HTTP only -->
                   <div id="condition-http-fields" class="condition-type-panel" data-condition-type="http_check">
                     <div class="field-label panel-title">HTTP 检测配置</div>
                     <div>

@@ -570,10 +570,6 @@ function buildConditionPayloadFromForm() {
     return { condition_enabled: false };
   }
   const type = getConditionType();
-  const checkUnit = conditionCheckUnitEl?.value || 'minutes';
-  const coolUnit = conditionCooldownUnitEl?.value || 'minutes';
-  const checkSec = unitValueToSec(conditionCheckIntervalEl?.value || 5, checkUnit, 30);
-  const coolSec = unitValueToSec(conditionCooldownEl?.value || 10, coolUnit, 0);
 
   if (type === 'remaining_callback') {
     const windowValue = Number(conditionWindowValueEl?.value || 30);
@@ -588,12 +584,14 @@ function buildConditionPayloadFromForm() {
     if (jitterMax < jitterMin) {
       throw new Error('随机提前上限不能小于下限');
     }
+    // No polling UI for callback mode: scheduler follows trigger_at from script reports.
+    // Keep small defaults so backend schema stays valid.
     return {
       condition_enabled: true,
       condition: {
         type: 'remaining_callback',
-        check_interval_sec: checkSec,
-        cooldown_sec: coolSec,
+        check_interval_sec: 60,
+        cooldown_sec: 600,
         config: {
           window_value: windowValue,
           window_unit: conditionWindowUnitEl?.value || 'minutes',
@@ -606,6 +604,10 @@ function buildConditionPayloadFromForm() {
     };
   }
 
+  const checkUnit = conditionCheckUnitEl?.value || 'minutes';
+  const coolUnit = conditionCooldownUnitEl?.value || 'minutes';
+  const checkSec = unitValueToSec(conditionCheckIntervalEl?.value || 5, checkUnit, 30);
+  const coolSec = unitValueToSec(conditionCooldownEl?.value || 10, coolUnit, 0);
   const url = String(conditionUrlEl?.value || '').trim();
   if (!url) {
     throw new Error('启用 HTTP 条件时请填写检测 URL');
@@ -696,8 +698,12 @@ function updateConditionFieldsUI() {
 
   const type = getConditionType();
   const isRemaining = type === 'remaining_callback';
+  const commonFieldsEl = document.getElementById('condition-common-fields');
+  const commonNoteEl = document.getElementById('condition-common-note');
 
-  // Exclusive type panels — only the selected type is shown
+  // HTTP needs poll interval/cooldown; remaining callback does not show them.
+  setPanelVisible(commonFieldsEl, on && !isRemaining);
+  setPanelVisible(commonNoteEl, on && !isRemaining);
   setPanelVisible(conditionHttpFieldsEl, on && !isRemaining);
   setPanelVisible(conditionRemainingFieldsEl, on && isRemaining);
 
@@ -706,8 +712,8 @@ function updateConditionFieldsUI() {
     hintEl.textContent = !on
       ? '启用后选择类型，只显示该类型的配置。'
       : (isRemaining
-        ? '当前：剩余时间回调。脚本上报 remaining_sec，面板在进入窗口时启动。'
-        : '当前：HTTP 检测。检测失败时启动任务。');
+        ? '当前：剩余时间回调。只需配置窗口与随机提前；调度跟脚本 remaining 回调走。'
+        : '当前：HTTP 检测。配置检测间隔、冷却与 URL。');
   }
 
   const testLabelEl = document.getElementById('condition-test-btn-label');

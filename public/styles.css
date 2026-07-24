@@ -936,7 +936,9 @@ a:hover { text-decoration: underline; }
 .condition-details[hidden],
 .condition-type-panel[hidden],
 #condition-http-fields[hidden],
-#condition-remaining-fields[hidden] {
+#condition-remaining-fields[hidden],
+#condition-common-fields[hidden],
+#condition-common-note[hidden] {
   display: none !important;
 }
 
