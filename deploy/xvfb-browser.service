@@ -1,13 +1,18 @@
 [Unit]
 Description=Xvfb virtual display :1 for browser automation
 After=network.target
+# Always-on virtual display for headed Chrome (panel BROWSER_DISPLAY=:1.0)
 
 [Service]
 Type=simple
+# Kill any leftover Xvfb on :1 before start (orphans from old manual runs)
+ExecStartPre=-/usr/bin/pkill -f '[X]vfb :1'
 # 1440x900x24 — matches panel default viewport style
 ExecStart=/usr/bin/Xvfb :1 -screen 0 1440x900x24 -ac +extension GLX +render -noreset
 Restart=always
 RestartSec=2
+# Keep display up with the machine
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 bash /opt/browser-panel/scripts/install-browser-stack.sh
 ```
 
-会安装：Chrome/Chromium、Xvfb、字体、xdotool、ffmpeg、DrissionPage、SeleniumBase、Playwright（仅 Python 库）、pyrogram、Pillow、SpeechRecognition/pydub 等（覆盖 woiden/hax 等脚本）。
+会安装：Chrome/Chromium、**Xvfb 系统服务常驻**（`xvfb-browser.service`，显示 `:1`）、字体、xdotool、ffmpeg、DrissionPage、SeleniumBase、Playwright（仅 Python 库）、pyrogram、Pillow、SpeechRecognition/pydub 等（覆盖 woiden/hax 等脚本）。
 
 ---
 

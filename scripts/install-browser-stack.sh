@@ -252,25 +252,66 @@ export PLAYWRIGHT_BROWSERS_PATH=0
 # Do not run: python3 -m playwright install
 
 # ---------------------------------------------------------------------------
-# Xvfb systemd unit (if panel deploy files exist)
+# Xvfb as permanent systemd service (always-on display :1)
 # ---------------------------------------------------------------------------
-if [[ -f "$ROOT/deploy/xvfb-browser.service" ]]; then
-  log "installing xvfb-browser.service"
-  install -m 644 "$ROOT/deploy/xvfb-browser.service" /etc/systemd/system/xvfb-browser.service
+install_xvfb_service() {
+  local unit_src="$ROOT/deploy/xvfb-browser.service"
+  local unit_dst="/etc/systemd/system/xvfb-browser.service"
+
+  if [[ ! -x /usr/bin/Xvfb ]] && ! have Xvfb; then
+    log "installing xvfb package"
+    apt-get install -y xvfb
+  fi
+
+  # Prefer unit shipped with panel; otherwise write a built-in always-on unit
+  if [[ -f "$unit_src" ]]; then
+    log "installing xvfb-browser.service from $unit_src"
+    install -m 644 "$unit_src" "$unit_dst"
+  else
+    log "writing built-in xvfb-browser.service (panel deploy file missing)"
+    cat >"$unit_dst" <<'UNIT'
+[Unit]
+Description=Xvfb virtual display :1 for browser automation
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/pkill -f '[X]vfb :1'
+ExecStart=/usr/bin/Xvfb :1 -screen 0 1440x900x24 -ac +extension GLX +render -noreset
+Restart=always
+RestartSec=2
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  fi
+
+  # Stop any ad-hoc/background Xvfb so the service owns :1
+  pkill -f '[X]vfb :1' 2>/dev/null || true
+  sleep 0.5
+
   systemctl daemon-reload
   systemctl enable xvfb-browser.service
-  systemctl restart xvfb-browser.service || true
-elif ! pgrep -a Xvfb >/dev/null 2>&1; then
-  log "starting temporary Xvfb on ${DISPLAY_NUM%:*} (no unit file found)"
-  # DISPLAY like :1.0 → :1
-  dnum="${DISPLAY_NUM%%.*}"
-  dnum="${dnum#:}"
-  Xvfb ":${dnum}" -screen 0 1920x1080x24 >/tmp/Xvfb.log 2>&1 &
+  systemctl restart xvfb-browser.service
   sleep 1
-fi
+  if systemctl is-active --quiet xvfb-browser.service; then
+    log "xvfb-browser.service is active (DISPLAY :1 permanent)"
+  else
+    log "WARN: xvfb-browser.service failed to start — check: journalctl -u xvfb-browser -n 50"
+    systemctl --no-pager --full status xvfb-browser.service || true
+  fi
+}
 
-# Restart panel if present so it picks up .env.panel
-if systemctl list-unit-files | grep -q browser-automation-panel.service; then
+install_xvfb_service
+
+# Restart panel if present so it picks up .env.panel + display
+if systemctl list-unit-files 2>/dev/null | grep -q browser-automation-panel.service; then
+  # Ensure panel starts after Xvfb when both are enabled
+  if [[ -f /etc/systemd/system/browser-automation-panel.service ]] \
+    || [[ -f /lib/systemd/system/browser-automation-panel.service ]]; then
+    systemctl enable browser-automation-panel.service 2>/dev/null || true
+  fi
   log "restarting browser-automation-panel"
   systemctl restart browser-automation-panel.service || true
 fi
@@ -281,7 +322,9 @@ fi
 log "======== verify ========"
 echo "Chrome:     $CHROME_PATH"
 "$CHROME_PATH" --version 2>/dev/null || true
-echo "DISPLAY:    $DISPLAY_NUM"
+echo "DISPLAY:    $DISPLAY_NUM  (panel uses :1.0 → Xvfb :1)"
+echo "Xvfb unit:  $(systemctl is-active xvfb-browser.service 2>/dev/null || echo unknown) / enabled=$(systemctl is-enabled xvfb-browser.service 2>/dev/null || echo unknown)"
+pgrep -a Xvfb 2>/dev/null || echo "Xvfb process: (not listed)"
 echo "User:       $BROWSER_USER"
 echo "Work dir:   $BROWSER_WORK"
 echo "Env file:   $ENV_FILE"
@@ -302,8 +345,10 @@ PY
 
 log "done."
 log "Notes:"
+log "  - Xvfb runs as systemd service xvfb-browser (always-on :1). Do not start Xvfb manually."
 log "  - Only system Chrome is used; Playwright browsers were NOT downloaded."
 log "  - Python packages are system-wide (pip --break-system-packages), not venv."
 log "  - Woiden/Hax need panel VISION_* + CAPTCHA_API_* for math/reCAPTCHA."
 log "  - Set TG_API_ID / TG_API_HASH / session on the task for Telegram login."
 log "  - If panel was already running, confirm global Chrome path = $CHROME_PATH"
+log "  - Xvfb: systemctl status xvfb-browser | journalctl -u xvfb-browser -n 30"
