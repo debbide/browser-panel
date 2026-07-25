@@ -2,7 +2,7 @@
 # One-shot browser + system Python stack for browser-panel.
 # - Single system Chrome (no Playwright-bundled browser)
 # - Xvfb, fonts, xdotool, ffmpeg, etc.
-# - System-wide pip (--break-system-packages): SB / DP / Playwright(py) / woiden&hax deps
+# - System-wide pip (--break-system-packages): SB / DP / Playwright(py) + common task deps
 #
 # Usage (root on Ubuntu/Debian):
 #   bash /opt/browser-panel/scripts/install-browser-stack.sh
@@ -205,7 +205,7 @@ fi
 # ---------------------------------------------------------------------------
 # System Python packages (NO venv) — forced system-wide
 # Covers: SeleniumBase, DrissionPage, Playwright(py lib only),
-#         woiden/hax: pyrogram, Pillow, speech audio, requests, ...
+#         pyrogram, Pillow, speech audio, requests, ...
 # ---------------------------------------------------------------------------
 log "pip system packages (break-system-packages)"
 python3 -m pip install --break-system-packages -U pip setuptools wheel || \
@@ -348,7 +348,7 @@ log "Notes:"
 log "  - Xvfb runs as systemd service xvfb-browser (always-on :1). Do not start Xvfb manually."
 log "  - Only system Chrome is used; Playwright browsers were NOT downloaded."
 log "  - Python packages are system-wide (pip --break-system-packages), not venv."
-log "  - Woiden/Hax need panel VISION_* + CAPTCHA_API_* for math/reCAPTCHA."
-log "  - Set TG_API_ID / TG_API_HASH / session on the task for Telegram login."
+log "  - Vision / captcha API keys are configured in the panel when needed."
+log "  - Set TG_API_ID / TG_API_HASH / session on tasks that use Telegram login."
 log "  - If panel was already running, confirm global Chrome path = $CHROME_PATH"
 log "  - Xvfb: systemctl status xvfb-browser | journalctl -u xvfb-browser -n 30"
