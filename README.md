@@ -25,6 +25,22 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 
 打开：`http://服务器IP:3210`
 
+### 浏览器 + 系统 Python 依赖（一键）
+
+面板装好后，在服务器用 root 执行（**系统级 pip，不用 venv**；**只装一个系统 Chrome**，不装 Playwright 自带浏览器）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/install-browser-stack.sh | bash
+```
+
+或本地：
+
+```bash
+bash /opt/browser-panel/scripts/install-browser-stack.sh
+```
+
+会安装：Chrome/Chromium、Xvfb、字体、xdotool、ffmpeg、DrissionPage、SeleniumBase、Playwright（仅 Python 库）、pyrogram、Pillow、SpeechRecognition/pydub 等（覆盖 woiden/hax 等脚本）。
+
 ---
 
 ## 运行环境依赖
