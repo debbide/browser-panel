@@ -151,12 +151,9 @@
               <button type="button" id="vision-add-channel" class="alt btn-with-icon">
                 <i data-lucide="plus" class="icon-sm"></i> 添加通道
               </button>
-              <button type="button" id="vision-test-btn" class="alt btn-with-icon" title="测试主通道连通性 / 模型列表 / 识图">
-                <i data-lucide="radar" class="icon-sm"></i> 测试 AI
-              </button>
             </div>
             <div class="schedule-note" style="margin-top:6px;">
-              按顺序故障转移 · Key 留空=不改 · OpenAI 兼容 /chat/completions · 「测试 AI」弹窗检测连通与识图
+              按顺序故障转移（第 1 个为主）· 每通道可「测试」/「主通道」· Key 留空=不改 · OpenAI 兼容
             </div>
             <div class="row" style="margin-top:8px;">
               <button type="submit" id="vision-save-btn" class="btn-primary btn-with-icon">
@@ -737,7 +734,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260726d"></script>
+  <script src="/app.js?v=20260726e"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

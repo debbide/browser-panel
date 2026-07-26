@@ -1538,7 +1538,7 @@ async function loadGlobalEnvSettings() {
 function makeVisionChannelCard(channel = {}, index = 0) {
   const isPrimary = index === 0;
   const card = document.createElement('div');
-  card.className = 'vision-channel-card';
+  card.className = 'vision-channel-card' + (isPrimary ? ' is-primary' : '');
   card.dataset.visionChannel = '1';
 
   const masked = channel.apiKeyMasked || '';
@@ -1551,19 +1551,49 @@ function makeVisionChannelCard(channel = {}, index = 0) {
       <input type="text" class="vision-ch-base" placeholder="Base URL" value="${(channel.baseUrl || '').replace(/"/g, '&quot;')}" />
       <input type="password" class="vision-ch-key" placeholder="${keyPlaceholder.replace(/"/g, '&quot;')}" autocomplete="new-password" />
       <input type="text" class="vision-ch-model" placeholder="Model" value="${(channel.model || '').replace(/"/g, '&quot;')}" />
-      <button type="button" class="icon-btn vision-channel-remove" title="删除" ${isPrimary ? 'disabled style="visibility:hidden;"' : ''}>
-        <i data-lucide="trash-2" class="icon-sm"></i>
-      </button>
+      <div class="vision-channel-actions">
+        <button type="button" class="alt btn-with-icon vision-channel-test" title="测试此通道">
+          <i data-lucide="radar" class="icon-sm"></i> 测试
+        </button>
+        <button type="button" class="alt btn-with-icon vision-channel-make-primary" title="设为主通道" ${isPrimary ? 'disabled' : ''}>
+          <i data-lucide="star" class="icon-sm"></i> 主通道
+        </button>
+        <button type="button" class="icon-btn vision-channel-remove" title="删除" ${isPrimary ? 'disabled' : ''}>
+          <i data-lucide="trash-2" class="icon-sm"></i>
+        </button>
+      </div>
     </div>
   `;
 
   const removeBtn = card.querySelector('.vision-channel-remove');
-  if (removeBtn && !isPrimary) {
+  if (removeBtn) {
     removeBtn.addEventListener('click', () => {
+      const cards = visionChannelsList
+        ? visionChannelsList.querySelectorAll('[data-vision-channel]')
+        : [];
+      if (cards.length <= 1) {
+        toast('至少保留一个通道', 'warn');
+        return;
+      }
       card.remove();
       renumberVisionChannels();
     });
   }
+
+  const primaryBtn = card.querySelector('.vision-channel-make-primary');
+  if (primaryBtn) {
+    primaryBtn.addEventListener('click', () => {
+      promoteVisionChannelCard(card);
+    });
+  }
+
+  const testBtn = card.querySelector('.vision-channel-test');
+  if (testBtn) {
+    testBtn.addEventListener('click', () => {
+      openVisionTestModalForCard(card);
+    });
+  }
+
   return card;
 }
 
@@ -1571,14 +1601,45 @@ function renumberVisionChannels() {
   if (!visionChannelsList) return;
   const cards = visionChannelsList.querySelectorAll('[data-vision-channel]');
   cards.forEach((card, i) => {
+    const isPrimary = i === 0;
+    card.classList.toggle('is-primary', isPrimary);
     const badge = card.querySelector('.vision-channel-badge');
-    if (badge) badge.textContent = i === 0 ? '主' : String(i);
+    if (badge) badge.textContent = isPrimary ? '主' : String(i);
     const removeBtn = card.querySelector('.vision-channel-remove');
     if (removeBtn) {
-      removeBtn.style.visibility = i === 0 ? 'hidden' : 'visible';
-      removeBtn.disabled = i === 0;
+      removeBtn.disabled = isPrimary;
+      removeBtn.style.visibility = isPrimary ? 'hidden' : 'visible';
+    }
+    const primaryBtn = card.querySelector('.vision-channel-make-primary');
+    if (primaryBtn) {
+      primaryBtn.disabled = isPrimary;
+      primaryBtn.title = isPrimary ? '当前已是主通道' : '设为主通道';
     }
   });
+}
+
+/** Move a channel card to index 0 (primary). Order is what save/failover uses. */
+function promoteVisionChannelCard(card) {
+  if (!visionChannelsList || !card) return;
+  const first = visionChannelsList.querySelector('[data-vision-channel]');
+  if (!first || first === card) {
+    toast('已是主通道', 'success');
+    return;
+  }
+  visionChannelsList.insertBefore(card, first);
+  renumberVisionChannels();
+  if (window.lucide) window.lucide.createIcons({ root: visionChannelsList });
+  toast('已设为主通道（记得保存）', 'success');
+}
+
+function readVisionChannelFromCard(card) {
+  if (!card) return null;
+  return {
+    baseUrl: card.querySelector('.vision-ch-base')?.value?.trim() || '',
+    apiKey: card.querySelector('.vision-ch-key')?.value?.trim() || '',
+    model: card.querySelector('.vision-ch-model')?.value?.trim() || '',
+    card,
+  };
 }
 
 function renderVisionChannels(list) {
@@ -1586,6 +1647,7 @@ function renderVisionChannels(list) {
   visionChannelsList.innerHTML = '';
   const channels = Array.isArray(list) && list.length ? list : [{}];
   channels.forEach((ch, i) => visionChannelsList.appendChild(makeVisionChannelCard(ch, i)));
+  renumberVisionChannels();
   if (window.lucide) window.lucide.createIcons();
 }
 
@@ -3181,17 +3243,24 @@ if (visionAddChannelBtn) {
   });
 }
 
-/** Open modal: connectivity + model list + image probe for primary Vision channel. */
-function openVisionTestModal() {
-  const channels = collectVisionChannels();
-  const primary = channels[0] || {};
-  if (!primary.baseUrl) {
-    toast('请先填写主通道 Base URL', 'warn');
+/** Open modal: test a specific channel card (or primary if omitted). */
+function openVisionTestModalForCard(cardEl) {
+  const channel = readVisionChannelFromCard(cardEl) || collectVisionChannels()[0] || {};
+  const targetCard = channel.card || cardEl || null;
+  if (!channel.baseUrl) {
+    toast('请先填写该通道 Base URL', 'warn');
     return;
   }
-  if (!primary.model) {
+  if (!channel.model) {
     toast('建议填写 Model 后再测识图；仍可先测连通与模型列表', 'warn');
   }
+
+  const cards = visionChannelsList
+    ? Array.from(visionChannelsList.querySelectorAll('[data-vision-channel]'))
+    : [];
+  const idx = targetCard ? Math.max(0, cards.indexOf(targetCard)) : 0;
+  const isPrimary = idx === 0;
+  const channelLabel = isPrimary ? '主通道' : `通道 ${idx}`;
 
   const mask = document.createElement('div');
   mask.className = 'modal-mask open';
@@ -3204,8 +3273,8 @@ function openVisionTestModal() {
   dialog.innerHTML = ''
     + '<div class="modal-header">'
     + '  <div>'
-    + '    <h2>测试 AI（Vision）</h2>'
-    + '    <p class="muted">主通道连通性 · 拉取模型 · 图片识别（不改动已保存配置）</p>'
+    + `    <h2>测试 AI · ${escapeHtml(channelLabel)}</h2>`
+    + '    <p class="muted">连通性 · 拉取模型 · 图片识别（不自动保存）</p>'
     + '  </div>'
     + '  <button class="icon-btn" type="button" aria-label="关闭" data-close-vision-test>'
     + '    <i data-lucide="x" class="icon-md"></i>'
@@ -3213,17 +3282,24 @@ function openVisionTestModal() {
     + '</div>'
     + '<div class="modal-body" style="padding:16px 20px 20px;">'
     + '  <div class="schedule-note" style="margin-bottom:12px;">'
-    + '    使用表单中的主通道；Key 留空则用已保存的 Key。'
+    + `    ${escapeHtml(channel.baseUrl || '')}`
+    + (channel.model ? ` · 模型 ${escapeHtml(channel.model)}` : '')
+    + '    · Key 留空则用已保存的 Key'
     + '  </div>'
     + '  <div class="row" style="gap:8px; flex-wrap:wrap; margin-bottom:12px;">'
     + '    <button type="button" class="btn-primary btn-with-icon" data-vision-run-test>'
     + '      <i data-lucide="radar" class="icon-sm"></i> 开始测试'
     + '    </button>'
-    + '    <button type="button" class="alt btn-with-icon" data-vision-fetch-models only>'
+    + '    <button type="button" class="alt btn-with-icon" data-vision-fetch-models>'
     + '      <i data-lucide="list" class="icon-sm"></i> 仅拉取模型'
     + '    </button>'
+    + (isPrimary
+      ? ''
+      : '    <button type="button" class="alt btn-with-icon" data-vision-make-primary>'
+        + '      <i data-lucide="star" class="icon-sm"></i> 设为主通道'
+        + '    </button>')
     + '  </div>'
-    + '  <div data-vision-test-status class="muted" style="margin-bottom:10px;">点击「开始测试」</div>'
+    + '  <div data-vision-test-status class="muted" style="margin-bottom:10px;">测试中…</div>'
     + '  <div data-vision-test-results class="vision-test-results" hidden></div>'
     + '  <div data-vision-model-chips class="vision-model-chips" style="margin-top:12px;" hidden></div>'
     + '</div>';
@@ -3238,10 +3314,19 @@ function openVisionTestModal() {
   const chipsEl = dialog.querySelector('[data-vision-model-chips]');
   const runBtn = dialog.querySelector('[data-vision-run-test]');
   const modelsOnlyBtn = dialog.querySelector('[data-vision-fetch-models]');
+  const makePrimaryBtn = dialog.querySelector('[data-vision-make-primary]');
 
   const mark = (ok) => (ok
     ? '<span style="color:#86efac;">✓</span>'
     : '<span style="color:#fca5a5;">✗</span>');
+
+  const fillModelIntoThisChannel = (id) => {
+    const modelInput = targetCard && targetCard.querySelector('.vision-ch-model');
+    if (modelInput) {
+      modelInput.value = id;
+      toast(`已填入该通道模型: ${id}`, 'success');
+    }
+  };
 
   const renderResult = (data) => {
     if (!resultsEl) return;
@@ -3277,9 +3362,13 @@ function openVisionTestModal() {
         return;
       }
       chipsEl.hidden = false;
-      const currentModel = (primary.model || '').trim();
+      const currentModel = (
+        (targetCard && targetCard.querySelector('.vision-ch-model')?.value)
+        || channel.model
+        || ''
+      ).trim();
       chipsEl.innerHTML = ''
-        + `<div class="muted" style="margin-bottom:6px;">可用模型（${ids.length}）· 点击填入主通道 Model</div>`
+        + `<div class="muted" style="margin-bottom:6px;">可用模型（${ids.length}）· 点击填入<strong>此通道</strong> Model</div>`
         + '<div class="vision-chip-row">'
         + ids.slice(0, 60).map((id) => {
           const selected = id === currentModel ? ' is-selected' : '';
@@ -3289,12 +3378,7 @@ function openVisionTestModal() {
       chipsEl.querySelectorAll('[data-model-id]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const id = btn.getAttribute('data-model-id') || '';
-          const modelInput = visionChannelsList
-            && visionChannelsList.querySelector('[data-vision-channel] .vision-ch-model');
-          if (modelInput) {
-            modelInput.value = id;
-            toast(`已填入模型: ${id}`, 'success');
-          }
+          fillModelIntoThisChannel(id);
           chipsEl.querySelectorAll('.vision-model-chip').forEach((b) => b.classList.remove('is-selected'));
           btn.classList.add('is-selected');
         });
@@ -3303,9 +3387,10 @@ function openVisionTestModal() {
   };
 
   const runTest = async ({ testImage }) => {
-    const ch = collectVisionChannels()[0] || {};
-    if (!ch.baseUrl) {
-      toast('主通道 Base URL 为空', 'error');
+    // Re-read form values in case user edited while modal open
+    const live = readVisionChannelFromCard(targetCard) || channel;
+    if (!live.baseUrl) {
+      toast('该通道 Base URL 为空', 'error');
       return;
     }
     if (statusEl) statusEl.textContent = '测试中…';
@@ -3316,9 +3401,9 @@ function openVisionTestModal() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          baseUrl: ch.baseUrl,
-          apiKey: ch.apiKey || '',
-          model: ch.model || '',
+          baseUrl: live.baseUrl,
+          apiKey: live.apiKey || '',
+          model: live.model || '',
           fetchModels: true,
           testImage: Boolean(testImage),
         }),
@@ -3348,16 +3433,28 @@ function openVisionTestModal() {
   dialog.querySelector('[data-close-vision-test]').addEventListener('click', close);
   runBtn.addEventListener('click', () => runTest({ testImage: true }));
   modelsOnlyBtn.addEventListener('click', () => runTest({ testImage: false }));
+  if (makePrimaryBtn && targetCard) {
+    makePrimaryBtn.addEventListener('click', () => {
+      promoteVisionChannelCard(targetCard);
+      close();
+    });
+  }
   mask.addEventListener('click', close);
 
   document.body.appendChild(mask);
   document.body.appendChild(dialog);
   if (window.lucide) window.lucide.createIcons({ root: dialog });
-  // Auto-start full test
   runTest({ testImage: true });
 }
 
+// Backward-compatible alias
+function openVisionTestModal() {
+  const first = visionChannelsList && visionChannelsList.querySelector('[data-vision-channel]');
+  openVisionTestModalForCard(first);
+}
+
 if (visionTestBtn) {
+  // Legacy top-level button (if still in DOM): test primary
   visionTestBtn.addEventListener('click', () => openVisionTestModal());
 }
 
