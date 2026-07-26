@@ -3334,7 +3334,11 @@ function openVisionTestModalForCard(cardEl) {
     const c = data.connectivity || {};
     const m = data.models || {};
     const img = data.image || {};
+    const keyHint = data.usedKeyHint
+      ? `<div class="muted" style="margin-bottom:8px;font-size:12px;">实际使用 Key: ${escapeHtml(data.usedKeyHint)} · ${escapeHtml(data.usedBaseUrl || '')}</div>`
+      : '';
     resultsEl.innerHTML = ''
+      + keyHint
       + '<div class="vision-test-grid">'
       + `  <div><strong>连通性</strong> ${mark(c.ok)} `
       + (c.ok

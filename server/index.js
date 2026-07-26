@@ -801,7 +801,8 @@ app.post('/api/settings/vision', (req, res) => {
 
 /**
  * Test Vision channel: connectivity (/models) + optional image chat/completions.
- * Body may include draft channel from the form (apiKey empty → use saved key).
+ * Body may include draft channel from the form (apiKey empty → use THAT channel's saved key).
+ * Never fall back to primary key for a non-primary baseUrl (causes false INVALID_API_KEY).
  */
 app.post('/api/settings/vision/test', async (req, res) => {
   try {
@@ -811,32 +812,63 @@ app.post('/api/settings/vision/test', async (req, res) => {
     const channelsInternal = typeof db.getVisionChannelsInternal === 'function'
       ? db.getVisionChannelsInternal()
       : [];
-    const primarySaved = channelsInternal[0] || {
-      baseUrl: saved.baseUrl,
-      apiKey: saved.apiKey,
-      model: saved.model,
-    };
 
-    const baseUrl = String(body.baseUrl || primarySaved.baseUrl || '').trim();
+    const norm = (s) => String(s || '').trim().replace(/\/+$/, '').toLowerCase();
+    const baseUrl = String(body.baseUrl || '').trim();
+    const model = String(body.model || '').trim();
     let apiKey = String(body.apiKey || '').trim();
-    if (!apiKey) apiKey = String(primarySaved.apiKey || saved.apiKey || '').trim();
-    const model = String(body.model || primarySaved.model || saved.model || '').trim();
 
-    if (!baseUrl) {
+    if (!apiKey && baseUrl) {
+      // Match saved channel by baseUrl+model, then baseUrl only — not "always primary".
+      const sameBaseModel = channelsInternal.find(
+        (ch) => norm(ch.baseUrl) === norm(baseUrl) && norm(ch.model) === norm(model) && ch.apiKey
+      );
+      const sameBase = channelsInternal.find(
+        (ch) => norm(ch.baseUrl) === norm(baseUrl) && ch.apiKey
+      );
+      apiKey = String((sameBaseModel || sameBase || {}).apiKey || '').trim();
+    }
+
+    // Only if still empty and caller omitted baseUrl entirely, allow primary (legacy).
+    if (!apiKey && !baseUrl) {
+      const primarySaved = channelsInternal[0] || {
+        baseUrl: saved.baseUrl,
+        apiKey: saved.apiKey,
+        model: saved.model,
+      };
+      apiKey = String(primarySaved.apiKey || saved.apiKey || '').trim();
+    }
+
+    const effectiveBase = baseUrl
+      || String((channelsInternal[0] || {}).baseUrl || saved.baseUrl || '').trim();
+    const effectiveModel = model
+      || String((channelsInternal.find((ch) => norm(ch.baseUrl) === norm(effectiveBase)) || {}).model
+        || (channelsInternal[0] || {}).model
+        || saved.model
+        || '').trim();
+
+    if (!effectiveBase) {
       return res.status(400).json({ message: '请填写 Base URL' });
     }
     if (!apiKey) {
-      return res.status(400).json({ message: '请填写 API Key，或先保存后再测' });
+      return res.status(400).json({
+        message: '该通道没有可用的 API Key：请在输入框粘贴 Key，或先保存该通道后再测（不会用主通道的 Key 顶替）',
+      });
     }
 
     const data = await testVisionChannel(
-      { baseUrl, apiKey, model },
+      { baseUrl: effectiveBase, apiKey, model: effectiveModel },
       {
         fetchModels: body.fetchModels !== false,
         testImage: body.testImage !== false,
-        model,
+        model: effectiveModel,
       }
     );
+    // Help debug without leaking full secret
+    data.usedKeyHint = apiKey.length > 8
+      ? `${apiKey.slice(0, 4)}***${apiKey.slice(-4)}`
+      : '(short)';
+    data.usedBaseUrl = effectiveBase;
     res.json({ data });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Vision test failed' });
