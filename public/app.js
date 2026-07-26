@@ -1721,64 +1721,119 @@ async function openRunScreenshots(runId) {
   dialog.style.zIndex = '10030';
   dialog.setAttribute('aria-hidden', 'false');
 
-  const render = () => {
+  // Build shell once — full innerHTML on every thumb click reset the left list scroll to top.
+  const thumbsHtml = items.map((item, idx) => {
+    return '<button type="button" class="shot-thumb" data-shot-index="' + idx + '">'
+      + '<img src="' + escapeHtml(item.url) + '" alt="' + escapeHtml(item.name) + '" loading="lazy" />'
+      + '<span>' + escapeHtml(classifyShotKind(item.name)) + '</span>'
+      + '</button>';
+  }).join('');
+
+  dialog.innerHTML = ''
+    + '<div class="modal-header">'
+    + '  <div>'
+    + '    <h2>运行截图</h2>'
+    + '    <p class="muted">Run #' + payload.runId + ' · 共 ' + items.length + ' 张</p>'
+    + '  </div>'
+    + '  <button class="icon-btn" type="button" aria-label="关闭" data-close-shots-modal>'
+    + '    <i data-lucide="x" class="icon-md"></i>'
+    + '  </button>'
+    + '</div>'
+    + '<div class="modal-body shots-modal-body">'
+    + '  <div class="shots-layout">'
+    + '    <div class="shots-thumbs" data-shots-thumbs>' + thumbsHtml + '</div>'
+    + '    <div class="shots-preview">'
+    + '      <div class="shots-preview-meta">'
+    + '        <strong data-shot-name></strong>'
+    + '        <span class="muted" data-shot-meta></span>'
+    + '      </div>'
+    + '      <div class="shots-preview-frame">'
+    + '        <img data-shot-preview alt="" />'
+    + '      </div>'
+    + '      <div class="row shots-preview-actions">'
+    + '        <a data-shot-open href="#" target="_blank" rel="noopener">新窗口打开</a>'
+    + '        <span class="muted" data-shot-pos></span>'
+    + '      </div>'
+    + '    </div>'
+    + '  </div>'
+    + '</div>';
+
+  const thumbsEl = dialog.querySelector('[data-shots-thumbs]');
+  const nameEl = dialog.querySelector('[data-shot-name]');
+  const metaEl = dialog.querySelector('[data-shot-meta]');
+  const imgEl = dialog.querySelector('[data-shot-preview]');
+  const openEl = dialog.querySelector('[data-shot-open]');
+  const posEl = dialog.querySelector('[data-shot-pos]');
+  const thumbButtons = Array.from(dialog.querySelectorAll('[data-shot-index]'));
+
+  const showActive = (idx, { scrollThumb = false } = {}) => {
+    activeIndex = Math.max(0, Math.min(items.length - 1, Number(idx) || 0));
     const active = items[activeIndex] || items[0];
-    const thumbs = items.map((item, idx) => {
-      const selected = idx === activeIndex ? ' is-active' : '';
-      return '<button type="button" class="shot-thumb' + selected + '" data-shot-index="' + idx + '">'
-        + '<img src="' + escapeHtml(item.url) + '" alt="' + escapeHtml(item.name) + '" loading="lazy" />'
-        + '<span>' + escapeHtml(classifyShotKind(item.name)) + '</span>'
-        + '</button>';
-    }).join('');
+    if (!active) return;
 
-    dialog.innerHTML = ''
-      + '<div class="modal-header">'
-      + '  <div>'
-      + '    <h2>运行截图</h2>'
-      + '    <p class="muted">Run #' + payload.runId + ' · 共 ' + items.length + ' 张</p>'
-      + '  </div>'
-      + '  <button class="icon-btn" type="button" aria-label="关闭" data-close-shots-modal>'
-      + '    <i data-lucide="x" class="icon-md"></i>'
-      + '  </button>'
-      + '</div>'
-      + '<div class="modal-body shots-modal-body">'
-      + '  <div class="shots-layout">'
-      + '    <div class="shots-thumbs">' + thumbs + '</div>'
-      + '    <div class="shots-preview">'
-      + '      <div class="shots-preview-meta">'
-      + '        <strong>' + escapeHtml(active.name) + '</strong>'
-      + '        <span class="muted">' + escapeHtml(classifyShotKind(active.name)) + ' · ' + escapeHtml(formatBytes(active.size)) + '</span>'
-      + '      </div>'
-      + '      <div class="shots-preview-frame">'
-      + '        <img src="' + escapeHtml(active.url) + '" alt="' + escapeHtml(active.name) + '" />'
-      + '      </div>'
-      + '      <div class="row shots-preview-actions">'
-      + '        <a href="' + escapeHtml(active.url) + '" target="_blank">新窗口打开</a>'
-      + '        <span class="muted">' + (activeIndex + 1) + ' / ' + items.length + '</span>'
-      + '      </div>'
-      + '    </div>'
-      + '  </div>'
-      + '</div>';
+    // Keep left list scroll position — do not rebuild thumbs DOM.
+    const prevScroll = thumbsEl ? thumbsEl.scrollTop : 0;
 
-    dialog.querySelector('[data-close-shots-modal]').addEventListener('click', close);
-    dialog.querySelectorAll('[data-shot-index]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        activeIndex = Number(btn.getAttribute('data-shot-index')) || 0;
-        render();
-      });
+    nameEl.textContent = active.name || '';
+    metaEl.textContent = classifyShotKind(active.name) + ' · ' + formatBytes(active.size);
+    if (imgEl.getAttribute('src') !== active.url) {
+      imgEl.setAttribute('src', active.url);
+    }
+    imgEl.setAttribute('alt', active.name || '');
+    openEl.setAttribute('href', active.url);
+    posEl.textContent = (activeIndex + 1) + ' / ' + items.length;
+
+    thumbButtons.forEach((btn, i) => {
+      btn.classList.toggle('is-active', i === activeIndex);
     });
-    if (window.lucide) window.lucide.createIcons({ root: dialog });
+
+    if (thumbsEl) {
+      if (scrollThumb) {
+        const btn = thumbButtons[activeIndex];
+        if (btn && typeof btn.scrollIntoView === 'function') {
+          btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
+      } else {
+        thumbsEl.scrollTop = prevScroll;
+      }
+    }
   };
 
   const close = () => {
     mask.remove();
     dialog.remove();
+    document.removeEventListener('keydown', onKey);
   };
+
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') {
+      close();
+      return;
+    }
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight') {
+      ev.preventDefault();
+      showActive(activeIndex + 1, { scrollThumb: true });
+    } else if (ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') {
+      ev.preventDefault();
+      showActive(activeIndex - 1, { scrollThumb: true });
+    }
+  };
+
+  dialog.querySelector('[data-close-shots-modal]').addEventListener('click', close);
+  thumbButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-shot-index')) || 0;
+      // Keep scroll where user was; only move selection + preview.
+      showActive(idx, { scrollThumb: false });
+    });
+  });
 
   document.body.appendChild(mask);
   document.body.appendChild(dialog);
   mask.addEventListener('click', close);
-  render();
+  document.addEventListener('keydown', onKey);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
+  showActive(0, { scrollThumb: false });
 }
 
 function runCard(run) {

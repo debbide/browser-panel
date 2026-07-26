@@ -1653,7 +1653,9 @@ pre {
   align-content: start;
   max-height: min(620px, calc(100vh - 220px));
   overflow: auto;
+  overflow-anchor: none; /* avoid scroll jump when active thumb styles change */
   padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .shot-thumb {
