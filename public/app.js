@@ -3337,6 +3337,22 @@ function openVisionTestModalForCard(cardEl) {
     const keyHint = data.usedKeyHint
       ? `<div class="muted" style="margin-bottom:8px;font-size:12px;">实际使用 Key: ${escapeHtml(data.usedKeyHint)} · ${escapeHtml(data.usedBaseUrl || '')}</div>`
       : '';
+    const imgPassed = img.supported || img.ok;
+    const tried = Array.isArray(img.tried) ? img.tried : [];
+    const textOnlyBlock = img.textOnly
+      ? `<div style="margin-top:6px;font-size:12px;"><strong>纯文本对照</strong> ${mark(img.textOnly.ok)} `
+        + `${escapeHtml(img.textOnly.detail || '')}</div>`
+      : '';
+    const triedBlock = (!imgPassed && tried.length)
+      ? '<details style="margin-top:6px;">'
+        + `<summary class="muted" style="cursor:pointer;font-size:12px;">已试 ${tried.length} 种请求组合 · 展开看逐条结果</summary>`
+        + '<ul style="margin:6px 0 0 18px;padding:0;font-size:12px;line-height:1.7;">'
+        + tried.map((t) => '<li>'
+          + `<code>${escapeHtml(t.label || '')}</code> → `
+          + `<strong>${escapeHtml(String(t.status || 'ERR'))}</strong> `
+          + `${escapeHtml((t.detail || '').slice(0, 160))}</li>`).join('')
+        + '</ul></details>'
+      : '';
     resultsEl.innerHTML = ''
       + keyHint
       + '<div class="vision-test-grid">'
@@ -3349,11 +3365,13 @@ function openVisionTestModalForCard(cardEl) {
       + `  <div><strong>模型列表</strong> ${mark(m.ok || m.count > 0)} `
       + escapeHtml(m.detail || (m.count ? `读到 ${m.count} 个` : '—'))
       + '  </div>'
-      + `  <div><strong>图片识别</strong> ${mark(img.supported || img.ok)} `
-      + (img.supported || img.ok
+      + `  <div><strong>图片识别</strong> ${mark(imgPassed)} `
+      + (imgPassed
         ? `<span style="color:#86efac;">支持</span> · ${escapeHtml(data.model || '')} · ${img.ms != null ? img.ms + 'ms' : ''}`
           + (img.preview ? `<div class="muted" style="margin-top:4px;">回复: ${escapeHtml(img.preview)}</div>` : '')
         : `<span style="color:#fca5a5;">未通过</span> · ${escapeHtml(img.detail || '未测')}`)
+      + textOnlyBlock
+      + triedBlock
       + '  </div>'
       + '</div>'
       + `<div class="vision-test-summary ${data.ok ? 'is-ok' : 'is-bad'}">${escapeHtml(data.summary || '')}</div>`;

@@ -12,33 +12,37 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
-// 2x2 PNG probe — some gateways reject 1x1 / empty images with bare HTTP 400.
-// Valid PNG signature; not a real captcha, only capability probe.
-const PROBE_PNG_B64 =
+// Real 64x64 RGB PNG (red field, blue centre square). Degenerate 1x1/2x2 images get
+// rejected with a bare HTTP 400 by several gateways, so the default probe is a normal image.
+const PROBE_PNG_64_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAWUlEQVR42u3XMQ0AMAwEsUcSJOWPImCKoVOVyNIR8HjpqtEFAAAAAAAAAAAAAAAAAAAAAOArIKefAgAAAAAAAAAAAADYA3BkAAAAAAAAAAAAAAAAAAAAAKO6NR2BAAw6GngAAAAASUVORK5CYII=';
+// Legacy 2x2 probe, kept as a last-resort shape for gateways that cap image bytes hard.
+const PROBE_PNG_2X2_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR42mP8z8BQz0A0YMQo+M8ABYwD/Qb9fQAAAABJRU5ErkJggg==';
+const PROBE_TEXT = 'Describe this image in one short English word only.';
 
-/** Model field may be "a/b" or "a,b" — try each until one works. */
+/**
+ * Model field may list alternatives ("a,b" / "a|b"), and a single id may be
+ * vendor-prefixed ("x-ai/grok-4"). Keep the FULL id first — OpenRouter / one-api style
+ * relays only accept the prefixed form — then fall back to the bare tail segment.
+ */
 function splitModelCandidates(modelField) {
   const raw = String(modelField || '').trim();
   if (!raw) return [];
-  const parts = raw.split(/[/|,，、]+/).map((s) => s.trim()).filter(Boolean);
+  const listed = raw.split(/[|,，、]+/).map((s) => s.trim()).filter(Boolean);
   const out = [];
   const seen = new Set();
-  // Prefer full string first if it looks like a single id (no slash already split)
-  if (!parts.length) return [raw];
-  // If user wrote "grok-4.5/grok-4.5" both same; if "a/b" try a then b; also try raw once.
-  for (const p of [raw, ...parts]) {
-    if (!p || seen.has(p)) continue;
-    // Skip obviously non-id raw when it only contains separators already expanded
-    if (p !== raw && p.includes('/') && p.split('/').length > 1) continue;
-    seen.add(p);
-    out.push(p);
+  const push = (id) => {
+    const v = String(id || '').trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+  for (const id of (listed.length ? listed : [raw])) {
+    push(id);
+    if (id.includes('/')) push(id.split('/').pop());
   }
-  // If raw was "x/y", first push may be full "x/y" which some APIs accept as one name — keep it first only if no slash
-  if (raw.includes('/') || raw.includes('|') || raw.includes(',')) {
-    return parts.filter((p, i, arr) => p && arr.indexOf(p) === i);
-  }
-  return out.length ? out : [raw];
+  return out;
 }
 
 function trimSlash(s) {
@@ -185,7 +189,16 @@ async function testVisionChannel(channel, opts = {}) {
     model: model || null,
     connectivity: { ok: false, ms: null, label: '', detail: '' },
     models: { ok: false, count: 0, ids: [], detail: '' },
-    image: { ok: false, ms: null, supported: false, preview: '', detail: '' },
+    image: {
+      ok: false,
+      ms: null,
+      supported: false,
+      preview: '',
+      detail: '',
+      tried: [],
+      textOnly: null,
+      modelInList: null,
+    },
     summary: '',
   };
 
@@ -254,63 +267,66 @@ async function testVisionChannel(channel, opts = {}) {
       result.image.detail = '未填写 Model，跳过识图测试';
     } else {
       const modelCandidates = splitModelCandidates(model);
-      const attempts = [];
-      // Build attempt list: each model × a couple of body variants
-      for (const mid of modelCandidates.slice(0, 3)) {
-        attempts.push({
-          label: `model=${mid} img=8x8 max_tokens=256`,
-          body: {
+      const listedIds = Array.isArray(result.models.ids) ? result.models.ids : [];
+      if (listedIds.length) {
+        result.image.modelInList = modelCandidates.some((mid) => listedIds.includes(mid));
+      }
+
+      const imgPart = (b64, detail) => ({
+        type: 'image_url',
+        image_url: detail
+          ? { url: `data:image/png;base64,${b64}`, detail }
+          : { url: `data:image/png;base64,${b64}` },
+      });
+      const txtPart = (text) => ({ type: 'text', text });
+
+      // Ordered most-compatible first. A bare body (no sampling params) is what thin
+      // web-API relays accept — several reject max_tokens/temperature with a plain 400.
+      const variants = [
+        {
+          tag: 'png64 bare',
+          build: (mid) => ({
             model: mid,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'image_url',
-                    image_url: { url: `data:image/png;base64,${PROBE_PNG_B64}` },
-                  },
-                  {
-                    type: 'text',
-                    text: 'Describe this image in one short English word only.',
-                  },
-                ],
-              },
-            ],
+            messages: [{ role: 'user', content: [imgPart(PROBE_PNG_64_B64), txtPart(PROBE_TEXT)] }],
+          }),
+        },
+        {
+          tag: 'png64 text-first detail=low',
+          build: (mid) => ({
+            model: mid,
+            messages: [{ role: 'user', content: [txtPart(PROBE_TEXT), imgPart(PROBE_PNG_64_B64, 'low')] }],
+          }),
+        },
+        {
+          tag: 'png64 max_tokens=256 temp=0',
+          build: (mid) => ({
+            model: mid,
+            messages: [{ role: 'user', content: [imgPart(PROBE_PNG_64_B64), txtPart(PROBE_TEXT)] }],
             temperature: 0,
             max_tokens: 256,
-          },
-        });
-        attempts.push({
-          label: `model=${mid} img=8x8 detail=low`,
-          body: {
+          }),
+        },
+        {
+          tag: 'png2x2 max_tokens=128',
+          build: (mid) => ({
             model: mid,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: 'What color is dominant? Reply with one word.',
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:image/png;base64,${PROBE_PNG_B64}`,
-                      detail: 'low',
-                    },
-                  },
-                ],
-              },
-            ],
+            messages: [{ role: 'user', content: [imgPart(PROBE_PNG_2X2_B64), txtPart(PROBE_TEXT)] }],
             max_tokens: 128,
-          },
-        });
+          }),
+        },
+      ];
+
+      const attempts = [];
+      for (const mid of modelCandidates.slice(0, 3)) {
+        for (const v of variants) {
+          attempts.push({ label: `model=${mid} · ${v.tag}`, body: v.build(mid) });
+        }
       }
 
       let lastFail = '';
-      let anyTried = false;
-      for (const attempt of attempts) {
-        anyTried = true;
+      const tried = result.image.tried;
+      let authBlocked = false;
+      for (const attempt of attempts.slice(0, 8)) {
         try {
           const res = await httpJson('POST', ep.chatUrl, {
             headers: authHeaders,
@@ -327,12 +343,15 @@ async function testVisionChannel(channel, opts = {}) {
             result.image.detail = text
               ? `识图接口可用 · ${res.ms}ms · ${attempt.label} · 回复: ${text.slice(0, 40)}`
               : `HTTP 200 但 content 为空 · ${res.ms}ms（${attempt.label}）`;
+            tried.push({ label: attempt.label, status: res.status, detail: text.slice(0, 60) || '(空 content)' });
             break;
           }
           const snippet = (res.text || '').slice(0, 240);
           lastFail = `HTTP ${res.status}: ${snippet}`;
+          tried.push({ label: attempt.label, status: res.status, detail: snippet });
           // Auth errors: no point retrying other shapes with same key
           if (res.status === 401 || res.status === 403) {
+            authBlocked = true;
             result.image.ok = false;
             result.image.supported = false;
             result.image.detail = lastFail;
@@ -342,20 +361,54 @@ async function testVisionChannel(channel, opts = {}) {
           result.image.detail = lastFail;
         } catch (err) {
           lastFail = err.message || String(err);
+          tried.push({ label: attempt.label, status: 0, detail: lastFail });
           result.image.detail = lastFail;
         }
       }
 
-      if (!result.image.ok && anyTried) {
+      // Control probe: plain text, same model/route. Without this a 400 cannot be told
+      // apart from "this relay is broken for every request", which reads as "no vision".
+      if (!result.image.ok && tried.length && !authBlocked) {
+        try {
+          const res = await httpJson('POST', ep.chatUrl, {
+            headers: authHeaders,
+            body: {
+              model: modelCandidates[0],
+              messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
+            },
+            timeoutMs: 30000,
+          });
+          result.image.textOnly = {
+            ok: res.ok,
+            status: res.status,
+            detail: res.ok
+              ? `纯文本可用 · ${res.ms}ms · 回复: ${extractChatText(res.json).slice(0, 30)}`
+              : `HTTP ${res.status}: ${(res.text || '').slice(0, 180)}`,
+          };
+        } catch (err) {
+          result.image.textOnly = { ok: false, status: 0, detail: err.message || String(err) };
+        }
+      }
+
+      if (!result.image.ok && tried.length) {
         result.image.ok = false;
         result.image.supported = false;
         const snip = result.image.detail || lastFail || '';
-        if (/vision|image|multimodal|not support|不支持/i.test(snip)) {
-          result.image.detail = `可能不支持图片: ${snip}`;
-        } else if (/400|Upstream error/i.test(snip)) {
+        const textOnly = result.image.textOnly;
+        if (authBlocked) {
+          result.image.detail = snip;
+        } else if (textOnly && textOnly.ok) {
           result.image.detail =
-            `${snip}（多为探测请求被上游拒绝：可检查模型名是否为「a/b」需拆开、` +
-            `或该路由对 data-url 图有限制；连通与 Key 已正常，不代表业务 Vision 一定不可用）`;
+            `${snip}（对照：同模型纯文本可用 → 被拒的是图片本身。该中转多半不支持内联 data-url 图，`
+            + `或上游要求先上传图片再引用；业务脚本走同一路由时识图同样会失败）`;
+        } else if (textOnly && !textOnly.ok) {
+          result.image.detail =
+            `${snip}（对照：同模型纯文本也失败 → 与图片无关。该 id 可能只在 /models 里列出但未开通，`
+            + `或此中转的 chat/completions 路由本身不通：${textOnly.detail}）`;
+        } else if (result.image.modelInList === false) {
+          result.image.detail = `${snip}（该模型名不在 /models 列表内，先从下方可用模型里点一个填入）`;
+        } else if (/vision|image|multimodal|not support|不支持/i.test(snip)) {
+          result.image.detail = `可能不支持图片: ${snip}`;
         }
       }
     }
