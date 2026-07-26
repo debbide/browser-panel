@@ -43,14 +43,38 @@ function listImageFiles(dirPath) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
+/** Recursively list image files as paths relative to rootDir (posix-ish for URLs). */
+function listImageFilesRecursive(rootDir, subDir = '') {
+  const abs = subDir ? path.join(rootDir, subDir) : rootDir;
+  if (!abs || !fs.existsSync(abs)) return [];
+  const out = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(abs, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const rel = subDir ? path.join(subDir, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...listImageFilesRecursive(rootDir, rel));
+    } else if (entry.isFile() && /\.(png|jpe?g|webp|gif)$/i.test(entry.name)) {
+      out.push(rel.replace(/\\/g, '/'));
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 function copyDirectoryImages(srcDir, destDir) {
   if (!srcDir || !fs.existsSync(srcDir)) return 0;
   fs.mkdirSync(destDir, { recursive: true });
   let copied = 0;
-  for (const name of listImageFiles(srcDir)) {
-    const from = path.join(srcDir, name);
-    const to = path.join(destDir, name);
+  // Include nested folders (e.g. yolo_hard/miss/cars/*.png) so train samples are archived.
+  for (const rel of listImageFilesRecursive(srcDir)) {
+    const from = path.join(srcDir, rel);
+    const to = path.join(destDir, rel);
     try {
+      fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.copyFileSync(from, to);
       copied += 1;
     } catch {

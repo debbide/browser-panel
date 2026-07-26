@@ -1517,9 +1517,14 @@ app.post('/api/tasks/:id/stop', (req, res) => {
 
 
 function classifyScreenshotName(name) {
-  const lower = String(name || '').toLowerCase();
+  const lower = String(name || '').toLowerCase().replace(/\\/g, '/');
+  if (lower.includes('yolo_hard/miss/') || lower.includes('/miss/')) return 'hard_miss';
+  if (lower.includes('yolo_hard/wrong/') || lower.includes('/wrong/')) return 'hard_wrong';
+  if (lower.includes('yolo_hard/grids/')) return 'hard_grid';
+  if (lower.includes('yolo_hard/')) return 'hard';
+  if (lower.includes('yolo_tile')) return 'tile';
   if (lower.startsWith('instr_')) return 'instr';
-  if (lower.includes('_grid.png')) return 'grid';
+  if (lower.includes('_grid.png') || lower.includes('yolo_grid')) return 'grid';
   if (lower.startsWith('table_')) return 'table';
   if (lower.includes('host2play') || lower.includes('success') || lower.includes('fail')) return 'final';
   return 'other';
@@ -1541,14 +1546,33 @@ function toPublicAssetPath(absPath, kind) {
   return '';
 }
 
+function listImageFilesRecursive(rootDir, subDir = '') {
+  const abs = subDir ? path.join(rootDir, subDir) : rootDir;
+  if (!abs || !fs.existsSync(abs)) return [];
+  const out = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(abs, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const rel = subDir ? path.join(subDir, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...listImageFilesRecursive(rootDir, rel));
+    } else if (entry.isFile() && /\.(png|jpe?g|webp|gif)$/i.test(entry.name)) {
+      out.push(rel.replace(/\\/g, '/'));
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 function listRunScreenshots(run) {
   const items = [];
   const dir = run && run.screenshots_dir ? String(run.screenshots_dir) : '';
   if (dir && fs.existsSync(dir)) {
-    const names = fs.readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && /\.(png|jpe?g|webp|gif)$/i.test(entry.name))
-      .map((entry) => entry.name)
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    // Include nested yolo_hard/ so train samples show up in the gallery.
+    const names = listImageFilesRecursive(dir);
     for (const name of names) {
       const abs = path.join(dir, name);
       let stat = null;

@@ -1687,9 +1687,14 @@ function groupLastRuns(runs) {
 
 
 function classifyShotKind(name) {
-  const lower = String(name || '').toLowerCase();
+  const lower = String(name || '').toLowerCase().replace(/\\/g, '/');
+  if (lower.includes('yolo_hard/miss/') || /(^|\/)miss\//.test(lower)) return '漏选/未认出';
+  if (lower.includes('yolo_hard/wrong/') || /(^|\/)wrong\//.test(lower)) return '认错类';
+  if (lower.includes('yolo_hard/grids/')) return '难例整表';
+  if (lower.includes('yolo_hard/')) return '难例';
+  if (lower.includes('yolo_tile')) return '格子(全量)';
   if (lower.startsWith('instr_')) return '题目';
-  if (lower.includes('_grid.png')) return '标注';
+  if (lower.includes('_grid.png') || lower.includes('yolo_grid')) return '整表';
   if (lower.startsWith('table_')) return '题图';
   if (lower.includes('success') || lower.includes('fail') || lower.includes('host2play')) return '结果';
   return '截图';
