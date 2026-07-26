@@ -409,11 +409,11 @@
                   <div>
                     <label class="field-label" for="task-profile-mode">数据模式</label>
                     <select id="task-profile-mode" name="profile_mode" style="width:100%;">
-                      <option value="temp" selected>临时（推荐）— 每次独立目录</option>
-                      <option value="persistent">持久 — 使用选定浏览器配置</option>
+                      <option value="temp" selected>临时（推荐）— 每次全新，跑完删除</option>
+                      <option value="persistent">持久 — 使用选定浏览器配置（保留登录）</option>
                     </select>
                     <p class="schedule-note" id="task-profile-mode-hint" style="margin-top:4px;">
-                      临时：跑完隔离，不污染正式登录态。
+                      临时：每次独立目录，任务结束后删除，不留 cookie/脏配置。持久：复用选定配置目录。
                     </p>
                   </div>
                   <div id="task-profile-persistent-fields">
@@ -734,7 +734,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260724m"></script>
+  <script src="/app.js?v=20260726a"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

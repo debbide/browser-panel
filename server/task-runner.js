@@ -60,8 +60,12 @@ function copyDirectoryImages(srcDir, destDir) {
   return copied;
 }
 
-function getTempProfileDir(task) {
-  return path.join(config.paths.root, 'runtime-data', 'profiles', `task-${task.id}-tmp-profile`);
+function getTempProfileDir(task, runId = null) {
+  const id = task && task.id != null ? task.id : 'x';
+  const run = runId != null && String(runId).trim()
+    ? String(runId).trim().replace(/[^\w.-]+/g, '_')
+    : `t${Date.now()}`;
+  return path.join(config.paths.root, 'runtime-data', 'profiles', `task-${id}-run-${run}-tmp`);
 }
 
 function safeString(value) {
@@ -410,10 +414,14 @@ function resolveBrowserContext(task) {
   const params = parseTaskParams(task);
   const effectiveProxy = resolveEffectiveProxy(task, profile);
   const useTempProfile = resolveUseTempProfile(task, params);
-  const effectiveUserDataDir = pickNonEmptyString(
-    useTempProfile ? '' : (profile && profile.user_data_dir),
-    useTempProfile ? getTempProfileDir(task) : (task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task))
-  );
+  // Per-run temp dir (browser-launcher deletes after run). Keep helper for non-browser paths.
+  const effectiveUserDataDir = useTempProfile
+    ? getTempProfileDir(task)
+    : pickNonEmptyString(
+      profile && profile.user_data_dir,
+      task.use_persistent ? config.browser.userDataDir : '',
+      getTempProfileDir(task)
+    );
   const effectiveLocale = pickNonEmptyString(
     profile && profile.locale,
     config.browser.locale
@@ -476,6 +484,7 @@ function buildEnv(task, screenshotPath) {
         profile && profile.user_data_dir,
         task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task)
       );
+    env.USE_TEMP_PROFILE = useTempProfile ? '1' : '0';
     env.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
     env.BROWSER_LOCALE = pickNonEmptyString(profile && profile.locale, config.browser.locale);
     env.BROWSER_TIMEZONE = pickNonEmptyString(profile && profile.timezone_id, config.browser.timezoneId);

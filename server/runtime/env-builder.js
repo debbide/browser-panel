@@ -18,6 +18,9 @@ const SYSTEM_PROTECTED_KEYS = new Set([
   'BROWSER_RUNTIME_STACK',
   'BROWSER_USE_PLAYWRIGHT_EXTRA',
   'BROWSER_PLUGIN_PACKAGES',
+  // Temp vs persistent must be system-owned so scripts (DP/SB) don't keep dirty dirs.
+  'USE_TEMP_PROFILE',
+  'use_temp_profile',
   'DISPLAY',
   'XAUTHORITY',
   'APP_ROOT',
@@ -292,9 +295,12 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
     system.BROWSER_DISPLAY = config.browser.display;
     system.BROWSER_XAUTHORITY = config.browser.xauthority;
     system.BROWSER_USER = config.browser.user;
+    // Temp mode: leave USER_DATA_DIR empty here; browser-launcher / task-runner
+    // set a per-run dir and inject USE_TEMP_PROFILE=1 so scripts cleanup after quit.
     system.BROWSER_USER_DATA_DIR = useTempProfile
-      ? '' // caller may still set temp path; keep empty to force later
+      ? ''
       : (profile && profile.user_data_dir) || (task.use_persistent ? config.browser.userDataDir : '');
+    system.USE_TEMP_PROFILE = useTempProfile ? '1' : '0';
     // Panel global setting (DB) overrides env/config default when set
     try {
       const br = db.getBrowserRuntimeSettings();

@@ -803,7 +803,7 @@ function updateTaskFormSummary() {
     const bits = [
       scriptPath ? `脚本 ${scriptLabel}` : '未选脚本',
       `超时 ${timeout}s`,
-      temp ? '临时目录' : '持久配置',
+      temp ? '临时（用完删除）' : '持久配置',
       schedOn ? `定时·${modeLabel}` : '手动运行',
       condOn ? '条件触发' : '无条件',
     ];
@@ -1977,14 +1977,14 @@ function taskCard(task) {
   const latest = latestRunSummary(task.id);
   const isPersistent = Boolean(Number(task.use_persistent));
   const profileName = (() => {
-    if (!task.browser_profile_id) return isPersistent ? '默认配置' : '临时目录';
+    if (!task.browser_profile_id) return isPersistent ? '默认配置' : '每次全新';
     const p = profilesCache.find((x) => Number(x.id) === Number(task.browser_profile_id));
     return p ? p.name : `#${task.browser_profile_id}`;
   })();
   const profileMode = isPersistent ? '持久' : '临时';
   const profileTitle = isPersistent
     ? `持久浏览器配置 · ${profileName}`
-    : `临时 profile · ${profileName}`;
+    : `临时（跑完删除）· ${profileName}`;
   const scheduleOn = Boolean(Number(task.enabled));
   const conditionOn = Boolean(Number(task.condition_enabled));
   const scheduleModeLabel = task.schedule_mode === 'daily_window'

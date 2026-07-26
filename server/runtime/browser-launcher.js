@@ -21,8 +21,60 @@ function getRuntimeDataDir() {
   return path.join(config.paths.root, 'runtime-data');
 }
 
-function getTempProfileDir(task) {
-  return path.join(getRuntimeDataDir(), 'profiles', `task-${task.id}-tmp-profile`);
+function getTempProfileDir(task, runId = null) {
+  // Per-run dir so "临时" is truly disposable (not a sticky task-N-tmp-profile).
+  const id = task && task.id != null ? task.id : 'x';
+  const run = runId != null && String(runId).trim()
+    ? String(runId).trim().replace(/[^\w.-]+/g, '_')
+    : `t${Date.now()}`;
+  return path.join(getRuntimeDataDir(), 'profiles', `task-${id}-run-${run}-tmp`);
+}
+
+/** True if path is under runtime-data/profiles and looks like a panel temp profile. */
+function isPanelTempProfileDir(dir) {
+  const raw = String(dir || '').trim();
+  if (!raw) return false;
+  try {
+    const resolved = path.resolve(raw);
+    const profilesRoot = path.resolve(path.join(getRuntimeDataDir(), 'profiles'));
+    if (!resolved.startsWith(profilesRoot + path.sep) && resolved !== profilesRoot) return false;
+    const base = path.basename(resolved);
+    // New: task-3-run-...-tmp  | legacy sticky: task-3-tmp-profile
+    return /^task-.+-tmp(-profile)?$/i.test(base) || /tmp-profile$/i.test(base) || /-tmp$/i.test(base);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After the browser task ends: remove temp profile dirs (panel "临时" = disposable).
+ * Never touch named persistent profiles outside runtime-data/profiles temp patterns.
+ */
+function removeTempProfileDir(dir, { delayMs = 2500 } = {}) {
+  const target = String(dir || '').trim();
+  if (!target || !isPanelTempProfileDir(target)) return;
+  const wait = Math.max(0, Number(delayMs) || 0);
+  setTimeout(() => {
+    try {
+      if (!fs.existsSync(target)) return;
+      // Best-effort: Chrome may still be shutting down locks for a moment
+      fs.rmSync(target, { recursive: true, force: true });
+      console.log(`[browser-launcher] removed temp profile ${target}`);
+    } catch (err) {
+      console.warn(`[browser-launcher] temp profile cleanup failed: ${target}: ${err.message || err}`);
+      // One more try later
+      setTimeout(() => {
+        try {
+          if (fs.existsSync(target)) {
+            fs.rmSync(target, { recursive: true, force: true });
+            console.log(`[browser-launcher] removed temp profile (retry) ${target}`);
+          }
+        } catch (e2) {
+          console.warn(`[browser-launcher] temp profile cleanup retry failed: ${e2.message || e2}`);
+        }
+      }, 8000);
+    }
+  }, wait);
 }
 
 function shellEscape(value) {
@@ -215,6 +267,17 @@ function ensureRuntimeFiles(task) {
         from: host2playPackageDir,
         to: path.join(workerRoot, 'host2play_dp'),
       });
+    }
+
+    // Hax / Woiden renew packages (copied when present under tasks/)
+    for (const pkg of ['hax_yolo', 'woiden_yolo']) {
+      const pkgDir = path.join(config.paths.tasksDir, pkg);
+      if (fs.existsSync(pkgDir)) {
+        files.push({
+          from: pkgDir,
+          to: path.join(workerRoot, pkg),
+        });
+      }
     }
 
     // Shared helpers used by Python scripts (panel_callback, etc.)
@@ -750,10 +813,16 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const profile = task && task._profile ? task._profile : null;
   const taskParams = parseTaskParams(task);
   const useTempProfile = resolveUseTempProfile(task, taskParams);
-  const effectiveUserDataDir = pickNonEmptyString(
-    useTempProfile ? '' : (profile && profile.user_data_dir),
-    useTempProfile ? getTempProfileDir(task) : (task && task.use_persistent ? config.browser.userDataDir : getTempProfileDir(task))
-  );
+  // Temp = per-run disposable dir under runtime-data/profiles (deleted after run).
+  // Persistent = named profile user_data_dir or global default — never auto-deleted.
+  const effectiveUserDataDir = useTempProfile
+    ? getTempProfileDir(task, runId)
+    : pickNonEmptyString(
+      profile && profile.user_data_dir,
+      task && task.use_persistent ? config.browser.userDataDir : '',
+      // Fallback only if misconfigured persistent without a dir
+      getTempProfileDir(task, runId)
+    );
   const effectiveProxy = resolveEffectiveProxy(task, profile);
   const effectiveProfileName = pickNonEmptyString(
     profile && profile.name,
@@ -794,6 +863,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['DISPLAY', config.browser.display],
     ['XAUTHORITY', config.browser.xauthority],
     ['BROWSER_USER_DATA_DIR', effectiveUserDataDir],
+    // Scripts (woiden/hax DP) key off this: 1 => treat as TEMP + cleanup after quit
+    ['USE_TEMP_PROFILE', useTempProfile ? '1' : '0'],
     ['BROWSER_CHROME_PATH', chromePathEffective],
     ['BROWSER_PROXY', effectiveProxy],
     ['BROWSER_PROFILE_NAME', effectiveProfileName],
@@ -1082,6 +1153,10 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       // SB orphans + /tmp dirs — after processes are signalled
       scheduleOrphanSbChromeSweep(3000);
       scheduleTmpCleanup(cleanupTask, 8000);
+      // Panel "临时": delete per-run profile after Chrome is signalled
+      if (useTempProfile && effectiveUserDataDir) {
+        removeTempProfileDir(effectiveUserDataDir, { delayMs: 3500 });
+      }
       resolve({
         startedAt,
         endedAt: new Date().toISOString(),
@@ -1110,6 +1185,9 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       scheduleTerminateCommands(cleanupTask, 1800, runGeneration);
       scheduleOrphanSbChromeSweep(3000);
       scheduleTmpCleanup(cleanupTask, 8000);
+      if (useTempProfile && effectiveUserDataDir) {
+        removeTempProfileDir(effectiveUserDataDir, { delayMs: 3500 });
+      }
       const exitCode = code ?? (signal ? 1 : 0);
       const errorCode = stoppedByUser ? 'stopped' : null;
       resolve({
@@ -1198,4 +1276,7 @@ module.exports = {
   cleanupBrowserTempDirs,
   buildOrphanSbChromeCleanupCommands,
   scheduleOrphanSbChromeSweep,
+  getTempProfileDir,
+  removeTempProfileDir,
+  isPanelTempProfileDir,
 };
