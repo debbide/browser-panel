@@ -41,8 +41,37 @@ function isTruthyEnv(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
+// VISION_CHANNELS 每行是 baseUrl|apiKey|model，只遮中间那段，baseUrl / model 留着好排查。
+// 认不出行格式（比如 JSON 数组）就整段遮掉，宁可少看点信息也不能把 key 写进日志。
+function redactVisionChannels(value) {
+  const text = String(value || '');
+  if (!text.trim()) return '';
+  const lines = text.replace(/\r/g, '\n').split('\n');
+  const out = [];
+  for (const line of lines) {
+    const raw = line.trim();
+    if (!raw) continue;
+    if (raw.startsWith('#')) {
+      out.push(raw);
+      continue;
+    }
+    const parts = raw.split(/[|｜]/).map((p) => p.trim());
+    if (parts.length < 2) return db.maskSecret(text);
+    // 两段式是 baseUrl|model，本身不含 key
+    if (parts.length > 2 && !['', '-', '*', 'same'].includes(parts[1].toLowerCase())) {
+      parts[1] = db.maskSecret(parts[1]);
+    }
+    out.push(parts.join('|'));
+  }
+  return out.join(' / ');
+}
+
 function redactEnvValue(key, value) {
   const name = String(key || '').toUpperCase();
+  if (name.startsWith('VISION_CHANNELS')) {
+    const masked = redactVisionChannels(value);
+    return masked.length > 200 ? `${masked.slice(0, 200)}…` : masked;
+  }
   if (/(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE|AUTH)/.test(name)) {
     return db.maskSecret(value);
   }

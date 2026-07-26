@@ -195,6 +195,7 @@ async function testVisionChannel(channel, opts = {}) {
       supported: false,
       preview: '',
       detail: '',
+      shape: '',
       tried: [],
       textOnly: null,
       modelInList: null,
@@ -339,6 +340,7 @@ async function testVisionChannel(channel, opts = {}) {
             result.image.ok = true;
             result.image.supported = true;
             result.model = attempt.body.model;
+            result.image.shape = attempt.label;
             result.image.preview = text.slice(0, 120);
             result.image.detail = text
               ? `识图接口可用 · ${res.ms}ms · ${attempt.label} · 回复: ${text.slice(0, 40)}`

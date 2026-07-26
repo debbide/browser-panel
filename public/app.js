@@ -3343,9 +3343,21 @@ function openVisionTestModalForCard(cardEl) {
       ? `<div style="margin-top:6px;font-size:12px;"><strong>纯文本对照</strong> ${mark(img.textOnly.ok)} `
         + `${escapeHtml(img.textOnly.detail || '')}</div>`
       : '';
-    const triedBlock = (!imgPassed && tried.length)
+    // On success the winning body shape is the actionable bit: scripts must send the
+    // same shape, and "bare" vs "max_tokens=..." decides whether they will get a 400.
+    const shapeBlock = (imgPassed && img.shape)
+      ? `<div class="muted" style="margin-top:4px;font-size:12px;">命中请求形状: <code>${escapeHtml(img.shape)}</code></div>`
+      : '';
+    // Show the trace whenever something was rejected — including a success that only
+    // landed on a later shape, since the earlier rejections are what scripts must avoid.
+    const showTried = tried.length > 0 && (!imgPassed || tried.length > 1);
+    const triedBlock = showTried
       ? '<details style="margin-top:6px;">'
-        + `<summary class="muted" style="cursor:pointer;font-size:12px;">已试 ${tried.length} 种请求组合 · 展开看逐条结果</summary>`
+        + '<summary class="muted" style="cursor:pointer;font-size:12px;">'
+        + (imgPassed
+          ? `前 ${tried.length - 1} 种被拒，第 ${tried.length} 种通过 · 展开看逐条结果`
+          : `已试 ${tried.length} 种请求组合 · 展开看逐条结果`)
+        + '</summary>'
         + '<ul style="margin:6px 0 0 18px;padding:0;font-size:12px;line-height:1.7;">'
         + tried.map((t) => '<li>'
           + `<code>${escapeHtml(t.label || '')}</code> → `
@@ -3369,6 +3381,7 @@ function openVisionTestModalForCard(cardEl) {
       + (imgPassed
         ? `<span style="color:#86efac;">支持</span> · ${escapeHtml(data.model || '')} · ${img.ms != null ? img.ms + 'ms' : ''}`
           + (img.preview ? `<div class="muted" style="margin-top:4px;">回复: ${escapeHtml(img.preview)}</div>` : '')
+          + shapeBlock
         : `<span style="color:#fca5a5;">未通过</span> · ${escapeHtml(img.detail || '未测')}`)
       + textOnlyBlock
       + triedBlock
