@@ -143,12 +143,25 @@ restart_panel() {
 
   local node_bin
   node_bin="$(command -v node)"
+  local unit_panel="/etc/systemd/system/${SERVICE}.service"
+  local unit_xvfb="/etc/systemd/system/${XVFB_SERVICE}.service"
+  local units_changed=0
 
-  # 没有 unit 就写一个最小的并启用
-  if ! systemctl list-unit-files "${SERVICE}.service" 2>/dev/null | grep -q "${SERVICE}.service"; then
+  # Prefer packaged unit templates when present (keeps disk units in sync after upgrades).
+  if [[ -f "$ROOT/deploy/xvfb-browser.service" ]]; then
+    if [[ ! -f "$unit_xvfb" ]] || ! cmp -s "$ROOT/deploy/xvfb-browser.service" "$unit_xvfb" 2>/dev/null; then
+      log "install/update ${XVFB_SERVICE}.service"
+      install -m 644 "$ROOT/deploy/xvfb-browser.service" "$unit_xvfb"
+      units_changed=1
+    fi
+  fi
+
+  # 没有 panel unit 就写一个最小的并启用
+  if ! systemctl list-unit-files "${SERVICE}.service" 2>/dev/null | grep -q "${SERVICE}.service" \
+    || [[ ! -f "$unit_panel" ]]; then
     log "create systemd units"
-    if [[ -x /usr/bin/Xvfb ]] && ! systemctl list-unit-files "${XVFB_SERVICE}.service" 2>/dev/null | grep -q "${XVFB_SERVICE}.service"; then
-      cat >"/etc/systemd/system/${XVFB_SERVICE}.service" <<'EOF'
+    if [[ -x /usr/bin/Xvfb ]] && [[ ! -f "$unit_xvfb" ]]; then
+      cat >"$unit_xvfb" <<'EOF'
 [Unit]
 Description=Xvfb :1
 After=network.target
@@ -158,8 +171,15 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
+      units_changed=1
     fi
-    cat >"/etc/systemd/system/${SERVICE}.service" <<EOF
+    if [[ -f "$ROOT/deploy/browser-automation-panel.service" ]]; then
+      sed "s|ExecStart=.*node server/index.js|ExecStart=${node_bin} server/index.js|" \
+        "$ROOT/deploy/browser-automation-panel.service" >"$unit_panel"
+      sed -i "s|^WorkingDirectory=.*|WorkingDirectory=${ROOT}|" "$unit_panel"
+      sed -i "s|^EnvironmentFile=.*|EnvironmentFile=-${ROOT}/.env.panel|" "$unit_panel" 2>/dev/null || true
+    else
+      cat >"$unit_panel" <<EOF
 [Unit]
 Description=Browser Panel
 After=network.target ${XVFB_SERVICE}.service
@@ -172,20 +192,41 @@ Environment=BROWSER_CHROME_PATH=/usr/bin/google-chrome-stable
 Environment=PLAYWRIGHT_CHROME_PATH=/usr/bin/google-chrome-stable
 Environment=BROWSER_USER=browser
 Environment=BROWSER_WORK_DIR=/home/browser/browser-work
+EnvironmentFile=-${ROOT}/.env.panel
 ExecStart=${node_bin} server/index.js
 Restart=on-failure
 User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+    fi
+    units_changed=1
     # browser 用户
     id browser >/dev/null 2>&1 || useradd -m -s /bin/bash browser 2>/dev/null || true
     mkdir -p /home/browser/browser-work
     chown -R browser:browser /home/browser 2>/dev/null || true
-    systemctl daemon-reload
-    systemctl enable "${XVFB_SERVICE}.service" 2>/dev/null || true
-    systemctl enable "${SERVICE}.service"
+  elif [[ -f "$ROOT/deploy/browser-automation-panel.service" ]]; then
+    # Existing install: refresh ExecStart node path + WorkingDirectory if template drifted
+    local tmp_unit
+    tmp_unit="$(mktemp)"
+    sed "s|ExecStart=.*node server/index.js|ExecStart=${node_bin} server/index.js|" \
+      "$ROOT/deploy/browser-automation-panel.service" >"$tmp_unit"
+    sed -i "s|^WorkingDirectory=.*|WorkingDirectory=${ROOT}|" "$tmp_unit"
+    sed -i "s|^EnvironmentFile=.*|EnvironmentFile=-${ROOT}/.env.panel|" "$tmp_unit" 2>/dev/null || true
+    if ! cmp -s "$tmp_unit" "$unit_panel" 2>/dev/null; then
+      log "update ${SERVICE}.service from deploy template"
+      install -m 644 "$tmp_unit" "$unit_panel"
+      units_changed=1
+    fi
+    rm -f "$tmp_unit"
   fi
+
+  # ALWAYS reload before enable/restart — avoids:
+  # "unit file changed on disk. Run systemctl daemon-reload"
+  log "systemctl daemon-reload"
+  systemctl daemon-reload
+  systemctl enable "${XVFB_SERVICE}.service" 2>/dev/null || true
+  systemctl enable "${SERVICE}.service" 2>/dev/null || true
 
   log "restart services"
   systemctl reset-failed "${XVFB_SERVICE}.service" 2>/dev/null || true
@@ -194,6 +235,9 @@ EOF
   systemctl restart "${SERVICE}.service"
   sleep 1
   systemctl --no-pager --full is-active "${SERVICE}.service" || true
+  if [[ "$units_changed" -eq 1 ]]; then
+    log "systemd units refreshed + reloaded"
+  fi
   log "panel: http://0.0.0.0:3210"
 }
 

@@ -307,7 +307,10 @@ install_xvfb_service
 
 # Restart panel if present so it picks up .env.panel + display
 if systemctl list-unit-files 2>/dev/null | grep -q browser-automation-panel.service; then
-  # Ensure panel starts after Xvfb when both are enabled
+  # Unit files may have been rewritten above (xvfb) or by prior upgrades —
+  # always daemon-reload before restart to silence "unit file changed on disk".
+  log "systemctl daemon-reload (before panel restart)"
+  systemctl daemon-reload
   if [[ -f /etc/systemd/system/browser-automation-panel.service ]] \
     || [[ -f /lib/systemd/system/browser-automation-panel.service ]]; then
     systemctl enable browser-automation-panel.service 2>/dev/null || true

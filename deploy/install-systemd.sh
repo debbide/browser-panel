@@ -70,6 +70,9 @@ sed "s|ExecStart=.*node server/index.js|ExecStart=${NODE_BIN} server/index.js|" 
 sed -i "s|^WorkingDirectory=.*|WorkingDirectory=${ROOT}|" /etc/systemd/system/browser-automation-panel.service
 sed -i "s|^EnvironmentFile=.*|EnvironmentFile=-${ROOT}/.env.panel|" /etc/systemd/system/browser-automation-panel.service
 
+# Must reload after writing units — otherwise systemctl warns:
+# "unit file changed on disk. Run systemctl daemon-reload"
+echo "systemctl daemon-reload"
 systemctl daemon-reload
 systemctl enable xvfb-browser.service browser-automation-panel.service
 systemctl restart xvfb-browser.service
@@ -77,6 +80,7 @@ sleep 1
 systemctl restart browser-automation-panel.service
 sleep 1
 systemctl --no-pager --full status xvfb-browser.service browser-automation-panel.service || true
+echo "If you still see unit-changed warnings, run: systemctl daemon-reload && systemctl restart browser-automation-panel"
 
 echo
 echo "Done."
