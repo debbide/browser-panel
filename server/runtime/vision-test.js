@@ -12,9 +12,34 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
-// 1x1 PNG (transparent) — enough to probe vision endpoints without shipping assets.
-const TINY_PNG_B64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+// 2x2 PNG probe — some gateways reject 1x1 / empty images with bare HTTP 400.
+// Valid PNG signature; not a real captcha, only capability probe.
+const PROBE_PNG_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR42mP8z8BQz0A0YMQo+M8ABYwD/Qb9fQAAAABJRU5ErkJggg==';
+
+/** Model field may be "a/b" or "a,b" — try each until one works. */
+function splitModelCandidates(modelField) {
+  const raw = String(modelField || '').trim();
+  if (!raw) return [];
+  const parts = raw.split(/[/|,，、]+/).map((s) => s.trim()).filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  // Prefer full string first if it looks like a single id (no slash already split)
+  if (!parts.length) return [raw];
+  // If user wrote "grok-4.5/grok-4.5" both same; if "a/b" try a then b; also try raw once.
+  for (const p of [raw, ...parts]) {
+    if (!p || seen.has(p)) continue;
+    // Skip obviously non-id raw when it only contains separators already expanded
+    if (p !== raw && p.includes('/') && p.split('/').length > 1) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  // If raw was "x/y", first push may be full "x/y" which some APIs accept as one name — keep it first only if no slash
+  if (raw.includes('/') || raw.includes('|') || raw.includes(',')) {
+    return parts.filter((p, i, arr) => p && arr.indexOf(p) === i);
+  }
+  return out.length ? out : [raw];
+}
 
 function trimSlash(s) {
   return String(s || '').trim().replace(/\/+$/, '');
@@ -222,60 +247,116 @@ async function testVisionChannel(channel, opts = {}) {
   }
 
   // ----- 2) image chat -----
+  // 400 Upstream error often means bad probe payload (1x1 image / model id / max_tokens),
+  // NOT "provider has no vision". Retry a few shapes before concluding failure.
   if (testImage) {
     if (!model) {
       result.image.detail = '未填写 Model，跳过识图测试';
     } else {
-      try {
-        const body = {
-          model,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:image/png;base64,${TINY_PNG_B64}`,
+      const modelCandidates = splitModelCandidates(model);
+      const attempts = [];
+      // Build attempt list: each model × a couple of body variants
+      for (const mid of modelCandidates.slice(0, 3)) {
+        attempts.push({
+          label: `model=${mid} img=8x8 max_tokens=256`,
+          body: {
+            model: mid,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'image_url',
+                    image_url: { url: `data:image/png;base64,${PROBE_PNG_B64}` },
                   },
-                },
-                {
-                  type: 'text',
-                  text: 'This is a 1x1 test image. Reply with exactly one word: OK',
-                },
-              ],
-            },
-          ],
-          temperature: 0,
-          max_tokens: 32,
-        };
-        const res = await httpJson('POST', ep.chatUrl, {
-          headers: authHeaders,
-          body,
-          timeoutMs: 45000,
+                  {
+                    type: 'text',
+                    text: 'Describe this image in one short English word only.',
+                  },
+                ],
+              },
+            ],
+            temperature: 0,
+            max_tokens: 256,
+          },
         });
-        result.image.ms = res.ms;
-        if (res.ok) {
-          const text = extractChatText(res.json);
-          result.image.ok = true;
-          result.image.supported = true;
-          result.image.preview = text.slice(0, 120);
-          result.image.detail = text
-            ? `识图接口可用 · ${res.ms}ms · 回复: ${text.slice(0, 40)}`
-            : `HTTP 200 但 content 为空 · ${res.ms}ms（部分模型仍可能可用）`;
-        } else {
-          result.image.ok = false;
-          result.image.supported = false;
-          const snippet = (res.text || '').slice(0, 200);
-          result.image.detail = `HTTP ${res.status}: ${snippet}`;
-          // Heuristic: common "vision not supported" phrases
-          if (/vision|image|multimodal|not support|不支持/i.test(snippet)) {
-            result.image.detail = `可能不支持图片: ${snippet}`;
+        attempts.push({
+          label: `model=${mid} img=8x8 detail=low`,
+          body: {
+            model: mid,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'What color is dominant? Reply with one word.',
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:image/png;base64,${PROBE_PNG_B64}`,
+                      detail: 'low',
+                    },
+                  },
+                ],
+              },
+            ],
+            max_tokens: 128,
+          },
+        });
+      }
+
+      let lastFail = '';
+      let anyTried = false;
+      for (const attempt of attempts) {
+        anyTried = true;
+        try {
+          const res = await httpJson('POST', ep.chatUrl, {
+            headers: authHeaders,
+            body: attempt.body,
+            timeoutMs: 60000,
+          });
+          result.image.ms = res.ms;
+          if (res.ok) {
+            const text = extractChatText(res.json);
+            result.image.ok = true;
+            result.image.supported = true;
+            result.model = attempt.body.model;
+            result.image.preview = text.slice(0, 120);
+            result.image.detail = text
+              ? `识图接口可用 · ${res.ms}ms · ${attempt.label} · 回复: ${text.slice(0, 40)}`
+              : `HTTP 200 但 content 为空 · ${res.ms}ms（${attempt.label}）`;
+            break;
           }
+          const snippet = (res.text || '').slice(0, 240);
+          lastFail = `HTTP ${res.status}: ${snippet}`;
+          // Auth errors: no point retrying other shapes with same key
+          if (res.status === 401 || res.status === 403) {
+            result.image.ok = false;
+            result.image.supported = false;
+            result.image.detail = lastFail;
+            break;
+          }
+          // Keep trying other model names / body shapes on 400
+          result.image.detail = lastFail;
+        } catch (err) {
+          lastFail = err.message || String(err);
+          result.image.detail = lastFail;
         }
-      } catch (err) {
+      }
+
+      if (!result.image.ok && anyTried) {
         result.image.ok = false;
-        result.image.detail = err.message || String(err);
+        result.image.supported = false;
+        const snip = result.image.detail || lastFail || '';
+        if (/vision|image|multimodal|not support|不支持/i.test(snip)) {
+          result.image.detail = `可能不支持图片: ${snip}`;
+        } else if (/400|Upstream error/i.test(snip)) {
+          result.image.detail =
+            `${snip}（多为探测请求被上游拒绝：可检查模型名是否为「a/b」需拆开、` +
+            `或该路由对 data-url 图有限制；连通与 Key 已正常，不代表业务 Vision 一定不可用）`;
+        }
       }
     }
   }
