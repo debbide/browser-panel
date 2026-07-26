@@ -178,7 +178,12 @@ EOF
         "$ROOT/deploy/browser-automation-panel.service" >"$unit_panel"
       sed -i "s|^WorkingDirectory=.*|WorkingDirectory=${ROOT}|" "$unit_panel"
       sed -i "s|^EnvironmentFile=.*|EnvironmentFile=-${ROOT}/.env.panel|" "$unit_panel" 2>/dev/null || true
+      # Never leave a hard-coded Chrome path in the unit — Environment= beats EnvironmentFile=
+      # and google-chrome-stable does not exist on ARM / snap-only hosts.
+      sed -i '/^Environment=BROWSER_CHROME_PATH=/d' "$unit_panel" 2>/dev/null || true
+      sed -i '/^Environment=PLAYWRIGHT_CHROME_PATH=/d' "$unit_panel" 2>/dev/null || true
     else
+      # Minimal unit: Chrome path only from .env.panel (do not hard-code amd64 Chrome).
       cat >"$unit_panel" <<EOF
 [Unit]
 Description=Browser Panel
@@ -188,8 +193,6 @@ Wants=${XVFB_SERVICE}.service
 WorkingDirectory=${ROOT}
 Environment=PORT=3210
 Environment=BROWSER_DISPLAY=:1.0
-Environment=BROWSER_CHROME_PATH=/usr/bin/google-chrome-stable
-Environment=PLAYWRIGHT_CHROME_PATH=/usr/bin/google-chrome-stable
 Environment=BROWSER_USER=browser
 Environment=BROWSER_WORK_DIR=/home/browser/browser-work
 EnvironmentFile=-${ROOT}/.env.panel
@@ -213,6 +216,18 @@ EOF
       "$ROOT/deploy/browser-automation-panel.service" >"$tmp_unit"
     sed -i "s|^WorkingDirectory=.*|WorkingDirectory=${ROOT}|" "$tmp_unit"
     sed -i "s|^EnvironmentFile=.*|EnvironmentFile=-${ROOT}/.env.panel|" "$tmp_unit" 2>/dev/null || true
+    # Strip hard-coded chrome paths from old units / templates so .env.panel wins
+    sed -i '/^Environment=BROWSER_CHROME_PATH=/d' "$tmp_unit" 2>/dev/null || true
+    sed -i '/^Environment=PLAYWRIGHT_CHROME_PATH=/d' "$tmp_unit" 2>/dev/null || true
+    # Also strip from the live unit when refreshing, even if other fields match
+    if [[ -f "$unit_panel" ]]; then
+      if grep -qE '^Environment=BROWSER_CHROME_PATH=|^Environment=PLAYWRIGHT_CHROME_PATH=' "$unit_panel" 2>/dev/null; then
+        log "remove hard-coded Chrome path from ${SERVICE}.service (use .env.panel)"
+        sed -i '/^Environment=BROWSER_CHROME_PATH=/d' "$unit_panel" 2>/dev/null || true
+        sed -i '/^Environment=PLAYWRIGHT_CHROME_PATH=/d' "$unit_panel" 2>/dev/null || true
+        units_changed=1
+      fi
+    fi
     if ! cmp -s "$tmp_unit" "$unit_panel" 2>/dev/null; then
       log "update ${SERVICE}.service from deploy template"
       install -m 644 "$tmp_unit" "$unit_panel"

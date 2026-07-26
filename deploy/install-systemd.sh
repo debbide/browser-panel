@@ -20,7 +20,12 @@ if [[ ! -x /usr/bin/Xvfb ]]; then
   exit 1
 fi
 if [[ ! -x /usr/bin/google-chrome-stable && ! -x /usr/bin/google-chrome ]]; then
-  echo "warn: google-chrome-stable not found; set BROWSER_CHROME_PATH in .env.panel"
+  if [[ -x /snap/chromium/current/usr/lib/chromium-browser/chrome ]]; then
+    echo "note: no Google Chrome; snap Chromium ELF found — set BROWSER_CHROME_PATH to that path in .env.panel"
+  else
+    echo "warn: google-chrome-stable not found; set BROWSER_CHROME_PATH in .env.panel"
+    echo "      ARM snap example: /snap/chromium/current/usr/lib/chromium-browser/chrome"
+  fi
 fi
 
 # .env.panel
@@ -29,11 +34,22 @@ if [[ ! -f "$ROOT/.env.panel" ]]; then
     cp "$ROOT/deploy/env.panel.example" "$ROOT/.env.panel"
     echo "Created $ROOT/.env.panel — edit BROWSER_USER / proxy if needed"
   else
+    # Prefer a path that exists on this host (ARM often has snap Chromium only).
+    _chrome="/usr/bin/google-chrome-stable"
+    if [[ ! -x "$_chrome" ]]; then
+      if [[ -x /snap/chromium/current/usr/lib/chromium-browser/chrome ]]; then
+        _chrome="/snap/chromium/current/usr/lib/chromium-browser/chrome"
+      elif [[ -x /usr/bin/chromium ]]; then
+        _chrome="/usr/bin/chromium"
+      elif [[ -x /usr/bin/chromium-browser ]]; then
+        _chrome="/usr/bin/chromium-browser"
+      fi
+    fi
     cat >"$ROOT/.env.panel" <<EOF
 PORT=3210
 HOST=0.0.0.0
 BROWSER_DISPLAY=:1.0
-BROWSER_CHROME_PATH=/usr/bin/google-chrome-stable
+BROWSER_CHROME_PATH=${_chrome}
 BROWSER_USER=browser
 BROWSER_WORK_DIR=/home/browser/browser-work
 EOF

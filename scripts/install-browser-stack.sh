@@ -88,11 +88,115 @@ apt-get install -y --no-install-recommends \
 apt-get install -y --no-install-recommends libasound2t64 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Google Chrome (single system browser) — no Playwright browser download
+# Google Chrome / Chromium (single system browser) — no Playwright browser download
 # ---------------------------------------------------------------------------
+# ARM/Ubuntu often only has snap Chromium. Prefer a real ELF binary over
+# /usr/bin/chromium-browser wrappers. Never clobber an existing working path
+# in .env.panel with a worse default (e.g. google-chrome-stable on ARM).
+
+is_exec() { [[ -n "${1:-}" && -x "$1" && -f "$1" ]]; }
+
+# True if path is a snap *launcher* (not the real chrome ELF under /snap/chromium/.../chrome).
+# Real ELF path is OK for Playwright/DrissionPage executablePath; wrappers die under systemd.
+is_snap_wrapper() {
+  local p="$1"
+  [[ -z "$p" ]] && return 1
+  # Real Chromium ELF inside the snap revision — NOT a wrapper
+  case "$p" in
+    /snap/chromium/*/usr/lib/*/chrome|/snap/chromium/*/usr/lib/*/chromium)
+      return 1
+      ;;
+    /snap/bin/*)
+      return 0
+      ;;
+  esac
+  local real
+  real="$(readlink -f "$p" 2>/dev/null || true)"
+  case "$real" in
+    /snap/chromium/*/usr/lib/*/chrome|/snap/chromium/*/usr/lib/*/chromium)
+      return 1
+      ;;
+    /snap/bin/*)
+      return 0
+      ;;
+  esac
+  # Transitional packages: /usr/bin/chromium-browser is often a tiny shell that execs snap
+  if [[ -f "$p" ]] && head -c 200 "$p" 2>/dev/null | grep -qE 'snap run|snap/bin|chromium\.chromium'; then
+    return 0
+  fi
+  # Symlink that lands in /snap/ but is not the chrome ELF (e.g. /usr/bin/chromium → /snap/bin/chromium)
+  case "$real" in
+    /snap/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Prefer the real Chromium ELF inside the snap (works as executablePath for PW/DP).
+# Wrapper /usr/bin/chromium-browser under systemd often dies with:
+#   "is not a snap cgroup for tag snap.chromium.chromium"
+resolve_snap_chromium_elf() {
+  local c
+  for c in \
+    /snap/chromium/current/usr/lib/chromium-browser/chrome \
+    /snap/chromium/current/usr/lib/chromium/chrome \
+    /snap/chromium/current/usr/lib/chromium-browser/chromium \
+    /snap/chromium/current/usr/lib/chromium/chromium
+  do
+    if is_exec "$c"; then
+      echo "$c"
+      return 0
+    fi
+  done
+  # Versioned snap dir fallback
+  local d
+  for d in /snap/chromium/*; do
+    [[ -d "$d" ]] || continue
+    [[ "$(basename "$d")" == "current" ]] && continue
+    for c in \
+      "$d/usr/lib/chromium-browser/chrome" \
+      "$d/usr/lib/chromium/chrome"
+    do
+      if is_exec "$c"; then
+        echo "$c"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# Return 0 if path looks usable as a browser binary for the panel.
+chrome_path_ok() {
+  local p="$1"
+  is_exec "$p" || return 1
+  # Reject known-bad amd64-only default when file is missing (handled by is_exec)
+  # Reject snap *wrappers* — they break under systemd; real ELF under /snap/.../chrome is OK.
+  if is_snap_wrapper "$p"; then
+    return 1
+  fi
+  return 0
+}
+
+read_env_kv() {
+  # read KEY from ENV_FILE if present
+  local k="$1"
+  [[ -f "$ENV_FILE" ]] || return 1
+  local line
+  line="$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | tail -1 || true)"
+  [[ -n "$line" ]] || return 1
+  echo "${line#*=}"
+}
+
 install_chrome() {
   if have google-chrome-stable || have google-chrome; then
     log "Chrome already present: $(command -v google-chrome-stable || command -v google-chrome)"
+    return 0
+  fi
+  # Already have a usable Chromium (deb or snap ELF) — do not reinstall
+  if resolve_chrome_path >/dev/null 2>&1; then
+    log "Chromium already resolvable — skip install"
     return 0
   fi
 
@@ -105,30 +209,80 @@ install_chrome() {
     else
       log "WARN: download Chrome deb failed — trying chromium"
     fi
+  else
+    log "arch=$arch — skip Google Chrome amd64 deb; will use Chromium"
   fi
 
   if ! have google-chrome-stable && ! have google-chrome; then
-    log "installing Chromium from apt"
+    log "installing Chromium from apt (may be snap transitional on Ubuntu)"
     apt-get install -y chromium-browser 2>/dev/null \
       || apt-get install -y chromium 2>/dev/null \
-      || die "could not install Chrome/Chromium"
+      || true
   fi
 }
 
-install_chrome
-
 resolve_chrome_path() {
+  local c existing
+
+  # 1) Keep an already-configured path if it still works (do not "upgrade" it away)
+  existing="$(read_env_kv BROWSER_CHROME_PATH 2>/dev/null || true)"
+  if chrome_path_ok "$existing"; then
+    echo "$existing"
+    return 0
+  fi
+  # If env pointed at a snap wrapper, try the real ELF next
+  if [[ -n "$existing" ]] && is_snap_wrapper "$existing"; then
+    c="$(resolve_snap_chromium_elf || true)"
+    if [[ -n "$c" ]]; then
+      echo "$c"
+      return 0
+    fi
+  fi
+
+  # 2) Real Google Chrome (deb) — best for amd64 systemd
   for c in \
     /usr/bin/google-chrome-stable \
     /usr/bin/google-chrome \
-    /usr/bin/chromium-browser \
-    /usr/bin/chromium \
     "$(command -v google-chrome-stable 2>/dev/null || true)" \
-    "$(command -v google-chrome 2>/dev/null || true)" \
-    "$(command -v chromium-browser 2>/dev/null || true)" \
+    "$(command -v google-chrome 2>/dev/null || true)"
+  do
+    if chrome_path_ok "$c"; then
+      echo "$c"
+      return 0
+    fi
+  done
+
+  # 3) Non-snap Chromium binaries (Debian/RPi etc.)
+  for c in \
+    /usr/bin/chromium \
+    /usr/lib/chromium/chromium \
+    /usr/lib/chromium-browser/chromium-browser \
     "$(command -v chromium 2>/dev/null || true)"
   do
-    if [[ -n "$c" && -x "$c" ]]; then
+    if chrome_path_ok "$c"; then
+      echo "$c"
+      return 0
+    fi
+  done
+
+  # 4) Snap Chromium — use the ELF, never /usr/bin/chromium-browser or /snap/bin/chromium
+  c="$(resolve_snap_chromium_elf || true)"
+  if [[ -n "$c" ]]; then
+    log "using snap Chromium ELF (not the snap wrapper): $c"
+    echo "$c"
+    return 0
+  fi
+
+  # 5) Last resort: wrappers (will likely fail under systemd — warn loudly)
+  for c in \
+    /usr/bin/chromium-browser \
+    "$(command -v chromium-browser 2>/dev/null || true)" \
+    /snap/bin/chromium \
+    "$(command -v chromium 2>/dev/null || true)"
+  do
+    if is_exec "$c"; then
+      log "WARN: only found snap/wrapper Chromium at $c — systemd tasks may fail with snap cgroup errors"
+      log "WARN: set BROWSER_CHROME_PATH to the real ELF, e.g. /snap/chromium/current/usr/lib/chromium-browser/chrome"
       echo "$c"
       return 0
     fi
@@ -136,10 +290,17 @@ resolve_chrome_path() {
   return 1
 }
 
+install_chrome
+
 CHROME_PATH="$(resolve_chrome_path || true)"
 [[ -n "${CHROME_PATH:-}" ]] || die "Chrome/Chromium binary not found after install"
 log "Chrome path: $CHROME_PATH"
-"$CHROME_PATH" --version || true
+if is_snap_wrapper "$CHROME_PATH"; then
+  log "WARN: resolved path is a snap wrapper — panel under systemd may fail to launch browser"
+elif [[ "$CHROME_PATH" == /snap/* ]]; then
+  log "note: using snap Chromium ELF directly (avoids snap.chromium cgroup wrapper)"
+fi
+"$CHROME_PATH" --version 2>/dev/null || log "WARN: --version failed for $CHROME_PATH"
 
 # ---------------------------------------------------------------------------
 # browser user + work dir
@@ -163,8 +324,25 @@ chmod -R a+rX "$BROWSER_WORK" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # .env.panel — single Chrome for everything
+# Never overwrite a still-valid BROWSER_CHROME_PATH with a worse guess.
 # ---------------------------------------------------------------------------
 mkdir -p "$ROOT"
+set_kv() {
+  local k="$1" v="$2"
+  if grep -qE "^${k}=" "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^${k}=.*|${k}=${v}|" "$ENV_FILE"
+  else
+    echo "${k}=${v}" >>"$ENV_FILE"
+  fi
+}
+set_kv_if_missing() {
+  local k="$1" v="$2"
+  if grep -qE "^${k}=" "$ENV_FILE" 2>/dev/null; then
+    return 0
+  fi
+  echo "${k}=${v}" >>"$ENV_FILE"
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
   log "creating $ENV_FILE"
   cat >"$ENV_FILE" <<EOF
@@ -182,23 +360,31 @@ BROWSER_USER_DATA_DIR=${BROWSER_WORK}/persistent
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 EOF
 else
-  log "updating Chrome path in $ENV_FILE"
+  log "updating $ENV_FILE (preserve valid Chrome path)"
   touch "$ENV_FILE"
-  set_kv() {
-    local k="$1" v="$2"
-    if grep -qE "^${k}=" "$ENV_FILE" 2>/dev/null; then
-      sed -i "s|^${k}=.*|${k}=${v}|" "$ENV_FILE"
-    else
-      echo "${k}=${v}" >>"$ENV_FILE"
+  existing_chrome="$(read_env_kv BROWSER_CHROME_PATH 2>/dev/null || true)"
+  if chrome_path_ok "$existing_chrome"; then
+    log "keep existing BROWSER_CHROME_PATH=$existing_chrome"
+    # Keep PLAYWRIGHT in sync only if missing/empty
+    existing_pw="$(read_env_kv PLAYWRIGHT_CHROME_PATH 2>/dev/null || true)"
+    if ! chrome_path_ok "$existing_pw"; then
+      set_kv PLAYWRIGHT_CHROME_PATH "$existing_chrome"
     fi
-  }
-  set_kv BROWSER_CHROME_PATH "$CHROME_PATH"
-  set_kv PLAYWRIGHT_CHROME_PATH "$CHROME_PATH"
-  set_kv BROWSER_DISPLAY "$DISPLAY_NUM"
-  set_kv BROWSER_USER "$BROWSER_USER"
-  set_kv BROWSER_HOME "$BROWSER_HOME"
-  set_kv BROWSER_WORK_DIR "$BROWSER_WORK"
-  set_kv BROWSER_XAUTHORITY "${BROWSER_HOME}/.Xauthority"
+  else
+    if [[ -n "$existing_chrome" ]]; then
+      log "replace broken BROWSER_CHROME_PATH=$existing_chrome → $CHROME_PATH"
+    else
+      log "set BROWSER_CHROME_PATH=$CHROME_PATH"
+    fi
+    set_kv BROWSER_CHROME_PATH "$CHROME_PATH"
+    set_kv PLAYWRIGHT_CHROME_PATH "$CHROME_PATH"
+  fi
+  # Non-chrome keys: only fill if missing (do not thrash operator overrides)
+  set_kv_if_missing BROWSER_DISPLAY "$DISPLAY_NUM"
+  set_kv_if_missing BROWSER_USER "$BROWSER_USER"
+  set_kv_if_missing BROWSER_HOME "$BROWSER_HOME"
+  set_kv_if_missing BROWSER_WORK_DIR "$BROWSER_WORK"
+  set_kv_if_missing BROWSER_XAUTHORITY "${BROWSER_HOME}/.Xauthority"
   set_kv PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD 1
 fi
 

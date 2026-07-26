@@ -8,12 +8,17 @@ Type=simple
 WorkingDirectory=/opt/browser-panel
 EnvironmentFile=-/opt/browser-panel/.env.panel
 
-# Defaults (override in .env.panel)
+# Defaults only. Chrome path MUST come from .env.panel (or panel DB setting),
+# not hard-coded here — systemd Environment= overrides EnvironmentFile=, so a
+# fixed google-chrome-stable would break ARM / snap Chromium hosts on every upgrade.
 Environment=NODE_ENV=production
 Environment=PORT=3210
 Environment=HOST=0.0.0.0
 Environment=BROWSER_DISPLAY=:1.0
-Environment=BROWSER_CHROME_PATH=/usr/bin/google-chrome-stable
+# Do NOT set BROWSER_CHROME_PATH here. Put it in .env.panel, e.g.:
+#   BROWSER_CHROME_PATH=/usr/bin/google-chrome-stable
+#   # ARM snap Chromium real ELF (not /usr/bin/chromium-browser wrapper):
+#   BROWSER_CHROME_PATH=/snap/chromium/current/usr/lib/chromium-browser/chrome
 # Optional HTTP proxy for outbound (apt/curl style). Browser tasks prefer task/panel BROWSER_PROXY.
 # Environment=http_proxy=http://127.0.0.1:18999
 # Environment=https_proxy=http://127.0.0.1:18999
