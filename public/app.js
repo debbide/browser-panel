@@ -153,6 +153,7 @@ const visionForm = document.getElementById('vision-form');
 const visionStatusText = document.getElementById('vision-status-text');
 const visionChannelsList = document.getElementById('vision-channels-list');
 const visionAddChannelBtn = document.getElementById('vision-add-channel');
+const visionTestBtn = document.getElementById('vision-test-btn');
 const visionSaveBtn = document.getElementById('vision-save-btn');
 const taskParamsBlock = document.getElementById('task-params-block');
 const taskParamsHint = document.getElementById('task-params-hint');
@@ -3178,6 +3179,186 @@ if (visionAddChannelBtn) {
     renumberVisionChannels();
     if (window.lucide) window.lucide.createIcons();
   });
+}
+
+/** Open modal: connectivity + model list + image probe for primary Vision channel. */
+function openVisionTestModal() {
+  const channels = collectVisionChannels();
+  const primary = channels[0] || {};
+  if (!primary.baseUrl) {
+    toast('请先填写主通道 Base URL', 'warn');
+    return;
+  }
+  if (!primary.model) {
+    toast('建议填写 Model 后再测识图；仍可先测连通与模型列表', 'warn');
+  }
+
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '10020';
+  const dialog = document.createElement('section');
+  dialog.className = 'modal modal-wide open vision-test-modal';
+  dialog.style.zIndex = '10030';
+  dialog.setAttribute('aria-hidden', 'false');
+
+  dialog.innerHTML = ''
+    + '<div class="modal-header">'
+    + '  <div>'
+    + '    <h2>测试 AI（Vision）</h2>'
+    + '    <p class="muted">主通道连通性 · 拉取模型 · 图片识别（不改动已保存配置）</p>'
+    + '  </div>'
+    + '  <button class="icon-btn" type="button" aria-label="关闭" data-close-vision-test>'
+    + '    <i data-lucide="x" class="icon-md"></i>'
+    + '  </button>'
+    + '</div>'
+    + '<div class="modal-body" style="padding:16px 20px 20px;">'
+    + '  <div class="schedule-note" style="margin-bottom:12px;">'
+    + '    使用表单中的主通道；Key 留空则用已保存的 Key。'
+    + '  </div>'
+    + '  <div class="row" style="gap:8px; flex-wrap:wrap; margin-bottom:12px;">'
+    + '    <button type="button" class="btn-primary btn-with-icon" data-vision-run-test>'
+    + '      <i data-lucide="radar" class="icon-sm"></i> 开始测试'
+    + '    </button>'
+    + '    <button type="button" class="alt btn-with-icon" data-vision-fetch-models only>'
+    + '      <i data-lucide="list" class="icon-sm"></i> 仅拉取模型'
+    + '    </button>'
+    + '  </div>'
+    + '  <div data-vision-test-status class="muted" style="margin-bottom:10px;">点击「开始测试」</div>'
+    + '  <div data-vision-test-results class="vision-test-results" hidden></div>'
+    + '  <div data-vision-model-chips class="vision-model-chips" style="margin-top:12px;" hidden></div>'
+    + '</div>';
+
+  const close = () => {
+    mask.remove();
+    dialog.remove();
+  };
+
+  const statusEl = dialog.querySelector('[data-vision-test-status]');
+  const resultsEl = dialog.querySelector('[data-vision-test-results]');
+  const chipsEl = dialog.querySelector('[data-vision-model-chips]');
+  const runBtn = dialog.querySelector('[data-vision-run-test]');
+  const modelsOnlyBtn = dialog.querySelector('[data-vision-fetch-models]');
+
+  const mark = (ok) => (ok
+    ? '<span style="color:#86efac;">✓</span>'
+    : '<span style="color:#fca5a5;">✗</span>');
+
+  const renderResult = (data) => {
+    if (!resultsEl) return;
+    resultsEl.hidden = false;
+    const c = data.connectivity || {};
+    const m = data.models || {};
+    const img = data.image || {};
+    resultsEl.innerHTML = ''
+      + '<div class="vision-test-grid">'
+      + `  <div><strong>连通性</strong> ${mark(c.ok)} `
+      + (c.ok
+        ? `<span style="color:#86efac;">正常</span> · ${c.ms != null ? c.ms + 'ms' : ''} `
+          + (c.label ? `<span class="pill" style="margin-left:4px;">${escapeHtml(c.label)}</span>` : '')
+        : `<span style="color:#fca5a5;">失败</span> · ${escapeHtml(c.detail || '')}`)
+      + '  </div>'
+      + `  <div><strong>模型列表</strong> ${mark(m.ok || m.count > 0)} `
+      + escapeHtml(m.detail || (m.count ? `读到 ${m.count} 个` : '—'))
+      + '  </div>'
+      + `  <div><strong>图片识别</strong> ${mark(img.supported || img.ok)} `
+      + (img.supported || img.ok
+        ? `<span style="color:#86efac;">支持</span> · ${escapeHtml(data.model || '')} · ${img.ms != null ? img.ms + 'ms' : ''}`
+          + (img.preview ? `<div class="muted" style="margin-top:4px;">回复: ${escapeHtml(img.preview)}</div>` : '')
+        : `<span style="color:#fca5a5;">未通过</span> · ${escapeHtml(img.detail || '未测')}`)
+      + '  </div>'
+      + '</div>'
+      + `<div class="vision-test-summary ${data.ok ? 'is-ok' : 'is-bad'}">${escapeHtml(data.summary || '')}</div>`;
+
+    const ids = Array.isArray(m.ids) ? m.ids : [];
+    if (chipsEl) {
+      if (!ids.length) {
+        chipsEl.hidden = true;
+        chipsEl.innerHTML = '';
+        return;
+      }
+      chipsEl.hidden = false;
+      const currentModel = (primary.model || '').trim();
+      chipsEl.innerHTML = ''
+        + `<div class="muted" style="margin-bottom:6px;">可用模型（${ids.length}）· 点击填入主通道 Model</div>`
+        + '<div class="vision-chip-row">'
+        + ids.slice(0, 60).map((id) => {
+          const selected = id === currentModel ? ' is-selected' : '';
+          return `<button type="button" class="vision-model-chip${selected}" data-model-id="${escapeHtml(id)}">${escapeHtml(id)}</button>`;
+        }).join('')
+        + '</div>';
+      chipsEl.querySelectorAll('[data-model-id]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = btn.getAttribute('data-model-id') || '';
+          const modelInput = visionChannelsList
+            && visionChannelsList.querySelector('[data-vision-channel] .vision-ch-model');
+          if (modelInput) {
+            modelInput.value = id;
+            toast(`已填入模型: ${id}`, 'success');
+          }
+          chipsEl.querySelectorAll('.vision-model-chip').forEach((b) => b.classList.remove('is-selected'));
+          btn.classList.add('is-selected');
+        });
+      });
+    }
+  };
+
+  const runTest = async ({ testImage }) => {
+    const ch = collectVisionChannels()[0] || {};
+    if (!ch.baseUrl) {
+      toast('主通道 Base URL 为空', 'error');
+      return;
+    }
+    if (statusEl) statusEl.textContent = '测试中…';
+    if (runBtn) runBtn.disabled = true;
+    if (modelsOnlyBtn) modelsOnlyBtn.disabled = true;
+    try {
+      const res = await fetchJson('/api/settings/vision/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: ch.baseUrl,
+          apiKey: ch.apiKey || '',
+          model: ch.model || '',
+          fetchModels: true,
+          testImage: Boolean(testImage),
+        }),
+      });
+      const data = res.data || {};
+      if (statusEl) {
+        statusEl.textContent = data.ok ? '测试完成 · 可用' : '测试完成 · 存在问题';
+        statusEl.style.color = data.ok ? '#86efac' : '#fcd34d';
+      }
+      renderResult(data);
+    } catch (error) {
+      if (statusEl) {
+        statusEl.textContent = '测试失败';
+        statusEl.style.color = '#ef4444';
+      }
+      if (resultsEl) {
+        resultsEl.hidden = false;
+        resultsEl.innerHTML = `<div class="vision-test-summary is-bad">${escapeHtml(error.message || String(error))}</div>`;
+      }
+      toast(error.message || 'Vision 测试失败', 'error');
+    } finally {
+      if (runBtn) runBtn.disabled = false;
+      if (modelsOnlyBtn) modelsOnlyBtn.disabled = false;
+    }
+  };
+
+  dialog.querySelector('[data-close-vision-test]').addEventListener('click', close);
+  runBtn.addEventListener('click', () => runTest({ testImage: true }));
+  modelsOnlyBtn.addEventListener('click', () => runTest({ testImage: false }));
+  mask.addEventListener('click', close);
+
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
+  // Auto-start full test
+  runTest({ testImage: true });
+}
+
+if (visionTestBtn) {
+  visionTestBtn.addEventListener('click', () => openVisionTestModal());
 }
 
 if (visionForm) {

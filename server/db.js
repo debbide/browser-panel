@@ -806,6 +806,7 @@ module.exports = {
   getTelegramSettings,
   getVisionSettings,
   getVisionSettingsPublic,
+  getVisionChannelsInternal,
   setVisionSettings,
   getBrowserRuntimeSettings,
   setBrowserRuntimeSettings,

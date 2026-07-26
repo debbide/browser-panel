@@ -799,6 +799,50 @@ app.post('/api/settings/vision', (req, res) => {
   }
 });
 
+/**
+ * Test Vision channel: connectivity (/models) + optional image chat/completions.
+ * Body may include draft channel from the form (apiKey empty → use saved key).
+ */
+app.post('/api/settings/vision/test', async (req, res) => {
+  try {
+    const { testVisionChannel } = require('./runtime/vision-test');
+    const body = req.body || {};
+    const saved = db.getVisionSettings();
+    const channelsInternal = typeof db.getVisionChannelsInternal === 'function'
+      ? db.getVisionChannelsInternal()
+      : [];
+    const primarySaved = channelsInternal[0] || {
+      baseUrl: saved.baseUrl,
+      apiKey: saved.apiKey,
+      model: saved.model,
+    };
+
+    const baseUrl = String(body.baseUrl || primarySaved.baseUrl || '').trim();
+    let apiKey = String(body.apiKey || '').trim();
+    if (!apiKey) apiKey = String(primarySaved.apiKey || saved.apiKey || '').trim();
+    const model = String(body.model || primarySaved.model || saved.model || '').trim();
+
+    if (!baseUrl) {
+      return res.status(400).json({ message: '请填写 Base URL' });
+    }
+    if (!apiKey) {
+      return res.status(400).json({ message: '请填写 API Key，或先保存后再测' });
+    }
+
+    const data = await testVisionChannel(
+      { baseUrl, apiKey, model },
+      {
+        fetchModels: body.fetchModels !== false,
+        testImage: body.testImage !== false,
+        model,
+      }
+    );
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Vision test failed' });
+  }
+});
+
 app.post('/api/telegram/webhook/:token', async (req, res) => {
   const settings = db.getTelegramSettings();
   if (!settings.botToken || req.params.token !== settings.botToken) {

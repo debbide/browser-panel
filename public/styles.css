@@ -1758,3 +1758,57 @@ button.linkish:hover {
     max-height: none;
   }
 }
+
+/* Vision AI test modal */
+.vision-test-modal {
+  width: min(640px, calc(100vw - 32px));
+}
+.vision-test-grid {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.vision-test-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.vision-test-summary.is-ok {
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #86efac;
+}
+.vision-test-summary.is-bad {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+.vision-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.vision-model-chip {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.vision-model-chip:hover {
+  border-color: rgba(167, 139, 250, 0.55);
+}
+.vision-model-chip.is-selected {
+  background: rgba(139, 92, 246, 0.35);
+  border-color: rgba(167, 139, 250, 0.8);
+  color: #e9d5ff;
+}
