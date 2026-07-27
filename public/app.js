@@ -321,10 +321,20 @@ function prettyErrorCode(code) {
 }
 
 function renderBrowserControls() {
-  if (openBrowserBtn) openBrowserBtn.disabled = browserSessionOpen;
-  if (closeBrowserBtn) closeBrowserBtn.disabled = !browserSessionOpen;
-  if (openBrowserBtn) openBrowserBtn.textContent = browserSessionOpen ? '浏览器已启动' : '启动浏览器';
-  if (closeBrowserBtn) closeBrowserBtn.textContent = browserSessionOpen ? '关闭浏览器' : '浏览器未启动';
+  if (openBrowserBtn) {
+    openBrowserBtn.disabled = browserSessionOpen;
+    openBrowserBtn.innerHTML = browserSessionOpen
+      ? '<i data-lucide="monitor-check" class="icon-sm"></i> 已启动'
+      : '<i data-lucide="monitor-play" class="icon-sm"></i> 启动';
+    if (window.lucide) window.lucide.createIcons({ root: openBrowserBtn });
+  }
+  if (closeBrowserBtn) {
+    closeBrowserBtn.disabled = !browserSessionOpen;
+    closeBrowserBtn.innerHTML = browserSessionOpen
+      ? '<i data-lucide="monitor-stop" class="icon-sm"></i> 关闭浏览器'
+      : '<i data-lucide="monitor-off" class="icon-sm"></i> 未启动';
+    if (window.lucide) window.lucide.createIcons({ root: closeBrowserBtn });
+  }
   if (browserSessionOpen && browserOpenedAt) {
     addTaskBtn.title = `浏览器已打开：${shortTime(browserOpenedAt)}`;
   } else {
@@ -340,13 +350,22 @@ async function loadBrowserStatus() {
 }
 
 async function openBrowserSession() {
+  if (openBrowserBtn) openBrowserBtn.disabled = true;
   try {
     const profileId = browserProfileSelect ? browserProfileSelect.value : '';
-    await fetchJson('/api/browser/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile_id: profileId || null }) });
+    toast('正在启动浏览器…', 'info');
+    await fetchJson('/api/browser/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId || null }),
+    });
     await loadBrowserStatus();
-    toast('浏览器已成功启动', 'success');
+    toast('浏览器已成功启动（常驻，手动关闭或点「关闭浏览器」）', 'success');
   } catch (error) {
+    await loadBrowserStatus().catch(() => {});
     toast(error.message || '浏览器启动失败', 'error');
+  } finally {
+    renderBrowserControls();
   }
 }
 

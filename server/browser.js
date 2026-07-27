@@ -337,6 +337,120 @@ function sweepManualProcesses(userDataDir) {
   });
 }
 
+function resolveWorkerNodeBinary() {
+  // Prefer portable copy for browser user; fall back to panel's own node.
+  const portable = '/tmp/node-openclaw';
+  try {
+    if (fs.existsSync(portable)) {
+      try { fs.accessSync(portable, fs.constants.X_OK); } catch {
+        fs.chmodSync(portable, 0o755);
+      }
+      return portable;
+    }
+  } catch {
+    // ignore
+  }
+  const self = process.execPath;
+  if (self && fs.existsSync(self)) return self;
+  throw new Error('No usable Node binary for manual browser (tried /tmp/node-openclaw and process.execPath)');
+}
+
+function resolveManualChromePath(runtimeSettings) {
+  const candidates = [];
+  const fromDb = runtimeSettings && runtimeSettings.chromePath
+    ? String(runtimeSettings.chromePath).trim()
+    : '';
+  if (fromDb) candidates.push(fromDb);
+  const fromConfig = config.browser && config.browser.chromePath
+    ? String(config.browser.chromePath).trim()
+    : '';
+  if (fromConfig) candidates.push(fromConfig);
+  candidates.push(
+    '/snap/chromium/current/usr/lib/chromium-browser/chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  );
+  const seen = new Set();
+  for (const c of candidates) {
+    if (!c || seen.has(c)) continue;
+    seen.add(c);
+    try {
+      if (fs.existsSync(c)) {
+        try { fs.accessSync(c, fs.constants.X_OK); } catch { /* still try */ }
+        return c;
+      }
+    } catch {
+      // continue
+    }
+  }
+  return fromDb || fromConfig || '';
+}
+
+function waitForManualBrowserReady(child, { timeoutMs = 45000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let launchLog = '';
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.stdout && child.stdout.off('data', onOut); } catch { /* ignore */ }
+      try { child.stderr && child.stderr.off('data', onErr); } catch { /* ignore */ }
+      try { child.off('exit', onExit); } catch { /* ignore */ }
+      try { child.off('error', onError); } catch { /* ignore */ }
+      fn(arg);
+    };
+    const onOut = (buf) => {
+      const text = buf.toString();
+      launchLog += text;
+      if (launchLog.length > 6000) launchLog = launchLog.slice(-6000);
+      process.stderr.write(`[browser-launch] ${text}`);
+      if (/MANUAL_BROWSER_READY/i.test(text)) {
+        finish(resolve, { log: launchLog });
+      }
+    };
+    const onErr = (buf) => {
+      const text = buf.toString();
+      launchLog += text;
+      if (launchLog.length > 6000) launchLog = launchLog.slice(-6000);
+      process.stderr.write(`[browser-launch] ${text}`);
+      // Some stacks may print ready on stderr
+      if (/MANUAL_BROWSER_READY/i.test(text)) {
+        finish(resolve, { log: launchLog });
+      }
+    };
+    const onExit = (code, signal) => {
+      const tail = launchLog.slice(-1200);
+      finish(
+        reject,
+        new Error(
+          `Manual browser exited before ready (code=${code} signal=${signal || ''}). `
+          + `Check Chrome path / DISPLAY. Log tail:\n${tail || '(empty)'}`
+        )
+      );
+    };
+    const onError = (err) => {
+      finish(reject, new Error(`Manual browser spawn failed: ${err.message || err}`));
+    };
+    const timer = setTimeout(() => {
+      finish(
+        reject,
+        new Error(
+          `Manual browser ready timeout after ${timeoutMs}ms. `
+          + `Log tail:\n${launchLog.slice(-1200) || '(empty)'}`
+        )
+      );
+    }, timeoutMs);
+
+    if (child.stdout) child.stdout.on('data', onOut);
+    if (child.stderr) child.stderr.on('data', onErr);
+    child.on('exit', onExit);
+    child.on('error', onError);
+  });
+}
+
 async function openManualBrowser(profile) {
   syncManualState();
   if (manualBrowserState.pid) {
@@ -351,10 +465,10 @@ async function openManualBrowser(profile) {
     : path.join(workDir, 'manual-browser-session.js');
   ensureManualRuntimeFiles(runtimeSettings);
   if (!fs.existsSync(runtimeScript)) {
-    throw new Error('Manual browser runtime not found');
+    throw new Error(`Manual browser runtime not found: ${runtimeScript}`);
   }
 
-  const workerNodePath = '/tmp/node-openclaw';
+  const workerNodePath = resolveWorkerNodeBinary();
   const profileLocale = profile && profile.locale ? String(profile.locale).trim() : '';
   const profileTimezone = profile && profile.timezone_id ? String(profile.timezone_id).trim() : '';
   const effectiveLocale = profileLocale || config.browser.locale || 'zh-CN';
@@ -367,6 +481,13 @@ async function openManualBrowser(profile) {
     profile && profile.proxy,
     config.browser.proxy || ''
   );
+  const chromePath = resolveManualChromePath(runtimeSettings);
+  if (!chromePath || !fs.existsSync(chromePath)) {
+    throw new Error(
+      `Chrome/Chromium not found (path=${chromePath || '(empty)'}). `
+      + 'Set panel 浏览器路径, e.g. /snap/chromium/current/usr/lib/chromium-browser/chrome on ARM.'
+    );
+  }
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);
   // Avoid `su` (triggers user systemd / pam in many containers → Permission denied).
   // Drop privileges with setuid/setgid when possible; otherwise run as current user.
@@ -379,14 +500,8 @@ async function openManualBrowser(profile) {
     DISPLAY: String(config.browser.display || ':1.0'),
     XAUTHORITY: String(config.browser.xauthority || ''),
     BROWSER_USER_DATA_DIR: effectiveUserDataDir,
-    BROWSER_CHROME_PATH: String((() => {
-      try {
-        const br = db.getBrowserRuntimeSettings();
-        return (br && br.chromePath) || config.browser.chromePath || '';
-      } catch {
-        return config.browser.chromePath || '';
-      }
-    })()),
+    BROWSER_CHROME_PATH: chromePath,
+    PLAYWRIGHT_CHROME_PATH: chromePath,
     BROWSER_PROXY: effectiveProxy || '',
     BROWSER_LOCALE: effectiveLocale,
     BROWSER_TIMEZONE: effectiveTimezone,
@@ -414,22 +529,35 @@ async function openManualBrowser(profile) {
   } else {
     child = spawn(workerNodePath, [runtimeScript], spawnOpts);
   }
-  let launchLog = '';
-  const onChunk = (buf) => {
-    const text = buf.toString();
-    launchLog += text;
-    if (launchLog.length > 4000) launchLog = launchLog.slice(-4000);
-    process.stderr.write(`[browser-launch] ${text}`);
-  };
-  if (child.stdout) child.stdout.on('data', onChunk);
-  if (child.stderr) child.stderr.on('data', onChunk);
-  child.on('error', (err) => {
-    console.error(`[browser-launch] spawn error: ${err.message}`);
-  });
-  child.on('exit', (code, signal) => {
+
+  console.log(
+    `[browser-launch] spawning pid=${child.pid} stack=${runtimeStack} `
+    + `node=${workerNodePath} chrome=${chromePath} as ${runAs.user}`
+  );
+
+  try {
+    await waitForManualBrowserReady(child, { timeoutMs: 45000 });
+  } catch (err) {
+    // Ensure zombie session is cleaned if ready never came
+    try {
+      if (child.pid) {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { /* ignore */ }
+        try { process.kill(child.pid, 'SIGKILL'); } catch { /* ignore */ }
+      }
+    } catch {
+      // ignore
+    }
+    manualBrowserState.pid = null;
+    manualBrowserState.openedAt = null;
+    manualBrowserState.userDataDir = null;
+    throw err;
+  }
+
+  // Keep listening after ready so we clear state when user closes the window
+  const onLaterExit = (code, signal) => {
     if (code || signal) {
       console.error(
-        `[browser-launch] exited code=${code} signal=${signal || ''} tail=${launchLog.slice(-500)}`
+        `[browser-launch] session ended code=${code} signal=${signal || ''}`
       );
     }
     if (manualBrowserState.pid === child.pid) {
@@ -437,13 +565,14 @@ async function openManualBrowser(profile) {
       manualBrowserState.openedAt = null;
       manualBrowserState.userDataDir = null;
     }
-  });
+  };
+  child.on('exit', onLaterExit);
   child.unref();
 
   manualBrowserState.pid = child.pid;
   manualBrowserState.openedAt = new Date().toISOString();
   manualBrowserState.userDataDir = effectiveUserDataDir;
-  console.log(`[browser-launch] started pid=${child.pid} as ${runAs.user} uid=${runAs.uid ?? 'same'}`);
+  console.log(`[browser-launch] READY pid=${child.pid} chrome=${chromePath}`);
 
   return { open: true, openedAt: manualBrowserState.openedAt, pid: manualBrowserState.pid };
 }
