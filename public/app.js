@@ -3750,6 +3750,18 @@ function formatBytes(n) {
   return `${(v / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** File mtime for script manager — short local datetime. */
+function formatFsMtime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    const s = String(value);
+    return s.length >= 16 ? s.slice(0, 16).replace('T', ' ') : s;
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function fsBreadcrumb(rel) {
   const el = document.getElementById('fs-breadcrumb');
   if (!el) return;
@@ -3771,14 +3783,28 @@ async function loadTasksFs(dir = fsCurrentPath) {
       return;
     }
     list.innerHTML = '';
+    // Column header (name / size / mtime / actions)
+    const head = document.createElement('div');
+    head.className = 'files-row files-row-head';
+    head.innerHTML = `
+      <span></span>
+      <div class="files-name">名称</div>
+      <div class="files-meta">大小</div>
+      <div class="files-mtime">修改时间</div>
+      <div class="files-actions"></div>
+    `;
+    list.appendChild(head);
     for (const ent of entries) {
       const row = document.createElement('div');
       row.className = `files-row ${ent.type === 'dir' ? 'is-dir' : ''}`;
       const icon = ent.type === 'dir' ? 'folder' : 'file-code';
+      const mtimeLabel = formatFsMtime(ent.mtime);
+      const sizeLabel = ent.type === 'dir' ? '文件夹' : formatBytes(ent.size);
       row.innerHTML = `
         <i data-lucide="${icon}" class="icon-sm" style="opacity:.85"></i>
         <div class="files-name" title="${escapeHtml(ent.name)}">${escapeHtml(ent.name)}</div>
-        <div class="files-meta">${ent.type === 'dir' ? '文件夹' : formatBytes(ent.size)}</div>
+        <div class="files-meta">${escapeHtml(sizeLabel)}</div>
+        <div class="files-mtime" title="${escapeHtml(ent.mtime || '')}">${escapeHtml(mtimeLabel)}</div>
         <div class="files-actions"></div>
       `;
       const actions = row.querySelector('.files-actions');

@@ -897,6 +897,9 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   if (workerScreenshotDir) {
     systemPairs.push(['ARTIFACTS_DIR', workerScreenshotDir]);
     systemPairs.push(['SCREENSHOT_DIR', workerScreenshotDir]);
+    // Scripts (hax/woiden) historically read BROWSER_SCREENSHOTS_DIR / SCREENSHOTS_DIR
+    systemPairs.push(['BROWSER_SCREENSHOTS_DIR', workerScreenshotDir]);
+    systemPairs.push(['SCREENSHOTS_DIR', workerScreenshotDir]);
   }
 
   // Ensure SB can create downloaded_files under cwd + write chromedriver under package drivers/
