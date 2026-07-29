@@ -1438,8 +1438,25 @@ app.post('/api/tasks-fs/upload', (req, res) => {
   try {
     const payload = req.body || {};
     const parent = String(payload.parent || '');
-    let name = path.basename(String(payload.name || '').trim());
-    if (!name || name === '..') return res.status(400).json({ message: 'Invalid file name' });
+    // Relative path under parent, e.g. "pkg/util.py" or just "a.py".
+    // Folder upload sends webkitRelativePath-style paths so we mkdir -p.
+    const rawRel = String(payload.relativePath || payload.path || payload.name || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+      .trim();
+    if (!rawRel) return res.status(400).json({ message: 'Invalid file name' });
+    const parts = rawRel.split('/').filter(Boolean);
+    if (!parts.length || parts.some((p) => p === '..' || p === '.' || !p)) {
+      return res.status(400).json({ message: 'Invalid relative path' });
+    }
+    // Skip junk that browsers sometimes include from folder pick
+    if (parts.some((p) => p === '__pycache__' || p === '.git' || p === 'node_modules')) {
+      return res.status(400).json({ message: 'Skipped system/cache path' });
+    }
+    const fileName = parts[parts.length - 1];
+    if (!fileName || fileName === '..') {
+      return res.status(400).json({ message: 'Invalid file name' });
+    }
     const encoding = String(payload.encoding || 'utf8').toLowerCase();
     let buf;
     if (encoding === 'base64') {
@@ -1450,12 +1467,22 @@ app.post('/api/tasks-fs/upload', (req, res) => {
     if (buf.length > TASKS_MAX_UPLOAD) {
       return res.status(400).json({ message: `File too large (max ${TASKS_MAX_UPLOAD} bytes)` });
     }
-    const { abs: parentAbs, rel: parentRel } = resolveUnderTasks(parent);
-    fs.mkdirSync(parentAbs, { recursive: true });
-    const target = path.join(parentAbs, name);
+    const { rel: parentRel } = resolveUnderTasks(parent);
+    // Full path under tasks/: parent + relativePath (with intermediate dirs)
+    const underParent = parts.join('/');
+    const fullRel = parentRel ? `${parentRel}/${underParent}` : underParent;
+    const { abs: target } = resolveUnderTasks(fullRel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, buf);
-    const rel = parentRel ? `${parentRel}/${name}` : name;
-    res.json({ ok: true, data: { path: rel, name, size: buf.length } });
+    res.json({
+      ok: true,
+      data: {
+        path: fullRel.replace(/\\/g, '/'),
+        name: fileName,
+        size: buf.length,
+        relativePath: underParent,
+      },
+    });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to upload' });
   }

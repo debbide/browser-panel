@@ -4009,39 +4009,106 @@ function wireTasksFsUi() {
       }
     });
   }
+  async function fileToBase64(file) {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  /** Relative path for upload: folder pick keeps webkitRelativePath tree. */
+  function uploadRelativePath(file) {
+    const rel = String(file.webkitRelativePath || file.name || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    if (!rel || rel.includes('..')) return file.name || '';
+    // Skip junk paths from OS folder pickers
+    const parts = rel.split('/').filter(Boolean);
+    if (parts.some((p) => p === '__pycache__' || p === '.git' || p === 'node_modules' || p === '.DS_Store')) {
+      return '';
+    }
+    if (parts.some((p) => p.endsWith('.pyc') || p === 'Thumbs.db')) return '';
+    return parts.join('/');
+  }
+
+  async function uploadFilesList(fileList, { asFolder = false } = {}) {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
+    let ok = 0;
+    let fail = 0;
+    let skip = 0;
+    const total = files.length;
+    if (total > 1) toast(`开始上传 ${total} 个文件…`, 'info');
+    for (const file of files) {
+      const rel = uploadRelativePath(file);
+      if (!rel) {
+        skip += 1;
+        continue;
+      }
+      // Flat multi-file: only basename; folder mode: keep relative path
+      const relativePath = asFolder ? rel : pathBasename(rel);
+      try {
+        const b64 = await fileToBase64(file);
+        await fetchJson('/api/tasks-fs/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            parent: fsCurrentPath,
+            name: pathBasename(relativePath),
+            relativePath,
+            encoding: 'base64',
+            content: b64,
+          }),
+        });
+        ok += 1;
+      } catch (err) {
+        fail += 1;
+        toast(`${relativePath}: ${err.message || '上传失败'}`, 'error');
+      }
+    }
+    if (ok && !fail) {
+      toast(
+        asFolder
+          ? `文件夹上传完成：${ok} 个文件${skip ? `，跳过 ${skip}` : ''}`
+          : (ok === 1 ? `已上传 ${files[0]?.name || ''}` : `已上传 ${ok} 个文件`),
+        'success',
+      );
+    } else if (ok && fail) {
+      toast(`上传结束：成功 ${ok}，失败 ${fail}${skip ? `，跳过 ${skip}` : ''}`, 'warn');
+    } else if (!ok && fail) {
+      toast(`上传失败（${fail}）`, 'error');
+    } else if (skip && !ok) {
+      toast('没有可上传的文件（可能全是缓存/系统目录）', 'warn');
+    }
+    await loadTasksFs(fsCurrentPath);
+    await loadScripts();
+  }
+
   if (uploadBtn && uploadInput) {
-    uploadBtn.addEventListener('click', () => uploadInput.click());
+    uploadBtn.addEventListener('click', () => {
+      uploadInput.removeAttribute('webkitdirectory');
+      uploadInput.removeAttribute('directory');
+      uploadInput.click();
+    });
     uploadInput.addEventListener('change', async () => {
       const files = [...(uploadInput.files || [])];
       uploadInput.value = '';
-      if (!files.length) return;
-      for (const file of files) {
-        try {
-          const buf = await file.arrayBuffer();
-          const bytes = new Uint8Array(buf);
-          let binary = '';
-          const chunk = 0x8000;
-          for (let i = 0; i < bytes.length; i += chunk) {
-            binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-          }
-          const b64 = btoa(binary);
-          await fetchJson('/api/tasks-fs/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              parent: fsCurrentPath,
-              name: file.name,
-              encoding: 'base64',
-              content: b64,
-            }),
-          });
-          toast(`已上传 ${file.name}`, 'success');
-        } catch (err) {
-          toast(`${file.name}: ${err.message || '上传失败'}`, 'error');
-        }
-      }
-      await loadTasksFs(fsCurrentPath);
-      await loadScripts();
+      await uploadFilesList(files, { asFolder: false });
+    });
+  }
+
+  const uploadFolderBtn = document.getElementById('fs-btn-upload-folder');
+  const uploadFolderInput = document.getElementById('fs-upload-folder-input');
+  if (uploadFolderBtn && uploadFolderInput) {
+    uploadFolderBtn.addEventListener('click', () => uploadFolderInput.click());
+    uploadFolderInput.addEventListener('change', async () => {
+      const files = [...(uploadFolderInput.files || [])];
+      uploadFolderInput.value = '';
+      await uploadFilesList(files, { asFolder: true });
     });
   }
 

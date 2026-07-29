@@ -213,10 +213,14 @@
             <button type="button" class="alt btn-with-icon" id="fs-btn-new-folder">
               <i data-lucide="folder-plus" class="icon-sm"></i> 新建文件夹
             </button>
-            <button type="button" class="alt btn-with-icon" id="fs-btn-upload">
-              <i data-lucide="upload" class="icon-sm"></i> 上传
+            <button type="button" class="alt btn-with-icon" id="fs-btn-upload" title="选择一个或多个文件">
+              <i data-lucide="upload" class="icon-sm"></i> 上传文件
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-upload-folder" title="选择整个文件夹（保留目录结构）">
+              <i data-lucide="folder-up" class="icon-sm"></i> 上传文件夹
             </button>
             <input type="file" id="fs-upload-input" multiple hidden />
+            <input type="file" id="fs-upload-folder-input" webkitdirectory directory multiple hidden />
           </div>
           <div id="fs-breadcrumb" class="files-breadcrumb muted" style="margin-bottom:8px; font-size:13px;">tasks/</div>
           <div id="fs-list" class="files-list"></div>
@@ -734,7 +738,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260729a"></script>
+  <script src="/app.js?v=20260729b"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();
