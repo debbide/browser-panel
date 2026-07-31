@@ -347,9 +347,10 @@ function normalizeVisionSettingsPayload(payload = {}) {
     apiKey: payload.apiKey !== undefined ? String(payload.apiKey || '').trim() : undefined,
     channels: payload.channels !== undefined ? String(payload.channels || '').trim() : undefined,
   };
-  // 动态通道卡片：[{baseUrl, apiKey, model}]（apiKey 留空=不改）。第 1 项为主通道。
+  // 动态通道卡片：[{id?, baseUrl, apiKey, model}]（apiKey 留空=不改）。第 1 项为主通道。
   if (Array.isArray(payload.channelList)) {
     out.channelList = payload.channelList.map((c) => ({
+      id: c && c.id !== undefined ? String(c.id || '').trim() : '',
       baseUrl: String((c && c.baseUrl) || '').trim(),
       apiKey: c && c.apiKey !== undefined ? String(c.apiKey || '').trim() : '',
       model: String((c && c.model) || '').trim(),
@@ -800,6 +801,24 @@ app.post('/api/settings/vision', (req, res) => {
 });
 
 /**
+ * 只切某个通道的 model，其他字段（尤其是 key）原样保留。
+ * 给前端「模型下拉点选即生效」用：走全量保存会连带写入用户还在编辑、并不想保存的字段。
+ */
+app.post('/api/settings/vision/model', (req, res) => {
+  try {
+    const body = req.body || {};
+    const id = String(body.id || '').trim();
+    const model = String(body.model || '').trim();
+    if (!id) return res.status(400).json({ message: '缺少通道 id' });
+    if (!model) return res.status(400).json({ message: '缺少 model' });
+    const updated = db.setVisionChannelModel(id, model);
+    res.json({ data: updated });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to switch vision model' });
+  }
+});
+
+/**
  * Test Vision channel: connectivity (/models) + optional image chat/completions.
  * Body may include draft channel from the form (apiKey empty → use THAT channel's saved key).
  * Never fall back to primary key for a non-primary baseUrl (causes false INVALID_API_KEY).
@@ -814,19 +833,23 @@ app.post('/api/settings/vision/test', async (req, res) => {
       : [];
 
     const norm = (s) => String(s || '').trim().replace(/\/+$/, '').toLowerCase();
+    const id = String(body.id || '').trim();
     const baseUrl = String(body.baseUrl || '').trim();
     const model = String(body.model || '').trim();
     let apiKey = String(body.apiKey || '').trim();
 
     if (!apiKey && baseUrl) {
-      // Match saved channel by baseUrl+model, then baseUrl only — not "always primary".
-      const sameBaseModel = channelsInternal.find(
-        (ch) => norm(ch.baseUrl) === norm(baseUrl) && norm(ch.model) === norm(model) && ch.apiKey
-      );
-      const sameBase = channelsInternal.find(
-        (ch) => norm(ch.baseUrl) === norm(baseUrl) && ch.apiKey
-      );
-      apiKey = String((sameBaseModel || sameBase || {}).apiKey || '').trim();
+      // 与保存路径共用同一个解析器（显式 key → id → baseUrl+model），避免两边规则各自漂移。
+      if (typeof db.resolveVisionChannelKey === 'function') {
+        apiKey = db.resolveVisionChannelKey({ incomingKey: '', id, baseUrl, model }, channelsInternal);
+      }
+      // 解析器不含「只匹配 baseUrl」这一档：改了 model 但没带 id 时（老前端）仍要能测通。
+      if (!apiKey) {
+        const sameBase = channelsInternal.find(
+          (ch) => norm(ch.baseUrl) === norm(baseUrl) && ch.apiKey
+        );
+        apiKey = String((sameBase || {}).apiKey || '').trim();
+      }
     }
 
     // Only if still empty and caller omitted baseUrl entirely, allow primary (legacy).

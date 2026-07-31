@@ -686,17 +686,30 @@ function parseVisionChannelLine(line, primaryKey = '') {
 }
 
 // 把当前设置展开成有序通道列表（含主通道为 index 0），带明文 key（仅内部用）
+//
+// 每个通道带一个稳定 id：主通道恒为 'primary'，额外通道用它在 vision_channels
+// 文本里的行序号（ch1/ch2/…）。id 与 baseUrl/model 无关，所以改模型、改 baseUrl
+// 或调整顺序都不会让通道"换了身份"——这正是以前切模型丢 key 的根因。
 function getVisionChannelsInternal() {
   const settings = getVisionSettings();
   const list = [];
   if (settings.baseUrl && settings.model) {
-    list.push({ baseUrl: settings.baseUrl, apiKey: settings.apiKey || '', model: settings.model, isPrimary: true });
+    list.push({
+      id: 'primary',
+      baseUrl: settings.baseUrl,
+      apiKey: settings.apiKey || '',
+      model: settings.model,
+      isPrimary: true,
+    });
   }
+  let lineNo = 0;
   String(settings.channels || '')
     .split(/\r?\n/)
     .forEach((line) => {
       const ch = parseVisionChannelLine(line, settings.apiKey || '');
-      if (ch) list.push({ ...ch, isPrimary: false });
+      if (!ch) return;
+      lineNo += 1;
+      list.push({ ...ch, id: `ch${lineNo}`, isPrimary: false });
     });
   return list;
 }
@@ -704,6 +717,7 @@ function getVisionChannelsInternal() {
 function getVisionSettingsPublic() {
   const list = getVisionChannelsInternal();
   const channelList = list.map((ch) => ({
+    id: ch.id,
     baseUrl: ch.baseUrl,
     model: ch.model,
     apiKeyMasked: maskSecret(ch.apiKey),
@@ -723,27 +737,48 @@ function getVisionSettingsPublic() {
   };
 }
 
+// 解析一个通道该用哪个 key。顺序有讲究：
+//   1) 用户在表单里显式填了新 key —— 最高优先
+//   2) 按通道 id 找上次保存的 key —— 改 model / baseUrl / 顺序都不丢 key
+//   3) 按 baseUrl+model 找 —— 兼容没有 id 的旧前端/旧调用
+// 前端从不回传已保存的 key（密码框只显示掩码 placeholder），所以 2/3 是常态路径。
+function resolveVisionChannelKey({ incomingKey, id, baseUrl, model }, prevChannels) {
+  const prev = Array.isArray(prevChannels) ? prevChannels : [];
+  const explicit = String(incomingKey || '').trim();
+  if (explicit) return explicit;
+
+  const wantId = String(id || '').trim();
+  if (wantId) {
+    const byId = prev.find((ch) => ch.id === wantId && ch.apiKey);
+    if (byId) return byId.apiKey;
+  }
+
+  const norm = (s) => String(s || '').trim().replace(/\/+$/, '').toLowerCase();
+  const byIdentity = prev.find(
+    (ch) => ch.apiKey && norm(ch.baseUrl) === norm(baseUrl) && norm(ch.model) === norm(model)
+  );
+  if (byIdentity) return byIdentity.apiKey;
+
+  return '';
+}
+
 function setVisionSettings(payload = {}) {
-  // 新形式：channelList = [{baseUrl, model, apiKey?}]，第 0 项为主通道。
-  // apiKey 留空 = 沿用旧 key（按 baseUrl+model 身份匹配）。
+  // 新形式：channelList = [{id?, baseUrl, model, apiKey?}]，第 0 项为主通道。
+  // apiKey 留空 = 沿用旧 key（优先按 id 认通道，再退回 baseUrl+model）。
   if (Array.isArray(payload.channelList)) {
-    // 旧 key 映射：baseUrl|model -> key
     const prev = getVisionChannelsInternal();
-    const keyMap = new Map();
-    prev.forEach((ch) => {
-      if (ch.apiKey) keyMap.set(`${ch.baseUrl}||${ch.model}`, ch.apiKey);
-    });
 
     const resolved = [];
     payload.channelList.forEach((raw) => {
       const baseUrl = String(raw.baseUrl || '').trim();
       const model = String(raw.model || '').trim();
       const incomingKey = String(raw.apiKey || '').trim();
+      const id = String(raw.id || '').trim();
       if (!baseUrl && !model && !incomingKey) return; // 整行空，跳过
       if (!baseUrl || !model) {
         throw new Error('每个视觉通道都需要 Base URL 和 Model');
       }
-      const key = incomingKey || keyMap.get(`${baseUrl}||${model}`) || '';
+      const key = resolveVisionChannelKey({ incomingKey, id, baseUrl, model }, prev);
       if (!key) {
         throw new Error(`通道「${model} @ ${baseUrl}」缺少 API Key`);
       }
@@ -759,10 +794,10 @@ function setVisionSettings(payload = {}) {
     }
 
     const primary = resolved[0];
-    const extras = resolved.slice(1).map((ch) => {
-      const k = ch.apiKey === primary.apiKey ? '-' : ch.apiKey;
-      return `${ch.baseUrl}|${k}|${ch.model}`;
-    });
+    // 每个通道写自己的 key 实体，不再用 '-' 表示"沿用主 key"。
+    // 旧写法的坑：以后主通道换了供应商，这些通道会静默跟着换成错的 key。
+    // parseVisionChannelLine 仍然解析 '-'，所以库里的老数据照常读。
+    const extras = resolved.slice(1).map((ch) => `${ch.baseUrl}|${ch.apiKey}|${ch.model}`);
 
     setSetting('vision_base_url', primary.baseUrl);
     setSetting('vision_model', primary.model);
@@ -788,6 +823,36 @@ function setVisionSettings(payload = {}) {
   return getVisionSettingsPublic();
 }
 
+// 只切某个通道的 model，其余字段（尤其是 key）原样保留。
+// 给"模型下拉点选即生效"用：走 setVisionSettings 全量提交会连带保存
+// 用户还在编辑、并不想保存的其他字段。
+function setVisionChannelModel(id, model) {
+  const wantId = String(id || '').trim();
+  const nextModel = String(model || '').trim();
+  if (!wantId) throw new Error('缺少通道 id');
+  if (!nextModel) throw new Error('缺少 model');
+
+  const list = getVisionChannelsInternal();
+  const target = list.find((ch) => ch.id === wantId);
+  if (!target) throw new Error(`通道 ${wantId} 不存在（可能已被改动，请刷新后重试）`);
+  if (target.model === nextModel) return getVisionSettingsPublic();
+
+  if (target.isPrimary) {
+    setSetting('vision_model', nextModel);
+    return getVisionSettingsPublic();
+  }
+
+  // 额外通道：整行重写（key 用内部解析后的明文，'-' 老数据在此自然落成实体 key）
+  const extras = list
+    .filter((ch) => !ch.isPrimary)
+    .map((ch) => {
+      const m = ch.id === wantId ? nextModel : ch.model;
+      return `${ch.baseUrl}|${ch.apiKey}|${m}`;
+    });
+  setSetting('vision_channels', extras.length ? extras.join('\n') : null);
+  return getVisionSettingsPublic();
+}
+
 module.exports = {
   db,
   listTasks,
@@ -808,6 +873,8 @@ module.exports = {
   getVisionSettingsPublic,
   getVisionChannelsInternal,
   setVisionSettings,
+  setVisionChannelModel,
+  resolveVisionChannelKey,
   getBrowserRuntimeSettings,
   setBrowserRuntimeSettings,
   listBrowserProfiles,

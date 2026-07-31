@@ -1159,6 +1159,109 @@ a:hover { text-decoration: underline; }
   opacity: 0.45;
   cursor: default;
 }
+/* Model 输入框 + 「▼」按钮：下拉面板的定位锚点 */
+.vision-model-input-group {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+.vision-model-input-group .vision-ch-model {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.vision-ch-model-toggle {
+  width: 28px;
+  height: 32px;
+  flex-shrink: 0;
+}
+.vision-model-input-group.is-open .vision-ch-model-toggle {
+  color: #e9d5ff;
+  border-color: rgba(167, 139, 250, 0.8);
+}
+.vision-model-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  min-width: 260px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  background: #14161f;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+.vision-model-search {
+  width: 100%;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.vision-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.vision-model-option {
+  text-align: left;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  border-radius: 7px;
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  word-break: break-all;
+}
+.vision-model-option:hover {
+  border-color: rgba(167, 139, 250, 0.55);
+  background: rgba(139, 92, 246, 0.14);
+}
+.vision-model-option.is-selected {
+  background: rgba(139, 92, 246, 0.35);
+  border-color: rgba(167, 139, 250, 0.8);
+  color: #e9d5ff;
+}
+.vision-model-empty {
+  padding: 10px 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+}
+.vision-model-empty.is-bad {
+  color: #fca5a5;
+}
+.vision-model-dropdown-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 11px;
+}
+.vision-model-refresh {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.vision-model-refresh:hover:not(:disabled) {
+  border-color: rgba(167, 139, 250, 0.55);
+}
+.vision-model-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 @media (max-width: 900px) {
   .vision-channel-row {
     grid-template-columns: 36px 1fr;
@@ -1171,7 +1274,7 @@ a:hover { text-decoration: underline; }
   .vision-channel-badge { grid-area: badge; }
   .vision-channel-row .vision-ch-base { grid-area: base; }
   .vision-channel-row .vision-ch-key { grid-area: key; }
-  .vision-channel-row .vision-ch-model { grid-area: model; }
+  .vision-channel-row .vision-model-input-group { grid-area: model; }
   .vision-channel-actions { grid-area: actions; justify-content: flex-start; }
 }
 
