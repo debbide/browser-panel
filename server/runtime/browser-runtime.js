@@ -45,6 +45,18 @@ async function launchBrowser() {
   const locale = process.env.BROWSER_LOCALE || 'zh-CN';
   const timezoneId = process.env.BROWSER_TIMEZONE || 'Asia/Shanghai';
 
+  // 面板已把浏览器进程降到 BROWSER_USER（browser.js 用 setuid/setgid，
+  // browser-launcher.js 用 setpriv），非 root 下 Chrome sandbox 本来就能起来。
+  // --no-sandbox 是当年 root 运行的遗留：关掉沙箱 = 丢掉渲染器的
+  // seccomp/namespace 隔离，网页内容打穿渲染器就直接拿到该用户的全部权限。
+  // 少数机器（AppArmor 限制、老内核不给 unprivileged userns）沙箱起不来会
+  // 直接 "No usable sandbox" 启动失败 —— 那种机器把 BROWSER_NO_SANDBOX=1
+  // 写进 .env.panel 即可回到旧行为，不用改代码。
+  const args = ['--disable-dev-shm-usage'];
+  if (String(process.env.BROWSER_NO_SANDBOX || '').trim() === '1') {
+    args.unshift('--no-sandbox', '--disable-setuid-sandbox');
+  }
+
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless,
     executablePath: chromePath,
@@ -52,7 +64,7 @@ async function launchBrowser() {
     viewport: { width: 1440, height: 900 },
     locale,
     timezoneId,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    args,
   });
 
   const page = context.pages()[0] || await context.newPage();
