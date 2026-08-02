@@ -308,6 +308,32 @@ let editingId = null;
 let tasksCache = [];
 let runsCache = [];
 let runningTaskIds = new Set();
+// 点了停止、但服务端还没报 is_running=false 的任务。
+// runningTaskIds 是 OR 进 isRunning 的，只能强制点亮不能强制熄灭：停止真正生效前
+// 服务端仍回 is_running=true，光从 runningTaskIds 删掉按钮还是灰的。所以熄灭方向
+// 需要这个独立的覆盖标记，优先级高于服务端状态。
+let stoppingTaskIds = new Set();
+// 覆盖标记的兜底时限。正常情况 loadTasks 一看到 is_running=false 就清掉，这个定时器
+// 只防一种情况：停止指令发出去了但任务实际没停 —— 那时界面不该一直显示"未运行"，
+// 宁可退回去显示服务端的真实状态，也不能长期骗人。
+const STOPPING_OVERRIDE_TTL_MS = 10000;
+const stoppingOverrideTimers = new Map();
+
+function markStopping(id) {
+  stoppingTaskIds.add(id);
+  clearTimeout(stoppingOverrideTimers.get(id));
+  stoppingOverrideTimers.set(id, setTimeout(() => {
+    stoppingOverrideTimers.delete(id);
+    if (!stoppingTaskIds.delete(id)) return;
+    renderTasks();
+  }, STOPPING_OVERRIDE_TTL_MS));
+}
+
+function clearStopping(id) {
+  clearTimeout(stoppingOverrideTimers.get(id));
+  stoppingOverrideTimers.delete(id);
+  return stoppingTaskIds.delete(id);
+}
 let scriptsCache = [];
 let lastRunsByTask = new Map();
 let selectedScriptPath = '';
@@ -2355,7 +2381,9 @@ function latestRunSummary(taskId) {
 }
 
 function taskCard(task) {
-  const isRunning = runningTaskIds.has(task.id) || Boolean(task.is_running);
+  // stoppingTaskIds 优先：点过停止就立刻按"未运行"渲染，不等服务端确认
+  const isRunning = !stoppingTaskIds.has(task.id)
+    && (runningTaskIds.has(task.id) || Boolean(task.is_running));
   const latest = latestRunSummary(task.id);
   const isPersistent = Boolean(Number(task.use_persistent));
   const profileName = (() => {
@@ -2449,18 +2477,33 @@ async function loadScripts() {
 
 let lastTasksHtml = null;
 
-async function loadTasks() {
-  const data = await fetchJson('/api/tasks');
-  tasksCache = data.data;
-  const html = data.data.map(taskCard).join('') || '<p class="empty">当前还没有任务。</p>';
+// 从 tasksCache 同步重渲染，不发请求。
+// 本地状态（stoppingTaskIds / runningTaskIds）变化后调它，点击就能立刻见效。
+//
+// 必须和 loadTasks 走同一个出口：下面那个 html === lastTasksHtml 的短路依赖缓存
+// 和 DOM 始终同步，绕过它直接改 DOM 会让缓存对不上，下一轮刷新生成同样的 HTML
+// 就被跳过，本地改动永久卡住。
+function renderTasks() {
+  const html = tasksCache.map(taskCard).join('') || '<p class="empty">当前还没有任务。</p>';
   // 内容没变就不动 DOM。整块 innerHTML 覆盖会把列表上的焦点、悬停和滚动位置一起
-  // 冲掉，而状态轮询每 5 秒就调一次，绝大多数轮次内容是完全一样的。
+  // 冲掉，而状态刷新很频繁，绝大多数轮次内容是完全一样的。
   //
   // 比的是自己上次生成的字符串，不是 tasksEl.innerHTML —— 后者被浏览器重新序列化过
   // （自闭合标签展开、实体归一化），跟原始字符串永远不相等，这个判断就会永远不生效。
   if (html === lastTasksHtml) return;
   lastTasksHtml = html;
   tasksEl.innerHTML = html;
+}
+
+async function loadTasks() {
+  const data = await fetchJson('/api/tasks');
+  tasksCache = data.data;
+  // 服务端已经确认不在跑了，本地的"停止中"覆盖就该退场，交回服务端状态。
+  // 放在渲染前统一清，避免 taskCard 边遍历边改集合。
+  for (const task of data.data) {
+    if (!task.is_running) clearStopping(task.id);
+  }
+  renderTasks();
 }
 
 async function loadRuns() {
@@ -3072,6 +3115,9 @@ function startStatusStream() {
 
 async function runTask(id) {
   try {
+    // 停止后立刻再启动：那条"停止中"覆盖还没被服务端确认清掉，它的优先级高于
+    // runningTaskIds，不清掉的话下面的乐观点亮会被压住，按钮不变灰。
+    clearStopping(id);
     runningTaskIds.add(id);
     await loadTasks();
     const task = tasksCache.find(item => item.id === id);
@@ -3093,13 +3139,26 @@ async function runTask(id) {
 }
 
 async function stopTask(id) {
+  // 乐观更新：点击立刻恢复可点，不等任何网络往返。
+  //
+  // 原来是先 await fetchJson 再 refreshAll()，按钮要等一个完整往返加 7 个请求
+  // 才变回来 —— 这就是"从灰色变回来比较慢"。启动方向本来就有这个优化
+  // （runTask 先 add 再渲染），停止方向漏了。
+  //
+  // 用 stoppingTaskIds 而不是 runningTaskIds.delete()：isRunning 里两者是 OR，
+  // 删掉只是不强制点亮，服务端此刻仍报 is_running=true，按钮还是灰的。
+  markStopping(id);
+  runningTaskIds.delete(id);
+  renderTasks();
   try {
     await fetchJson(`/api/tasks/${id}/stop`, { method: 'POST' });
     toast(`停止指令已发送至任务 #${id}`, 'success');
   } catch (error) {
+    // 失败：撤销乐观更新，按钮变回运行中
+    clearStopping(id);
+    renderTasks();
     toast(error.message || '停止失败', 'error');
   } finally {
-    runningTaskIds.delete(id);
     await refreshAll();
   }
 }
