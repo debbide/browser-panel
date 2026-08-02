@@ -21,6 +21,7 @@ const {
 } = require('./conditions');
 const remainingCallback = require('./conditions/types/remaining_callback');
 const { router: authRouter, requireAuth } = require('./auth');
+const events = require('./events');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
@@ -539,6 +540,30 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/auth', authRouter);
 app.use(requireAuth);
 // --- 以下全部需要登录 -------------------------------------------------------
+
+// 状态推送（SSE）。放在鉴权之后，所以未登录连不上；放在 express.static 之前，
+// 免得将来 public/ 下真出现同名文件把它顶掉。
+//
+// 事件只是"某某变了，自己去拉"的信号，不带状态本体：前端复用已有的 loadTasks /
+// loadRuns / loadBrowserStatus，服务端不用再维护一份序列化逻辑，而且拉取走
+// fetchJson，会话过期时能正常走 401 跳登录页那条路（长连接本身只在建立时鉴权，
+// 之后哪怕会话过期了连接也不会自己断）。
+app.get('/api/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // nginx 反代默认会缓冲响应，缓冲了 SSE 就没有"实时"可言。CF Tunnel 不需要
+    // 这个头，但加着不碍事，用户换 nginx 方案时不用再想起来补。
+    'X-Accel-Buffering': 'no',
+  });
+  // Nagle 算法会把小包攒一会儿再发，SSE 要的就是小包立刻出去
+  if (res.socket && typeof res.socket.setNoDelay === 'function') {
+    res.socket.setNoDelay(true);
+  }
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  events.addClient(res);
+});
 
 // Avoid stale panel UI after deploys (especially app.js / styles.css / index.html)
 app.use(express.static(config.paths.publicDir, {

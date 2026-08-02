@@ -4,6 +4,7 @@ const {
   evaluateTaskCondition,
   conditionFromTask,
 } = require('./conditions');
+const events = require('./events');
 
 const runningTasks = new Set();
 let mainLoopHandle = null;
@@ -61,10 +62,15 @@ async function runTaskSafely(taskId, runTaskById, options = {}) {
     return { skipped: true, reason: gate.reason };
   }
   runningTasks.add(id);
+  // 所有启动路径（HTTP /api/tasks/:id/run、Telegram 回调、定时器 tick）都走这里，
+  // 所以推送只挂这一处就够，不用在每个入口重复。
+  events.emit('task', { id, running: true });
   try {
     return await runTaskById(id);
   } finally {
     runningTasks.delete(id);
+    // 放在 finally 里：任务抛错、被停止、正常结束都要通知，否则按钮会卡在"运行中…"
+    events.emit('task', { id, running: false });
   }
 }
 

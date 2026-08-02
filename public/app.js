@@ -2948,49 +2948,126 @@ async function refreshAll() {
 }
 
 // ---------------------------------------------------------------------------
-// 状态轮询
+// 状态推送（SSE）
 // ---------------------------------------------------------------------------
 // 面板原先只在用户操作后刷新，所以服务端侧的状态变化（任务在后台跑完、定时任务
 // 自己触发、浏览器被手动关掉或崩了）前端一律不知道，只能手动刷页面。
 //
-// 这里刻意不轮询 refreshAll()：它含 loadTelegramSettings / loadGlobalEnvSettings，
+// 服务端在真正发生状态翻转时推一条事件过来，这里收到后拉一次状态接口。事件本身
+// 不带状态，只是"变了，自己去拉"的信号 —— 拉取走 fetchJson，会话过期时能正常
+// 走 401 跳登录页那条路。
+//
+// 刻意不刷 refreshAll()：它含 loadTelegramSettings / loadGlobalEnvSettings，
 // 会把用户正在编辑的表单输入直接覆盖掉。只拉状态相关的三个。
-const POLL_INTERVAL_MS = 5000;
-let pollTimer = null;
-let pollInFlight = false;
+const SSE_URL = '/api/events';
+// 事件到刷新之间的合并窗口。一个任务结束会连着触发 task + 后续状态变化，
+// 200ms 内的多条事件合并成一次拉取。
+const REFRESH_DEBOUNCE_MS = 200;
+// 降级轮询间隔。只在 SSE 没连上时才跑 —— 有的中间层会掐掉长连接或不支持
+// text/event-stream，那种环境下总不能完全不刷新。
+const FALLBACK_POLL_MS = 15000;
 
-async function pollStatus() {
-  // 上一轮还没回来就跳过，别让慢请求堆叠
-  if (pollInFlight) return;
-  // 已经在跳登录页了，没必要继续打接口（也免得刷出一堆 401）
+let eventSource = null;
+let refreshTimer = null;
+let refreshInFlight = false;
+let refreshQueued = false;
+let fallbackTimer = null;
+
+async function refreshStatus() {
   if (redirectingToLogin) return;
-  // 后台标签页不轮询，省电省流量；切回来时 visibilitychange 会立刻补一次
-  if (document.hidden) return;
-  // 有弹窗开着就先不刷：loadTasks 是整块 innerHTML 覆盖，会把列表上的焦点、悬停
-  // 和滚动位置一起冲掉，而弹窗开着时列表根本不在视野里，刷它纯剩副作用。
-  // 弹窗一关，下一个周期（≤5s）自然补上。
-  if (document.querySelector('.modal.open')) return;
-
-  pollInFlight = true;
+  // 上一轮还没回来：记一笔，等它结束后补一次，别让请求堆叠。
+  // 直接 return 会丢事件 —— 任务结束的那条正好撞上一轮慢请求就永远不刷了。
+  if (refreshInFlight) {
+    refreshQueued = true;
+    return;
+  }
+  refreshInFlight = true;
   try {
     // loadRuns 要排在 loadTasks 前面：任务卡片上的"最近一次运行"读的是 runsCache
     await Promise.all([loadRuns(), loadBrowserStatus()]);
     await loadTasks();
   } catch {
-    // 轮询失败不弹 toast —— 每 5 秒一次的网络抖动会把屏幕刷满。
+    // 拉取失败不弹 toast —— 网络抖动会把屏幕刷满。
     // 真正的会话失效由 fetchJson 里的 401 分支处理，会直接跳登录页。
   } finally {
-    pollInFlight = false;
+    refreshInFlight = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      scheduleRefresh();
+    }
   }
 }
 
-function startStatusPolling() {
-  if (pollTimer) return;
-  pollTimer = setInterval(pollStatus, POLL_INTERVAL_MS);
-  // 切回前台立刻补一次，不用等下一个 5 秒周期
+function scheduleRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshStatus();
+  }, REFRESH_DEBOUNCE_MS);
+}
+
+// SSE 断了才轮询，连上就停。两者不会同时跑。
+function startFallbackPolling() {
+  if (fallbackTimer) return;
+  fallbackTimer = setInterval(() => {
+    if (document.hidden || redirectingToLogin) return;
+    refreshStatus();
+  }, FALLBACK_POLL_MS);
+}
+
+function stopFallbackPolling() {
+  if (!fallbackTimer) return;
+  clearInterval(fallbackTimer);
+  fallbackTimer = null;
+}
+
+let streamStarted = false;
+
+function startStatusStream() {
+  // 只允许启动一次。onerror 里会把 eventSource 置空（浏览器放弃重连时），
+  // 不能拿它当"启没启动过"的判据，否则会重复注册 visibilitychange 监听。
+  if (streamStarted) return;
+  streamStarted = true;
+
+  // 切回前台补一次：SSE 理论上不会漏，但标签页在后台被浏览器冻结时连接可能被掐，
+  // 这一下能盖住"切回来发现状态是旧的"。注册一次，与连接生命周期无关。
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) pollStatus();
+    if (!document.hidden) scheduleRefresh();
   });
+
+  if (typeof EventSource === 'undefined') {
+    // 浏览器太老没有 EventSource：直接降级轮询
+    startFallbackPolling();
+    return;
+  }
+
+  eventSource = new EventSource(SSE_URL);
+
+  // 连上了（含浏览器自动重连成功）。断线期间的变化没收到，所以补一次拉取。
+  eventSource.onopen = () => {
+    stopFallbackPolling();
+    scheduleRefresh();
+  };
+
+  const onStateEvent = () => scheduleRefresh();
+  eventSource.addEventListener('state', onStateEvent);
+  eventSource.addEventListener('task', onStateEvent);
+  eventSource.addEventListener('browser', onStateEvent);
+
+  eventSource.onerror = () => {
+    // EventSource 自带重连，不用手动重建，这里只负责断开期间兜底轮询，
+    // 等 onopen 再把轮询停掉。
+    //
+    // 会话失效时连接会以 401 失败落到这里。不在这里判断状态码 —— EventSource
+    // 拿不到 —— 而是靠随后的降级轮询走 fetchJson，由它的 401 分支跳登录页。
+    if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+      // CLOSED = 浏览器已放弃重连，之后只能靠轮询。显式 close 一下，避免留个
+      // 半死的对象。
+      eventSource.close();
+      eventSource = null;
+    }
+    startFallbackPolling();
+  };
 }
 
 async function runTask(id) {
@@ -4553,7 +4630,7 @@ async function bootPanel() {
   resetAllModalState();
   closeModal();
   refreshAll();
-  startStatusPolling();
+  startStatusStream();
   loadSchedulerSettings();
   loadSuccessHeuristicsSettings();
   loadBrowserRuntimeSettings();

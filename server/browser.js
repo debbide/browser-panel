@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
+const events = require('./events');
 
 const manualBrowserState = {
   pid: null,
@@ -280,6 +281,10 @@ function syncManualState() {
     manualBrowserState.pid = null;
     manualBrowserState.openedAt = null;
     manualBrowserState.userDataDir = null;
+    // 兜底通知：正常情况下 child.on('exit') 会先发，但面板重启后旧进程的 exit
+    // 句柄已经没了，只能靠这里的 isPidAlive 兜。只在真的发生了状态翻转时发 ——
+    // 状态清空后再调用不会重复发，所以不会和前端的拉取形成来回。
+    events.emit('browser', { open: false });
   }
 }
 
@@ -564,6 +569,9 @@ async function openManualBrowser(profile) {
       manualBrowserState.pid = null;
       manualBrowserState.openedAt = null;
       manualBrowserState.userDataDir = null;
+      // 用户手动关掉窗口 / 浏览器崩了，都会走到这里。这是 SSE 相对轮询最有价值的
+      // 一处：以前只能等下一次轮询或手动刷页面才知道浏览器没了。
+      events.emit('browser', { open: false });
     }
   };
   child.on('exit', onLaterExit);
@@ -573,6 +581,7 @@ async function openManualBrowser(profile) {
   manualBrowserState.openedAt = new Date().toISOString();
   manualBrowserState.userDataDir = effectiveUserDataDir;
   console.log(`[browser-launch] READY pid=${child.pid} chrome=${chromePath}`);
+  events.emit('browser', { open: true });
 
   return { open: true, openedAt: manualBrowserState.openedAt, pid: manualBrowserState.pid };
 }
@@ -597,6 +606,7 @@ async function closeManualBrowser() {
   manualBrowserState.pid = null;
   manualBrowserState.openedAt = null;
   manualBrowserState.userDataDir = null;
+  events.emit('browser', { open: false });
   return { open: false };
 }
 
