@@ -313,25 +313,15 @@ let runningTaskIds = new Set();
 // 服务端仍回 is_running=true，光从 runningTaskIds 删掉按钮还是灰的。所以熄灭方向
 // 需要这个独立的覆盖标记，优先级高于服务端状态。
 let stoppingTaskIds = new Set();
-// 覆盖标记的兜底时限。正常情况 loadTasks 一看到 is_running=false 就清掉，这个定时器
-// 只防一种情况：停止指令发出去了但任务实际没停 —— 那时界面不该一直显示"未运行"，
-// 宁可退回去显示服务端的真实状态，也不能长期骗人。
-const STOPPING_OVERRIDE_TTL_MS = 10000;
-const stoppingOverrideTimers = new Map();
-
+// 停止覆盖不退场，直到服务端确认 is_running=false（loadTasks 里统一清）。
+// 原来有个 10 秒自动过期兜底：优雅停止一慢（SIGTERM 后要等 1.5 秒才 SIGKILL），
+// 覆盖先过期、服务端还在报 running，按钮就会在停止确认前弹回"运行中"再落回"启动"。
+// 只有停止请求失败（catch 分支）才解除覆盖，交回服务端状态。
 function markStopping(id) {
   stoppingTaskIds.add(id);
-  clearTimeout(stoppingOverrideTimers.get(id));
-  stoppingOverrideTimers.set(id, setTimeout(() => {
-    stoppingOverrideTimers.delete(id);
-    if (!stoppingTaskIds.delete(id)) return;
-    renderTasks();
-  }, STOPPING_OVERRIDE_TTL_MS));
 }
 
 function clearStopping(id) {
-  clearTimeout(stoppingOverrideTimers.get(id));
-  stoppingOverrideTimers.delete(id);
   return stoppingTaskIds.delete(id);
 }
 let scriptsCache = [];
