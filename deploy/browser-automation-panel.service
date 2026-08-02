@@ -13,7 +13,9 @@ EnvironmentFile=-/opt/browser-panel/.env.panel
 # fixed google-chrome-stable would break ARM / snap Chromium hosts on every upgrade.
 Environment=NODE_ENV=production
 Environment=PORT=3210
-Environment=HOST=0.0.0.0
+# Do NOT set HOST here — same reason as Chrome path. config.js already defaults to
+# 0.0.0.0, so behaviour is unchanged, but leaving it out lets .env.panel set
+# HOST=127.0.0.1 to keep the panel off the public internet (SSH tunnel / nginx).
 Environment=BROWSER_DISPLAY=:1.0
 # Do NOT set BROWSER_CHROME_PATH here. Put it in .env.panel, e.g.:
 #   BROWSER_CHROME_PATH=/usr/bin/google-chrome-stable

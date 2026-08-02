@@ -1,5 +1,23 @@
+// 会话失效时统一跳登录页。用一个标记挡住并发请求 —— 面板启动时会同时打十几个
+// 接口，401 一起回来的话会连着 replace 十几次，浏览器历史被塞满。
+let redirectingToLogin = false;
+
+function goLogin() {
+  if (redirectingToLogin) return;
+  redirectingToLogin = true;
+  const next = location.pathname + location.search;
+  const suffix = next && next !== '/' ? `?next=${encodeURIComponent(next)}` : '';
+  location.replace(`/login.html${suffix}`);
+}
+
 async function fetchJson(url, options) {
   const res = await fetch(url, options);
+  // 401 一律跳登录页。这里必须在 content-type 检查之前拦 —— 服务端给 /api/* 回的是
+  // JSON，但真要漏到下面就会被当成普通业务错误弹 toast，用户看不出是掉登录了。
+  if (res.status === 401) {
+    goLogin();
+    throw new Error('会话已失效，正在跳转登录页');
+  }
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
     const text = await res.text();
@@ -4353,14 +4371,138 @@ function wireTasksFsUi() {
   }
 }
 
-wireTasksFsUi();
+// ---------------------------------------------------------------------------
+// 登录态 / 顶栏用户区
+// ---------------------------------------------------------------------------
 
-resetAllModalState();
-closeModal();
-refreshAll();
-loadSchedulerSettings();
-loadSuccessHeuristicsSettings();
-loadBrowserRuntimeSettings();
-loadVisionSettings();
-loadGlobalEnvSettings();
-loadTasksFs('');
+function openChangePasswordDialog() {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '10050';
+  const dialog = document.createElement('div');
+  dialog.className = 'modal open';
+  dialog.style.cssText = 'z-index:10051; max-width:420px; width:min(420px,92vw);';
+  dialog.innerHTML = `
+    <div class="modal-header">
+      <div>
+        <h2>修改密码</h2>
+        <p class="muted" style="margin:4px 0 0;font-size:13px;">改完会退出其他设备上的登录</p>
+      </div>
+      <button type="button" class="icon-btn cp-close" aria-label="关闭"><i data-lucide="x" class="icon-md"></i></button>
+    </div>
+    <div class="modal-body">
+      <form class="stack-form cp-form">
+        <div>
+          <label class="field-label" for="cp-current">当前密码</label>
+          <input id="cp-current" type="password" autocomplete="current-password" style="width:100%" />
+        </div>
+        <div>
+          <label class="field-label" for="cp-new">新密码（至少 8 位）</label>
+          <input id="cp-new" type="password" autocomplete="new-password" style="width:100%" />
+        </div>
+        <div>
+          <label class="field-label" for="cp-confirm">确认新密码</label>
+          <input id="cp-confirm" type="password" autocomplete="new-password" style="width:100%" />
+        </div>
+        <div class="row" style="margin-top:12px; gap:8px; justify-content:flex-end;">
+          <button type="button" class="alt cp-cancel">取消</button>
+          <button type="submit" class="btn-primary cp-ok">保存</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
+
+  const close = () => { mask.remove(); dialog.remove(); };
+  dialog.querySelector('.cp-close').addEventListener('click', close);
+  dialog.querySelector('.cp-cancel').addEventListener('click', close);
+  mask.addEventListener('click', close);
+
+  const form = dialog.querySelector('.cp-form');
+  const okBtn = dialog.querySelector('.cp-ok');
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const currentPassword = dialog.querySelector('#cp-current').value;
+    const newPassword = dialog.querySelector('#cp-new').value;
+    const confirmPassword = dialog.querySelector('#cp-confirm').value;
+    if (!currentPassword || !newPassword) {
+      toast('请填写当前密码和新密码', 'error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast('两次输入的新密码不一致', 'error');
+      return;
+    }
+    okBtn.disabled = true;
+    try {
+      await fetchJson('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
+      });
+      close();
+      toast('密码已修改', 'success');
+    } catch (err) {
+      toast(err.message || '修改失败', 'error');
+      okBtn.disabled = false;
+    }
+  });
+  setTimeout(() => dialog.querySelector('#cp-current').focus(), 40);
+}
+
+function wireAuthUi(username) {
+  const box = document.getElementById('topbar-user');
+  const nameEl = document.getElementById('topbar-username');
+  if (nameEl) nameEl.textContent = username || '';
+  if (box) box.hidden = false;
+
+  const logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } catch {
+        // 退出失败也照样跳登录页：Cookie 可能已经没了，留在面板上没意义
+      }
+      location.replace('/login.html');
+    });
+  }
+
+  const cpBtn = document.getElementById('change-password-btn');
+  if (cpBtn) cpBtn.addEventListener('click', openChangePasswordDialog);
+}
+
+// 先确认登录再启动面板。不先问一句的话，未登录时十几个接口会并发打出去，
+// 全部 401，用户先看到一屏报错才被弹走。
+async function bootPanel() {
+  let state = null;
+  try {
+    const res = await fetch('/api/auth/state');
+    state = (await res.json()).data || {};
+  } catch {
+    toast('无法连接后端，请确认面板服务已启动。', 'error');
+    return;
+  }
+  if (!state.authenticated) {
+    goLogin();
+    return;
+  }
+
+  wireAuthUi(state.username);
+
+  wireTasksFsUi();
+
+  resetAllModalState();
+  closeModal();
+  refreshAll();
+  loadSchedulerSettings();
+  loadSuccessHeuristicsSettings();
+  loadBrowserRuntimeSettings();
+  loadVisionSettings();
+  loadGlobalEnvSettings();
+  loadTasksFs('');
+}
+
+bootPanel();

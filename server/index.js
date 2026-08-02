@@ -20,6 +20,7 @@ const {
   listTypes: listConditionTypes,
 } = require('./conditions');
 const remainingCallback = require('./conditions/types/remaining_callback');
+const { router: authRouter, requireAuth } = require('./auth');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
@@ -529,6 +530,16 @@ function resolveTaskScriptPath(taskName, type, currentScriptPath = '', existingT
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+
+// --- 鉴权分界线 -------------------------------------------------------------
+// 顺序有讲究，别把 requireAuth 往下挪：
+// express.static(publicDir) 一旦排在前面，index.html 会在鉴权之前就被送出去，
+// 中间件等于没挂。同理 /tasks /logs /screenshots 三个静态目录必须在线下方——
+// 它们分别暴露任务脚本源码、日志里的 token、以及可能含已登录账号页面的截图。
+app.use('/api/auth', authRouter);
+app.use(requireAuth);
+// --- 以下全部需要登录 -------------------------------------------------------
+
 // Avoid stale panel UI after deploys (especially app.js / styles.css / index.html)
 app.use(express.static(config.paths.publicDir, {
   etag: true,
@@ -1855,5 +1866,19 @@ app.listen(config.server.port, config.server.host, () => {
   } catch (err) {
     console.error('[boot] browser workspace not ready:', err.message || err);
   }
+  try {
+    db.purgeExpiredSessions();
+  } catch (err) {
+    console.error('[boot] purge sessions failed:', err.message || err);
+  }
   console.log(`Panel running on http://${config.server.host}:${config.server.port}`);
+  if (!db.hasAnyUser()) {
+    console.log('[auth] 尚未设置管理员账号 — 首次打开面板会进入引导页');
+  }
+  if (config.server.host === '0.0.0.0') {
+    console.warn(
+      '[auth] 警告：面板监听 0.0.0.0 且为明文 HTTP，密码在链路上可被嗅探。'
+      + '建议改绑 127.0.0.1 走 SSH 隧道，或前置 nginx + TLS。',
+    );
+  }
 });

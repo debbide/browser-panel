@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录 - Browser Automation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260802a" />
+  <style>
+    .login-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .login-card {
+      width: min(420px, 100%);
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--glass-shadow);
+      backdrop-filter: blur(12px);
+      padding: 36px 32px;
+    }
+    .login-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .login-brand h1 {
+      margin: 0;
+      font-size: 22px;
+    }
+    .login-card p.login-sub {
+      margin: 0 0 26px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .login-field { margin-bottom: 16px; }
+    .login-field label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .login-field input { width: 100%; }
+    .login-error {
+      display: none;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .login-error.show { display: block; }
+    #login-submit { width: 100%; justify-content: center; margin-top: 6px; }
+    .login-note {
+      margin: 18px 0 0;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" id="login-form" autocomplete="on">
+      <div class="login-brand">
+        <i data-lucide="shield-check" class="icon-sm"></i>
+        <h1 id="login-title">登录面板</h1>
+      </div>
+      <p class="login-sub" id="login-subtitle">请输入用户名和密码。</p>
+
+      <div class="login-error" id="login-error" role="alert"></div>
+
+      <div class="login-field">
+        <label for="login-username">用户名</label>
+        <input id="login-username" name="username" type="text" autocomplete="username" required />
+      </div>
+
+      <div class="login-field">
+        <label for="login-password" id="login-password-label">密码</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+
+      <div class="login-field" id="login-confirm-field" hidden>
+        <label for="login-confirm">确认密码</label>
+        <input id="login-confirm" name="confirmPassword" type="password" autocomplete="new-password" />
+      </div>
+
+      <button id="login-submit" type="submit" class="btn-with-icon">
+        <i data-lucide="log-in" class="icon-sm"></i> <span id="login-submit-text">登录</span>
+      </button>
+
+      <p class="login-note" id="login-note" hidden></p>
+    </form>
+  </div>
+
+  <script src="/login.js?v=20260802a"></script>
+</body>
+</html>

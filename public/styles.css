@@ -255,6 +255,29 @@ a:hover { text-decoration: underline; }
   flex-wrap: wrap;
 }
 
+/* 顶栏用户区：当前账号 + 修改密码 + 退出 */
+/* 这条 [hidden] 必须留着：作者样式里的 display:flex 会盖掉浏览器默认的
+   [hidden]{display:none}，不写的话未登录时用户区会先亮一下再被跳走。 */
+.topbar-user[hidden] { display: none; }
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+  padding-left: 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.topbar-username {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Tabs */
 .tabs {
   display: flex;

@@ -25,6 +25,26 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 
 打开：`http://服务器IP:3210`
 
+### 首次登录
+
+面板需要登录才能使用。第一次打开会自动进入**引导页**，设置管理员账号和密码（至少 8 位），设好后立刻生效。
+
+- 登录状态存在 Cookie 里，默认 7 天
+- 忘记密码：在服务器上删掉账号后重启面板，会重新进引导页
+
+  ```bash
+  sqlite3 /opt/browser-panel/data/app.db "DELETE FROM panel_users; DELETE FROM panel_sessions;"
+  systemctl restart browser-automation-panel
+  ```
+
+> **明文 HTTP 警告**：面板默认监听 `0.0.0.0:3210` 且没有 TLS，密码和 Cookie 在链路上是明文的，公网直连等于裸奔。生产环境二选一：
+>
+> 1. **SSH 隧道**（最省事）：在 `.env` 里设 `HOST=127.0.0.1`，本地执行
+>    `ssh -L 3210:127.0.0.1:3210 root@服务器IP`，然后访问 `http://127.0.0.1:3210`
+> 2. **nginx + TLS**：面板绑 `127.0.0.1`，前面挂 nginx 反代并配好证书
+>
+> 无论哪种，都建议用防火墙把 3210 挡在公网外（`ufw deny 3210`）。面板里的脚本管理功能可以写文件并执行，服务又是 root 跑的 —— 端口暴露出去就是把 root shell 挂在公网上。
+
 ### 浏览器 + 系统 Python 依赖（一键）
 
 面板装好后，在服务器用 root 执行（**系统级 pip，不用 venv**；**只装一个系统 Chrome**，不装 Playwright 自带浏览器）：

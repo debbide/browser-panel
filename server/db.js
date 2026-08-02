@@ -74,6 +74,26 @@ CREATE TABLE IF NOT EXISTS env_entries (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(scope, owner_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS panel_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- token_hash 存 sha256(token)，不存明文：万一 app.db 泄露，
+-- 拿到的哈希不能直接当 Cookie 用。
+CREATE TABLE IF NOT EXISTS panel_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES panel_users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  user_agent TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_panel_sessions_user ON panel_sessions(user_id);
 `);
 
 const taskRunColumns = db.prepare('PRAGMA table_info(task_runs)').all().map(row => row.name);
@@ -853,6 +873,88 @@ function setVisionChannelModel(id, model) {
   return getVisionSettingsPublic();
 }
 
+// ---------------------------------------------------------------------------
+// 面板登录：用户与会话
+//
+// 密码哈希本身在 auth.js 里算（scrypt），这里只负责存取——db.js 不引入 crypto，
+// 保持"数据层只管数据"。会话 token 同理：调用方传进来的已经是 sha256(token)。
+// ---------------------------------------------------------------------------
+
+function hasAnyUser() {
+  return Boolean(db.prepare('SELECT 1 FROM panel_users LIMIT 1').get());
+}
+
+function getUserByUsername(username) {
+  return db.prepare('SELECT * FROM panel_users WHERE username = ?').get(String(username || ''));
+}
+
+function getUserById(id) {
+  return db.prepare('SELECT * FROM panel_users WHERE id = ?').get(Number(id));
+}
+
+function createUser(username, passwordHash) {
+  const name = String(username || '').trim();
+  if (!name) throw new Error('用户名不能为空');
+  const info = db
+    .prepare('INSERT INTO panel_users (username, password_hash) VALUES (?, ?)')
+    .run(name, String(passwordHash));
+  return getUserById(info.lastInsertRowid);
+}
+
+function updateUserPassword(userId, passwordHash) {
+  db.prepare(`
+    UPDATE panel_users
+    SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(String(passwordHash), Number(userId));
+  return getUserById(userId);
+}
+
+function createSession(tokenHash, userId, expiresAt, userAgent = '') {
+  db.prepare(`
+    INSERT INTO panel_sessions (token_hash, user_id, created_at, expires_at, user_agent)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    String(tokenHash),
+    Number(userId),
+    new Date().toISOString(),
+    String(expiresAt),
+    String(userAgent || '').slice(0, 300),
+  );
+  return { tokenHash, userId, expiresAt };
+}
+
+// 过期判断放在 SQL 里：ISO-8601 字符串按字典序比较等价于按时间比较，
+// 省掉一次"取出来再比"的往返，也避免忘了比对时区。
+function getSessionUser(tokenHash) {
+  if (!tokenHash) return null;
+  return db.prepare(`
+    SELECT u.id, u.username, s.expires_at
+    FROM panel_sessions s
+    JOIN panel_users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > ?
+  `).get(String(tokenHash), new Date().toISOString()) || null;
+}
+
+function deleteSession(tokenHash) {
+  db.prepare('DELETE FROM panel_sessions WHERE token_hash = ?').run(String(tokenHash || ''));
+}
+
+function deleteSessionsForUser(userId, exceptTokenHash = null) {
+  if (exceptTokenHash) {
+    db.prepare('DELETE FROM panel_sessions WHERE user_id = ? AND token_hash != ?')
+      .run(Number(userId), String(exceptTokenHash));
+    return;
+  }
+  db.prepare('DELETE FROM panel_sessions WHERE user_id = ?').run(Number(userId));
+}
+
+function purgeExpiredSessions() {
+  const info = db.prepare('DELETE FROM panel_sessions WHERE expires_at <= ?')
+    .run(new Date().toISOString());
+  return info.changes || 0;
+}
+
 module.exports = {
   db,
   listTasks,
@@ -899,4 +1001,14 @@ module.exports = {
   setGithubCompatEnabled,
   isTaskParallelAllowed,
   setTaskParallelAllowed,
+  hasAnyUser,
+  getUserByUsername,
+  getUserById,
+  createUser,
+  updateUserPassword,
+  createSession,
+  getSessionUser,
+  deleteSession,
+  deleteSessionsForUser,
+  purgeExpiredSessions,
 };
