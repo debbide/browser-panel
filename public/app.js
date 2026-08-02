@@ -2447,10 +2447,20 @@ async function loadScripts() {
   renderScripts();
 }
 
+let lastTasksHtml = null;
+
 async function loadTasks() {
   const data = await fetchJson('/api/tasks');
   tasksCache = data.data;
-  tasksEl.innerHTML = data.data.map(taskCard).join('') || '<p class="empty">当前还没有任务。</p>';
+  const html = data.data.map(taskCard).join('') || '<p class="empty">当前还没有任务。</p>';
+  // 内容没变就不动 DOM。整块 innerHTML 覆盖会把列表上的焦点、悬停和滚动位置一起
+  // 冲掉，而状态轮询每 5 秒就调一次，绝大多数轮次内容是完全一样的。
+  //
+  // 比的是自己上次生成的字符串，不是 tasksEl.innerHTML —— 后者被浏览器重新序列化过
+  // （自闭合标签展开、实体归一化），跟原始字符串永远不相等，这个判断就会永远不生效。
+  if (html === lastTasksHtml) return;
+  lastTasksHtml = html;
+  tasksEl.innerHTML = html;
 }
 
 async function loadRuns() {
@@ -2935,6 +2945,52 @@ async function refreshAll() {
     loadGlobalEnvSettings(),
   ]);
   await loadTasks();
+}
+
+// ---------------------------------------------------------------------------
+// 状态轮询
+// ---------------------------------------------------------------------------
+// 面板原先只在用户操作后刷新，所以服务端侧的状态变化（任务在后台跑完、定时任务
+// 自己触发、浏览器被手动关掉或崩了）前端一律不知道，只能手动刷页面。
+//
+// 这里刻意不轮询 refreshAll()：它含 loadTelegramSettings / loadGlobalEnvSettings，
+// 会把用户正在编辑的表单输入直接覆盖掉。只拉状态相关的三个。
+const POLL_INTERVAL_MS = 5000;
+let pollTimer = null;
+let pollInFlight = false;
+
+async function pollStatus() {
+  // 上一轮还没回来就跳过，别让慢请求堆叠
+  if (pollInFlight) return;
+  // 已经在跳登录页了，没必要继续打接口（也免得刷出一堆 401）
+  if (redirectingToLogin) return;
+  // 后台标签页不轮询，省电省流量；切回来时 visibilitychange 会立刻补一次
+  if (document.hidden) return;
+  // 有弹窗开着就先不刷：loadTasks 是整块 innerHTML 覆盖，会把列表上的焦点、悬停
+  // 和滚动位置一起冲掉，而弹窗开着时列表根本不在视野里，刷它纯剩副作用。
+  // 弹窗一关，下一个周期（≤5s）自然补上。
+  if (document.querySelector('.modal.open')) return;
+
+  pollInFlight = true;
+  try {
+    // loadRuns 要排在 loadTasks 前面：任务卡片上的"最近一次运行"读的是 runsCache
+    await Promise.all([loadRuns(), loadBrowserStatus()]);
+    await loadTasks();
+  } catch {
+    // 轮询失败不弹 toast —— 每 5 秒一次的网络抖动会把屏幕刷满。
+    // 真正的会话失效由 fetchJson 里的 401 分支处理，会直接跳登录页。
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+function startStatusPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(pollStatus, POLL_INTERVAL_MS);
+  // 切回前台立刻补一次，不用等下一个 5 秒周期
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) pollStatus();
+  });
 }
 
 async function runTask(id) {
@@ -4497,6 +4553,7 @@ async function bootPanel() {
   resetAllModalState();
   closeModal();
   refreshAll();
+  startStatusPolling();
   loadSchedulerSettings();
   loadSuccessHeuristicsSettings();
   loadBrowserRuntimeSettings();

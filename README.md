@@ -37,13 +37,17 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
   systemctl restart browser-automation-panel
   ```
 
-> **明文 HTTP 警告**：面板默认监听 `0.0.0.0:3210` 且没有 TLS，密码和 Cookie 在链路上是明文的，公网直连等于裸奔。生产环境二选一：
+> **不要把 3210 直接暴露到公网**：面板本身是明文 HTTP，且脚本管理功能能写文件并执行、服务又是 root 跑的 —— 端口裸奔等于把 root shell 挂在公网上。三种收口方式任选：
 >
-> 1. **SSH 隧道**（最省事）：在 `.env` 里设 `HOST=127.0.0.1`，本地执行
+> 1. **Cloudflare Tunnel**（推荐）：`cloudflared` 从服务器内部连出去，3210 不用对公网开放，外部走 CF 的 HTTPS。在 `.env.panel` 里设 `HOST=127.0.0.1`，隧道指向 `http://127.0.0.1:3210`。
+>    建议再叠一层 **CF Access**（Zero Trust → Access → Applications），这样连面板登录页都要先过 CF 的身份校验，面板自己的密码成为第二道锁。
+> 2. **SSH 隧道**（最省事，适合自己用）：`.env.panel` 里设 `HOST=127.0.0.1`，本地执行
 >    `ssh -L 3210:127.0.0.1:3210 root@服务器IP`，然后访问 `http://127.0.0.1:3210`
-> 2. **nginx + TLS**：面板绑 `127.0.0.1`，前面挂 nginx 反代并配好证书
+> 3. **nginx + TLS**：面板绑 `127.0.0.1`，前面挂 nginx 反代并配好证书
 >
-> 无论哪种，都建议用防火墙把 3210 挡在公网外（`ufw deny 3210`）。面板里的脚本管理功能可以写文件并执行，服务又是 root 跑的 —— 端口暴露出去就是把 root shell 挂在公网上。
+> 走隧道时 `HOST=127.0.0.1` 是关键 —— 绑 `0.0.0.0` 的话，即便有隧道，同机其它进程和内网仍能直连面板，绕过隧道那一层。防火墙上也建议保持 3210 关闭（`ufw deny 3210`）。
+>
+> 注意：以上都只解决"谁能连到面板"。面板与浏览器之间的那一段（CF Tunnel / nginx 到 127.0.0.1）仍是明文，同机 root 可嗅探；单机场景通常可接受。
 
 ### 浏览器 + 系统 Python 依赖（一键）
 
