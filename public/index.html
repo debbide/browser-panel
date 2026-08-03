@@ -323,6 +323,42 @@
             </div>
           </details>
 
+          <details class="config-details" id="cfg-details-storage" style="margin-top:12px;">
+            <summary>
+              <span class="config-details-title">存储清理</span>
+              <span class="muted" id="storage-cleanup-status">尚未预览</span>
+            </summary>
+            <div class="config-details-body">
+              <div class="grid single-col">
+                <div>
+                  <label class="field-label" for="storage-cleanup-days">保留天数</label>
+                  <input id="storage-cleanup-days" type="number" min="1" max="3650" value="30" style="max-width:180px;" />
+                  <div class="schedule-note" style="margin-top:4px;">只清理早于该天数的受管临时产物；每个任务最新运行记录会保留。</div>
+                </div>
+                <div id="storage-cleanup-categories" class="grid single-col" style="gap:8px;">
+                  <label class="inline-check"><input type="checkbox" value="runArtifacts" checked /> 旧运行记录及日志、截图</label>
+                  <label class="inline-check"><input type="checkbox" value="orphanLogs" checked /> 孤立日志</label>
+                  <label class="inline-check"><input type="checkbox" value="orphanScreenshots" checked /> 孤立截图</label>
+                  <label class="inline-check"><input type="checkbox" value="tempProfiles" checked /> 过期临时浏览器配置</label>
+                  <label class="inline-check"><input type="checkbox" value="workerArtifacts" checked /> Worker 截图与结果副本</label>
+                  <label class="inline-check"><input type="checkbox" value="tmpArtifacts" checked /> 已知应用临时产物</label>
+                </div>
+                <div class="schedule-note">
+                  不会删除任务、数据库、环境变量、持久/命名浏览器配置、下载、归档、依赖或未知路径；运行中的任务产物会跳过。
+                </div>
+                <div class="row" style="gap:8px; flex-wrap:wrap;">
+                  <button type="button" class="alt btn-with-icon" id="storage-cleanup-preview-btn">
+                    <i data-lucide="search" class="icon-sm"></i> 预览估算
+                  </button>
+                  <button type="button" class="danger btn-with-icon" id="storage-cleanup-run-btn" disabled>
+                    <i data-lucide="trash-2" class="icon-sm"></i> 执行清理
+                  </button>
+                </div>
+                <div id="storage-cleanup-result" class="schedule-note">请先预览。</div>
+              </div>
+            </div>
+          </details>
+
           <details class="config-details" id="cfg-details-github" style="margin-top:12px;">
             <summary>
               <span class="config-details-title">GitHub 脚本兼容</span>
@@ -763,7 +799,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260803b"></script>
+  <script src="/app.js?v=20260803c"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

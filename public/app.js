@@ -168,6 +168,13 @@ const brExtensionDirs = document.getElementById('br-extension-dirs');
 const brSaveBtn = document.getElementById('br-save-btn');
 const brInstallBtn = document.getElementById('br-install-btn');
 const brInstallBrowserBtn = document.getElementById('br-install-browser-btn');
+const storageCleanupDays = document.getElementById('storage-cleanup-days');
+const storageCleanupCategories = document.getElementById('storage-cleanup-categories');
+const storageCleanupPreviewBtn = document.getElementById('storage-cleanup-preview-btn');
+const storageCleanupRunBtn = document.getElementById('storage-cleanup-run-btn');
+const storageCleanupStatus = document.getElementById('storage-cleanup-status');
+const storageCleanupResult = document.getElementById('storage-cleanup-result');
+let storageCleanupPreview = null;
 const visionForm = document.getElementById('vision-form');
 const visionStatusText = document.getElementById('vision-status-text');
 const visionChannelsList = document.getElementById('vision-channels-list');
@@ -4150,6 +4157,111 @@ if (brInstallBrowserBtn) {
       brInstallBrowserBtn.disabled = false;
       brInstallBrowserBtn.textContent = '安装浏览器环境';
     }
+  });
+}
+
+function getStorageCleanupPayload() {
+  const retentionDays = Math.min(3650, Math.max(1, Number(storageCleanupDays?.value) || 30));
+  const categories = storageCleanupCategories
+    ? Array.from(storageCleanupCategories.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value)
+    : [];
+  return { retentionDays, categories };
+}
+
+function renderStorageCleanupResult(data, executed = false) {
+  if (!data || !storageCleanupResult) return;
+  const categoryText = Object.values(data.byCategory || {})
+    .filter((item) => item.count > 0)
+    .map((item) => `${item.label} ${item.count} 项`)
+    .join('，');
+  const failureText = data.failures?.length ? `；失败 ${data.failures.length} 项` : '';
+  storageCleanupResult.textContent = executed
+    ? `清理完成：处理 ${data.count} 项，约 ${formatBytes(data.bytes)}，删除运行记录 ${data.removedRunRows || 0} 条${failureText}`
+    : `预计 ${data.count} 项，约 ${formatBytes(data.bytes)}，运行记录 ${data.runRows || 0} 条${categoryText ? `；${categoryText}` : ''}`;
+  if (storageCleanupStatus) {
+    storageCleanupStatus.textContent = executed
+      ? `已清理 ${data.count} 项${failureText}`
+      : `预计释放 ${formatBytes(data.bytes)}`;
+  }
+}
+
+async function previewStorageCleanup() {
+  const payload = getStorageCleanupPayload();
+  if (!payload.categories.length) {
+    toast('请至少选择一个清理类别', 'warn');
+    return null;
+  }
+  storageCleanupPreviewBtn.disabled = true;
+  storageCleanupPreviewBtn.textContent = '预览中...';
+  try {
+    const query = new URLSearchParams({
+      retentionDays: String(payload.retentionDays),
+      categories: payload.categories.join(','),
+    });
+    const res = await fetchJson(`/api/storage/cleanup/preview?${query}`);
+    storageCleanupPreview = res.data || null;
+    renderStorageCleanupResult(storageCleanupPreview, false);
+    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = !storageCleanupPreview?.count;
+    return storageCleanupPreview;
+  } catch (error) {
+    storageCleanupPreview = null;
+    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = true;
+    toast(error.message || '生成清理预览失败', 'error');
+    return null;
+  } finally {
+    storageCleanupPreviewBtn.disabled = false;
+    storageCleanupPreviewBtn.innerHTML = '<i data-lucide="search" class="icon-sm"></i> 预览估算';
+    if (window.lucide) window.lucide.createIcons({ root: storageCleanupPreviewBtn });
+  }
+}
+
+if (storageCleanupCategories) {
+  storageCleanupCategories.addEventListener('change', () => {
+    storageCleanupPreview = null;
+    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = true;
+    if (storageCleanupStatus) storageCleanupStatus.textContent = '选项已改变，请重新预览';
+  });
+}
+if (storageCleanupDays) {
+  storageCleanupDays.addEventListener('input', () => {
+    storageCleanupPreview = null;
+    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = true;
+    if (storageCleanupStatus) storageCleanupStatus.textContent = '保留天数已改变，请重新预览';
+  });
+}
+if (storageCleanupPreviewBtn) storageCleanupPreviewBtn.addEventListener('click', previewStorageCleanup);
+if (storageCleanupRunBtn) {
+  storageCleanupRunBtn.addEventListener('click', async () => {
+    const preview = storageCleanupPreview || await previewStorageCleanup();
+    if (!preview?.count) {
+      toast('没有符合条件的可清理产物', 'info');
+      return;
+    }
+    dialogConfirm(
+      `确认清理 ${preview.count} 项（约 ${formatBytes(preview.bytes)}）及 ${preview.runRows || 0} 条旧运行记录？此操作不可撤销。`,
+      async () => {
+        storageCleanupRunBtn.disabled = true;
+        storageCleanupRunBtn.textContent = '清理中...';
+        try {
+          const payload = getStorageCleanupPayload();
+          const res = await fetchJson('/api/storage/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          storageCleanupPreview = null;
+          renderStorageCleanupResult(res.data || {}, true);
+          toast(res.data?.failures?.length ? '清理完成，部分项目处理失败' : '存储清理完成', res.data?.failures?.length ? 'warn' : 'success');
+          await refreshAll();
+        } catch (error) {
+          toast(error.message || '存储清理失败', 'error');
+        } finally {
+          storageCleanupRunBtn.disabled = true;
+          storageCleanupRunBtn.innerHTML = '<i data-lucide="trash-2" class="icon-sm"></i> 执行清理';
+          if (window.lucide) window.lucide.createIcons({ root: storageCleanupRunBtn });
+        }
+      }
+    );
   });
 }
 

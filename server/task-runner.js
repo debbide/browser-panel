@@ -85,6 +85,15 @@ function copyDirectoryImages(srcDir, destDir) {
   return copied;
 }
 
+function removeWorkerArtifact(target, options = {}) {
+  if (!target) return;
+  try {
+    fs.rmSync(target, { recursive: Boolean(options.recursive), force: true });
+  } catch (error) {
+    console.warn(`[task-runner] worker artifact cleanup failed: ${target}: ${error.message || error}`);
+  }
+}
+
 function getTempProfileDir(task, runId = null) {
   const id = task && task.id != null ? task.id : 'x';
   const run = runId != null && String(runId).trim()
@@ -707,9 +716,20 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
       taskResultParseError = error.message || String(error);
     }
   }
-  if (fs.existsSync(workerResultPath)) fs.unlinkSync(workerResultPath);
-  if (fs.existsSync(workerScreenshotPath)) fs.copyFileSync(workerScreenshotPath, screenshotPath);
+  if (fs.existsSync(workerScreenshotPath)) {
+    try {
+      fs.copyFileSync(workerScreenshotPath, screenshotPath);
+      removeWorkerArtifact(workerScreenshotPath);
+    } catch (error) {
+      console.warn(`[task-runner] worker screenshot copy failed: ${error.message || error}`);
+    }
+  }
   const archivedCount = copyDirectoryImages(workerScreenshotDir, screenshotsDir);
+  const workerImageCount = listImageFilesRecursive(workerScreenshotDir).length;
+  if (workerImageCount === 0 || archivedCount === workerImageCount) {
+    removeWorkerArtifact(workerScreenshotDir, { recursive: true });
+  }
+  if (!taskResultParseError) removeWorkerArtifact(workerResultPath);
   const hasRunShots = archivedCount > 0 || listImageFiles(screenshotsDir).length > 0;
   const screenshotsDirPath = hasRunShots ? screenshotsDir : null;
 

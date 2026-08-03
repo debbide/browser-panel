@@ -1280,7 +1280,10 @@ module.exports = {
   cleanupBrowserTempDirs,
   buildOrphanSbChromeCleanupCommands,
   scheduleOrphanSbChromeSweep,
+  getBrowserWorkDir,
+  getRuntimeDataDir,
   getTempProfileDir,
   removeTempProfileDir,
   isPanelTempProfileDir,
+  shouldCleanupTmpEntry,
 };

@@ -24,6 +24,7 @@ const { router: authRouter, requireAuth } = require('./auth');
 const events = require('./events');
 const logStream = require('./log-stream');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
+const { cleanupStorage, normalizeCategories, normalizeRetentionDays } = require('./storage-cleanup');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
@@ -1943,16 +1944,53 @@ app.get('/api/runs', (req, res) => {
   res.json({ data: db.listRuns(100) });
 });
 
-app.post('/api/runs/cleanup', (req, res) => {
-  const rows = db.db.prepare('SELECT MAX(id) as id FROM task_runs GROUP BY task_id').all();
-  const keep = new Set(rows.map(row => row.id));
-  const allRows = db.listRuns(1000);
-  for (const row of allRows) {
-    if (!keep.has(row.id)) {
-      db.db.prepare('DELETE FROM task_runs WHERE id = ?').run(row.id);
-    }
+app.get('/api/storage/cleanup/preview', (req, res) => {
+  try {
+    const categories = req.query.categories
+      ? normalizeCategories(String(req.query.categories).split(',').filter(Boolean))
+      : undefined;
+    const data = cleanupStorage(db, {
+      dryRun: true,
+      retentionDays: normalizeRetentionDays(req.query.retentionDays),
+      categories,
+      runningTaskIds: getRunningTaskIds(),
+    });
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '生成存储清理预览失败' });
   }
-  res.json({ ok: true });
+});
+
+app.post('/api/storage/cleanup', (req, res) => {
+  try {
+    const body = req.body || {};
+    const data = cleanupStorage(db, {
+      dryRun: body.dryRun === true,
+      retentionDays: normalizeRetentionDays(body.retentionDays),
+      categories: normalizeCategories(body.categories),
+      runningTaskIds: getRunningTaskIds(),
+    });
+    events.emit('runs', { cleanup: true });
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '存储清理失败' });
+  }
+});
+
+app.post('/api/runs/cleanup', (req, res) => {
+  try {
+    const data = cleanupStorage(db, {
+      dryRun: false,
+      retentionDays: 30,
+      categories: ['runArtifacts'],
+      runningTaskIds: getRunningTaskIds(),
+      pruneOldRunRows: true,
+    });
+    events.emit('runs', { cleanup: true });
+    res.json({ ok: data.failures.length === 0, data });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '运行记录清理失败' });
+  }
 });
 
 app.get('/api/meta', (req, res) => {
