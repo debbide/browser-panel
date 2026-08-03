@@ -164,6 +164,7 @@ const browserRuntimeStatus = document.getElementById('browser-runtime-status');
 const brRuntimeStack = document.getElementById('br-runtime-stack');
 const brUsePlaywrightExtra = document.getElementById('br-use-playwright-extra');
 const brPluginPackages = document.getElementById('br-plugin-packages');
+const brExtensionDirs = document.getElementById('br-extension-dirs');
 const brSaveBtn = document.getElementById('br-save-btn');
 const brInstallBtn = document.getElementById('br-install-btn');
 const brInstallBrowserBtn = document.getElementById('br-install-browser-btn');
@@ -2686,6 +2687,7 @@ function collectBrowserRuntimeFormPayload() {
     usePlaywrightExtra: Boolean(brUsePlaywrightExtra?.checked),
     pluginPackages: normalizePluginPackagesForUi(brPluginPackages?.value),
     chromePath: String(brChromePath?.value || '').trim(),
+    extensionDirs: String(brExtensionDirs?.value || '').trim(),
   };
 }
 
@@ -2698,6 +2700,7 @@ async function loadBrowserRuntimeSettings() {
     if (brUsePlaywrightExtra) brUsePlaywrightExtra.checked = Boolean(data.usePlaywrightExtra);
     if (brPluginPackages) brPluginPackages.value = normalizePluginPackagesForUi(data.pluginPackages);
     if (brChromePath) brChromePath.value = data.chromePath || '';
+    if (brExtensionDirs) brExtensionDirs.value = data.extensionDirs || '';
     const packageCount = normalizePluginPackagesForUi(data.pluginPackages).split(',').map(s => s.trim()).filter(Boolean).length;
     const runtimeStack = data.runtimeStack || 'playwright';
     const stackLabel = runtimeStack === 'seleniumbase'
@@ -2709,7 +2712,8 @@ async function loadBrowserRuntimeSettings() {
     const chromeLabel = data.chromePath
       ? `Chrome: ${data.chromePath}${data.chromePathSource === 'panel' ? '（面板）' : '（默认）'}`
       : 'Chrome: 未设置';
-    setBrowserRuntimeStatus(`状态：${stackLabel}，${pluginStatus}，插件数：${packageCount}，${chromeLabel}`, '#94a3b8');
+    const extensionCount = String(data.extensionDirs || '').split(/[|;]/).map(s => s.trim()).filter(Boolean).length;
+    setBrowserRuntimeStatus(`状态：${stackLabel}，${pluginStatus}，插件包：${packageCount}，浏览器扩展：${extensionCount}，${chromeLabel}`, '#94a3b8');
   } catch (error) {
     setBrowserRuntimeStatus('状态：加载失败', '#ef4444');
     console.error('Failed to load browser runtime settings:', error);

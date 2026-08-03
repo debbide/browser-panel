@@ -513,6 +513,7 @@ async function openManualBrowser(profile) {
     BROWSER_RUNTIME_STACK: runtimeStack,
     BROWSER_USE_PLAYWRIGHT_EXTRA: usePlaywrightExtra ? '1' : '0',
     BROWSER_PLUGIN_PACKAGES: runtimeSettings.pluginPackages || '',
+    BROWSER_EXTENSIONS: runtimeSettings.extensionDirs || '',
     BROWSER_HEADLESS: 'false',
     BROWSER_WORK_DIR: workDir,
   };

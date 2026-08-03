@@ -33,6 +33,11 @@ def _build_driver():
     user_data_dir = (os.environ.get("BROWSER_USER_DATA_DIR") or "").strip()
     proxy = (os.environ.get("BROWSER_PROXY") or "").strip()
     locale = (os.environ.get("BROWSER_LOCALE") or "").strip()
+    extension_dirs = [
+        item.strip().strip("\"'")
+        for item in (os.environ.get("BROWSER_EXTENSIONS") or "").replace(";", "|").split("|")
+        if item.strip()
+    ]
 
     kwargs = {
         "headless": False,
@@ -47,6 +52,10 @@ def _build_driver():
     if locale:
         kwargs["locale_code"] = locale
         kwargs["chromium_arg"] = [f"--lang={locale}"]
+    if extension_dirs:
+        kwargs.setdefault("chromium_arg", []).append(
+            "--load-extension=" + ",".join(extension_dirs)
+        )
 
     try:
         return Driver(**kwargs)

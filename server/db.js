@@ -629,6 +629,13 @@ function normalizePackageList(value) {
     .join(',');
 }
 
+function normalizeExtensionDirs(value, fallback = '') {
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  if (!text) return String(fallback || '').trim();
+  if (/[\r\n\0]/.test(text)) return String(fallback || '').trim();
+  return text.slice(0, 4096);
+}
+
 function normalizeChromePath(value, fallback = '') {
   const text = String(value === undefined || value === null ? '' : value).trim();
   if (!text) return String(fallback || '').trim();
@@ -648,11 +655,19 @@ function getBrowserRuntimeSettings() {
     getSetting('browser_chrome_path'),
     (config.browser && config.browser.chromePath) || ''
   );
+  const extensionDirs = normalizeExtensionDirs(
+    getSetting('browser_extension_dirs'),
+    (config.browser && config.browser.extensions) || ''
+  );
   return {
     runtimeStack,
     usePlaywrightExtra,
     pluginPackages,
     chromePath,
+    extensionDirs,
+    extensionDirsSource: String(getSetting('browser_extension_dirs') || '').trim()
+      ? 'panel'
+      : 'env',
     chromePathSource: String(getSetting('browser_chrome_path') || '').trim()
       ? 'panel'
       : 'env',
@@ -667,6 +682,10 @@ function setBrowserRuntimeSettings(payload = {}) {
   if (payload.chromePath !== undefined) {
     const chromePath = normalizeChromePath(payload.chromePath, '');
     setSetting('browser_chrome_path', chromePath || null);
+  }
+  if (payload.extensionDirs !== undefined) {
+    const extensionDirs = normalizeExtensionDirs(payload.extensionDirs, '');
+    setSetting('browser_extension_dirs', extensionDirs || null);
   }
   setSetting('browser_runtime_stack', runtimeStack);
   setSetting('browser_use_playwright_extra', usePlaywrightExtra);

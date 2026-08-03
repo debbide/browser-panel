@@ -271,6 +271,21 @@
                   </div>
                 </div>
                 <div>
+                  <label class="field-label" for="br-extension-dirs">解压扩展目录（<code>|</code> 或 <code>;</code> 分隔）</label>
+                  <input
+                    type="text"
+                    id="br-extension-dirs"
+                    name="extensionDirs"
+                    placeholder="例如：/opt/extensions/ublock_lite|/opt/extensions/my_extension"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <div class="schedule-note" style="margin-top:4px;">
+                    每次启动都会加载，临时和固定配置均生效；目录内必须直接包含 <code>manifest.json</code>。
+                    固定配置中从应用商店安装的扩展也会保留。
+                  </div>
+                </div>
+                <div>
                   <label class="field-label" for="br-runtime-stack">运行栈</label>
                   <select id="br-runtime-stack" name="runtimeStack">
                     <option value="playwright">Playwright</option>
@@ -748,7 +763,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260803a"></script>
+  <script src="/app.js?v=20260803b"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

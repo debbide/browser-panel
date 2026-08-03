@@ -521,10 +521,15 @@ function buildEnv(task, screenshotPath) {
     try {
       const br = db.getBrowserRuntimeSettings();
       env.BROWSER_CHROME_PATH = (br && br.chromePath) || config.browser.chromePath;
+      env.BROWSER_EXTENSIONS = (br && br.extensionDirs) || '';
     } catch {
       env.BROWSER_CHROME_PATH = config.browser.chromePath;
+      env.BROWSER_EXTENSIONS = config.browser.extensions || '';
     }
     env.BROWSER_HEADLESS = 'false';
+    if (env.BROWSER_EXTENSIONS === undefined) {
+      env.BROWSER_EXTENSIONS = config.browser.extensions || '';
+    }
   }
   env.APP_ROOT = config.paths.root;
   env.LOGS_DIR = config.paths.logsDir;

@@ -873,6 +873,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['BROWSER_RUNTIME_STACK', runtimeStack],
     ['BROWSER_USE_PLAYWRIGHT_EXTRA', usePlaywrightExtra ? '1' : '0'],
     ['BROWSER_PLUGIN_PACKAGES', runtimeSettings.pluginPackages || ''],
+    ['BROWSER_EXTENSIONS', runtimeSettings.extensionDirs || ''],
     ['TASK_SCREENSHOT_PATH', workerScreenshotPath],
     ['TASK_SCREENSHOT_DIR', workerScreenshotDir],
     ['TASK_RESULT_PATH', resultPath],

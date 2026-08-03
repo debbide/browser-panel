@@ -18,6 +18,7 @@ const SYSTEM_PROTECTED_KEYS = new Set([
   'BROWSER_RUNTIME_STACK',
   'BROWSER_USE_PLAYWRIGHT_EXTRA',
   'BROWSER_PLUGIN_PACKAGES',
+  'BROWSER_EXTENSIONS',
   // Temp vs persistent must be system-owned so scripts (DP/SB) don't keep dirty dirs.
   'USE_TEMP_PROFILE',
   'use_temp_profile',
@@ -334,13 +335,18 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
     try {
       const br = db.getBrowserRuntimeSettings();
       system.BROWSER_CHROME_PATH = (br && br.chromePath) || config.browser.chromePath;
+      system.BROWSER_EXTENSIONS = (br && br.extensionDirs) || '';
     } catch {
       system.BROWSER_CHROME_PATH = config.browser.chromePath;
+      system.BROWSER_EXTENSIONS = config.browser.extensions || '';
     }
     system.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
     system.BROWSER_LOCALE = (profile && profile.locale) || config.browser.locale;
     system.BROWSER_TIMEZONE = (profile && profile.timezone_id) || config.browser.timezoneId;
     system.BROWSER_HEADLESS = 'false';
+    if (system.BROWSER_EXTENSIONS === undefined) {
+      system.BROWSER_EXTENSIONS = config.browser.extensions || '';
+    }
   }
 
   forceSystemKeys(env, system);

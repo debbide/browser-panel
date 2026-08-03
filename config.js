@@ -23,6 +23,7 @@ module.exports = {
     proxy: process.env.BROWSER_PROXY || '',
     locale: process.env.BROWSER_LOCALE || 'zh-CN',
     timezoneId: process.env.BROWSER_TIMEZONE || 'Asia/Shanghai',
+    extensions: process.env.BROWSER_EXTENSIONS || '',
     headless: false,
     viewport: { width: 1440, height: 900 },
     launchArgs: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
