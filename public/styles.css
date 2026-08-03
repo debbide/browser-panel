@@ -1120,6 +1120,93 @@ a:hover { text-decoration: underline; }
   min-height: 34px;
 }
 
+/* 运行日志抽屉 */
+.log-drawer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  opacity: 0;
+  background: rgba(2, 6, 23, 0.62);
+  backdrop-filter: blur(4px);
+  transition: opacity 0.25s ease;
+}
+.log-drawer-mask.open { opacity: 1; }
+.log-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 10030;
+  width: min(920px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(24px);
+  border-left: 1px solid var(--glass-border);
+  box-shadow: -30px 0 80px rgba(0, 0, 0, 0.45);
+}
+.log-drawer.open { transform: translateX(0); }
+.log-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.log-drawer-header h2 { margin: 0 0 4px; font-size: 21px; }
+.log-drawer-header p { margin: 0; }
+.log-drawer-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.18);
+}
+.log-mode-tabs, .log-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.log-mode-tabs .is-active { color: white; border-color: var(--accent-color); background: rgba(59, 130, 246, 0.2); }
+.log-tools input[type="search"] { flex: 1 1 220px; min-width: 160px; }
+.log-auto-scroll { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 13px; }
+.log-match-count { min-width: 64px; font-size: 12px; }
+.log-progress { min-height: 24px; padding: 5px 20px; font-size: 12px; border-bottom: 1px solid var(--glass-border); }
+.log-terminal {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 0 32px;
+  background: #070c16;
+  color: #dbe7ff;
+  font-family: var(--font-heading);
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+.log-line { display: flex; min-width: max-content; border-left: 2px solid transparent; }
+.log-line:hover { background: rgba(255, 255, 255, 0.035); }
+.log-line-no {
+  position: sticky;
+  left: 0;
+  width: 62px;
+  flex: 0 0 62px;
+  padding-right: 12px;
+  color: #53647e;
+  text-align: right;
+  user-select: none;
+  background: #070c16;
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.log-line-text { padding: 0 16px 0 12px; white-space: pre; }
+.log-line.is-error { color: #fca5a5; border-left-color: #ef4444; }
+.log-line.is-warn { color: #fde68a; border-left-color: #f59e0b; }
+.log-line.is-success { color: #86efac; border-left-color: #22c55e; }
+.log-line.is-match { background: rgba(59, 130, 246, 0.2); outline: 1px solid rgba(96, 165, 250, 0.35); }
+@media (max-width: 900px) {
+  .log-drawer { width: 100vw; }
+  .log-drawer-toolbar { padding: 12px; }
+  .log-tools { align-items: stretch; }
+  .log-tools input[type="search"] { flex-basis: 100%; }
+}
+
 /* Vision 通道：[角标|URL|Key|Model|测试/主通道/删] */
 .vision-channel-card {
   margin-bottom: 10px;

@@ -22,6 +22,7 @@ const {
 const remainingCallback = require('./conditions/types/remaining_callback');
 const { router: authRouter, requireAuth } = require('./auth');
 const events = require('./events');
+const logStream = require('./log-stream');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
@@ -80,6 +81,7 @@ async function executeTask(id, options = {}) {
     retryable: result.retryable ?? null,
     retry_reason: result.retryReason ?? null,
   });
+  logStream.end(run.log_path, { status: completedRun.status });
 
   if (refreshScheduleOnSuccess && completedRun.status === 'success') {
     refreshNextRunAfterSuccessfulManualRun(task);
@@ -1784,7 +1786,40 @@ app.get('/api/runs/:id/screenshots', (req, res) => {
   });
 });
 
-/** 读取任务运行日志：默认返回末尾 tail 行 + 摘要 section */
+/** 按字节读取 UTF-8 文本块，nextOffset 始终落在完整字符边界。 */
+function readUtf8Chunk(filePath, offset, limit, size) {
+  const start = Math.min(Math.max(Number(offset) || 0, 0), size);
+  const length = Math.min(Math.max(Number(limit) || 256 * 1024, 1024), 1024 * 1024, size - start);
+  if (!length) return { content: '', offset: start, nextOffset: start, eof: true };
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.allocUnsafe(length);
+  try {
+    fs.readSync(fd, buffer, 0, length, start);
+  } finally {
+    fs.closeSync(fd);
+  }
+  let validLength = length;
+  while (validLength > 0) {
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, validLength));
+      break;
+    } catch {
+      validLength -= 1;
+      if (length - validLength > 3) {
+        validLength = length;
+        break;
+      }
+    }
+  }
+  return {
+    content: buffer.subarray(0, validLength).toString('utf8'),
+    offset: start,
+    nextOffset: start + validLength,
+    eof: start + validLength >= size,
+  };
+}
+
+/** 读取任务运行日志：默认返回末尾 tail 行；offset/limit 用于分段加载全文。 */
 app.get('/api/runs/:id/log', (req, res) => {
   const run = db.getRun(Number(req.params.id));
   if (!run) return res.status(404).json({ message: 'Run not found' });
@@ -1796,18 +1831,31 @@ app.get('/api/runs/:id/log', (req, res) => {
 
   const full = String(req.query.full || '') === '1' || String(req.query.full || '') === 'true';
   const tail = Math.min(Math.max(Number(req.query.tail) || 120, 20), 2000);
+  const stat = fs.statSync(logPath);
+  const hasOffset = req.query.offset !== undefined;
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 256 * 1024, 1024), 1024 * 1024);
 
   let content = '';
+  let totalLines = 0;
+  let chunk = null;
   try {
-    content = fs.readFileSync(logPath, 'utf8');
+    if (hasOffset) {
+      chunk = readUtf8Chunk(logPath, offset, limit, stat.size);
+      content = chunk.content;
+      // Segment responses only need a stable byte range; line count is loaded lazily by the UI.
+      totalLines = null;
+    } else {
+      content = fs.readFileSync(logPath, 'utf8');
+      const allLines = content.split(/\r?\n/);
+      totalLines = allLines.length;
+      if (!full) content = allLines.slice(Math.max(0, totalLines - tail)).join('\n');
+    }
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to read log' });
   }
 
-  const allLines = content.split(/\r?\n/);
-  const totalLines = allLines.length;
-
-  // 抽出关键 section 摘要（TASK START / SUMMARY / DEBUG / RESULT 头几行）
+  // 摘要只从当前返回内容提取；分段模式不会为摘要再次扫描整个大文件。
   function extractSection(name, maxLines = 40) {
     const marker = `========== ${name} ==========`;
     const start = content.indexOf(marker);
@@ -1823,27 +1871,60 @@ app.get('/api/runs/:id/log', (req, res) => {
     extractSection('DEBUG SUMMARY', 20),
     extractSection('WORKER RESULT PAYLOAD', 40),
   ].filter(Boolean);
-
-  const tailLines = full ? allLines : allLines.slice(Math.max(0, totalLines - tail));
   const logHref = `/${String(logPath).replace(/^.*?(logs\/)/, '$1').replace(/\\/g, '/')}`;
+  const data = {
+    runId: run.id,
+    taskId: run.task_id,
+    status: run.status,
+    errorCode: run.error_code || null,
+    startedAt: run.started_at,
+    endedAt: run.ended_at,
+    logPath,
+    logUrl: logHref,
+    totalLines,
+    tail,
+    full,
+    summary: summaryParts.join('\n\n'),
+    content,
+    size: stat.size,
+  };
+  if (chunk) Object.assign(data, chunk);
+  res.json({ data });
+});
 
-  res.json({
-    data: {
-      runId: run.id,
-      taskId: run.task_id,
-      status: run.status,
-      errorCode: run.error_code || null,
-      startedAt: run.started_at,
-      endedAt: run.ended_at,
-      logPath,
-      logUrl: logHref,
-      totalLines,
-      tail,
-      full,
-      summary: summaryParts.join('\n\n'),
-      content: tailLines.join('\n'),
-    },
+app.get('/api/runs/:id/log/download', (req, res) => {
+  const run = db.getRun(Number(req.params.id));
+  if (!run) return res.status(404).json({ message: 'Run not found' });
+  if (!run.log_path || !fs.existsSync(run.log_path)) {
+    return res.status(404).json({ message: 'Log file not found' });
+  }
+  const abs = path.resolve(run.log_path);
+  const root = path.resolve(config.paths.logsDir);
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    return res.status(400).json({ message: 'Invalid log path' });
+  }
+  return res.download(abs, `run-${run.id}.log`);
+});
+
+app.get('/api/runs/:id/log/stream', (req, res) => {
+  const run = db.getRun(Number(req.params.id));
+  if (!run) return res.status(404).json({ message: 'Run not found' });
+  if (!run.log_path || !fs.existsSync(run.log_path)) {
+    return res.status(404).json({ message: 'Log file not found' });
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
   });
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  const size = fs.statSync(run.log_path).size;
+  const cleanup = logStream.subscribe(run.log_path, res, size);
+  if (run.status !== 'running') {
+    logStream.end(run.log_path, { status: run.status });
+  }
+  res.on('close', cleanup);
 });
 
 app.get('/api/tasks/:id/runs', (req, res) => {

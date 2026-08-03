@@ -12,6 +12,7 @@ const {
 } = require('./runtime/env-builder');
 const { evaluateLogSuccess } = require('./runtime/success-heuristics');
 const { ingestTaskResultCallback } = require('./runtime/callback-report');
+const logStream = require('./log-stream');
 
 const activeChildren = new Map();
 
@@ -124,7 +125,9 @@ function section(title) {
 }
 
 function appendLog(logPath, text) {
-  fs.appendFileSync(logPath, safeString(text), 'utf8');
+  const value = safeString(text);
+  fs.appendFileSync(logPath, value, 'utf8');
+  logStream.publish(logPath, value);
 }
 
 function isoNow() {

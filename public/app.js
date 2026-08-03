@@ -2180,7 +2180,6 @@ async function openRunScreenshots(runId) {
 }
 
 function runCard(run) {
-  const logHref = run.log_path ? `/${run.log_path.replace(/^.*?(logs\/)/, '$1')}` : '';
   const screenshotHref = run.screenshot_path ? `/${run.screenshot_path.replace(/^.*?(screenshots\/)/, '$1')}` : '';
   return `
     <div class="run-card run-card-history ${run.status === 'failed' ? 'run-failed' : 'run-success'}">
@@ -2196,7 +2195,6 @@ function runCard(run) {
       </div>
       <div class="row">
         <button type="button" class="linkish" data-open-run-log="${run.id}">\u67e5\u770b\u65e5\u5fd7</button>
-        ${logHref ? `<a href="${logHref}" target="_blank">\u539f\u6587</a>` : ''}
         ${screenshotHref ? `<a href="${screenshotHref}" target="_blank">\u67e5\u770b\u622a\u56fe</a>` : ''}
         <button type="button" class="linkish" data-open-run-shots="${run.id}">\u67e5\u770b\u622a\u56fe\u96c6</button>
       </div>
@@ -2204,93 +2202,162 @@ function runCard(run) {
     </div>`;
 }
 
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
+function logLineClass(line) {
+  if (/(ERROR|FAIL|\u5931\u8d25|\u5f02\u5e38)/i.test(line)) return 'is-error';
+  if (/(WARN|\u8b66\u544a)/i.test(line)) return 'is-warn';
+  if (/(SUCCESS|\u6210\u529f|\u5b8c\u6210)/i.test(line)) return 'is-success';
+  return '';
+}
+
 async function openRunLog(runId) {
   const res = await fetchJson(`/api/runs/${runId}/log?tail=150`);
   const data = res.data || {};
   const mask = document.createElement('div');
-  mask.className = 'modal-mask open';
-  mask.style.zIndex = '10020';
+  mask.className = 'log-drawer-mask';
+  const drawer = document.createElement('section');
+  drawer.className = 'log-drawer';
+  drawer.setAttribute('aria-label', `\u8fd0\u884c\u65e5\u5fd7 #${runId}`);
 
-  const dialog = document.createElement('section');
-  dialog.className = 'modal modal-wide open log-viewer-modal';
-  dialog.style.zIndex = '10030';
-  dialog.setAttribute('aria-hidden', 'false');
-
-  const statusLabel = prettyStatus(data.status || '-');
-  const errLabel = prettyErrorCode(data.errorCode) || data.errorCode || '-';
-  const summaryHtml = data.summary
-    ? `<pre class="log-viewer-summary">${escapeHtml(data.summary)}</pre>`
-    : '<p class="muted">\u65e0\u6458\u8981 section</p>';
-
-  dialog.innerHTML = `
-    <div class="modal-header">
-      <div>
-        <h2>\u8fd0\u884c\u65e5\u5fd7 #${runId}</h2>
-        <p class="muted">\u4efb\u52a1 #${data.taskId || '-'} \u00b7 ${escapeHtml(statusLabel)} \u00b7 ${escapeHtml(String(errLabel))} \u00b7 ${data.totalLines || 0} \u884c</p>
-      </div>
-      <button class="icon-btn" type="button" aria-label="\u5173\u95ed" data-close-log-modal>
-        <i data-lucide="x" class="icon-md"></i>
-      </button>
+  drawer.innerHTML = `
+    <div class="log-drawer-header">
+      <div><h2>\u8fd0\u884c\u65e5\u5fd7 #${runId}</h2><p class="muted" data-log-meta></p></div>
+      <button class="icon-btn" type="button" aria-label="\u5173\u95ed" data-close-log><i data-lucide="x" class="icon-md"></i></button>
     </div>
-    <div class="modal-body log-viewer-body">
-      <div class="log-viewer-toolbar row" style="gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+    <div class="log-drawer-toolbar">
+      <div class="log-mode-tabs">
+        <button type="button" class="alt is-active" data-log-mode="tail">\u672b\u5c3e ${data.tail || 150} \u884c</button>
         <button type="button" class="alt" data-log-mode="summary">\u6458\u8981</button>
-        <button type="button" class="alt" data-log-mode="tail">\u6700\u540e ${data.tail || 150} \u884c</button>
         <button type="button" class="alt" data-log-mode="full">\u5168\u6587</button>
-        ${data.logUrl ? `<a class="alt btn-with-icon" href="${escapeHtml(data.logUrl)}" target="_blank" style="display:inline-flex;align-items:center;">\u65b0\u7a97\u53e3</a>` : ''}
       </div>
-      <div class="log-viewer-panel" data-log-panel="summary">${summaryHtml}</div>
-      <div class="log-viewer-panel" data-log-panel="tail" hidden>
-        <pre class="log-viewer-pre">${escapeHtml(data.content || '')}</pre>
-      </div>
-      <div class="log-viewer-panel" data-log-panel="full" hidden>
-        <pre class="log-viewer-pre muted">\u70b9\u51fb\u300c\u5168\u6587\u300d\u52a0\u8f7d\u2026</pre>
+      <div class="log-tools">
+        <input type="search" placeholder="\u641c\u7d22\u65e5\u5fd7\u2026" data-log-search />
+        <span class="muted log-match-count" data-log-match-count></span>
+        <label class="log-auto-scroll"><input type="checkbox" data-log-auto checked /> \u81ea\u52a8\u6eda\u52a8</label>
+        <button type="button" class="alt" data-copy-log><i data-lucide="copy" class="icon-sm"></i>\u590d\u5236</button>
+        <a class="alt btn-with-icon" href="/api/runs/${runId}/log/download" download><i data-lucide="download" class="icon-sm"></i>\u4e0b\u8f7d</a>
       </div>
     </div>
+    <div class="log-progress muted" data-log-progress></div>
+    <div class="log-terminal" data-log-terminal></div>
   `;
 
-  const close = () => {
-    mask.remove();
-    dialog.remove();
+  const terminal = drawer.querySelector('[data-log-terminal]');
+  const meta = drawer.querySelector('[data-log-meta]');
+  const progress = drawer.querySelector('[data-log-progress]');
+  const search = drawer.querySelector('[data-log-search]');
+  const matchCount = drawer.querySelector('[data-log-match-count]');
+  const autoScroll = drawer.querySelector('[data-log-auto]');
+  let mode = 'tail';
+  let rawText = data.content || '';
+  let fullOffset = 0;
+  let fullEof = false;
+  let loadingChunk = false;
+  let eventSource = null;
+
+  const updateMeta = (status = data.status) => {
+    meta.textContent = `\u4efb\u52a1 #${data.taskId || '-'} \u00b7 ${prettyStatus(status || '-')} \u00b7 ${data.totalLines || 0} \u884c`;
   };
+
+  function render() {
+    const query = search.value.trim().toLowerCase();
+    const lines = rawText.replace(/\n$/, '').split('\n');
+    let matches = 0;
+    terminal.innerHTML = lines.map((line, index) => {
+      const match = query && line.toLowerCase().includes(query);
+      if (match) matches += 1;
+      return `<div class="log-line ${logLineClass(line)}${match ? ' is-match' : ''}"><span class="log-line-no">${index + 1}</span><span class="log-line-text">${escapeHtml(line) || ' '}</span></div>`;
+    }).join('');
+    matchCount.textContent = query ? `${matches} \u4e2a\u5339\u914d` : '';
+    if (autoScroll.checked) terminal.scrollTop = terminal.scrollHeight;
+  }
+
+  async function loadNextChunk(reset = false) {
+    if (loadingChunk || (!reset && fullEof)) return;
+    loadingChunk = true;
+    if (reset) { fullOffset = 0; fullEof = false; rawText = ''; }
+    try {
+      const chunkRes = await fetchJson(`/api/runs/${runId}/log?offset=${fullOffset}&limit=${256 * 1024}`);
+      const chunk = chunkRes.data || {};
+      rawText += chunk.content || '';
+      fullOffset = Number(chunk.nextOffset || fullOffset);
+      fullEof = Boolean(chunk.eof);
+      progress.textContent = `\u5df2\u52a0\u8f7d ${formatBytes(fullOffset)} / ${formatBytes(chunk.size || 0)}${fullEof ? ' \u00b7 \u5df2\u5b8c\u6210' : ''}`;
+      render();
+    } finally {
+      loadingChunk = false;
+    }
+  }
+
+  const close = () => {
+    if (eventSource) eventSource.close();
+    document.removeEventListener('keydown', onKey);
+    drawer.classList.remove('open'); mask.classList.remove('open');
+    setTimeout(() => { drawer.remove(); mask.remove(); }, 260);
+  };
+  const onKey = (event) => { if (event.key === 'Escape') close(); };
 
   document.body.appendChild(mask);
-  document.body.appendChild(dialog);
+  document.body.appendChild(drawer);
+  requestAnimationFrame(() => { mask.classList.add('open'); drawer.classList.add('open'); });
   mask.addEventListener('click', close);
-  dialog.querySelector('[data-close-log-modal]').addEventListener('click', close);
+  drawer.querySelector('[data-close-log]').addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
 
-  const panels = {
-    summary: dialog.querySelector('[data-log-panel="summary"]'),
-    tail: dialog.querySelector('[data-log-panel="tail"]'),
-    full: dialog.querySelector('[data-log-panel="full"]'),
-  };
-  let fullLoaded = false;
+  drawer.querySelectorAll('[data-log-mode]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      mode = button.dataset.logMode;
+      drawer.querySelectorAll('[data-log-mode]').forEach((item) => item.classList.toggle('is-active', item === button));
+      progress.textContent = '';
+      if (mode === 'summary') rawText = data.summary || '\u6ca1\u6709\u53ef\u7528\u6458\u8981\u3002';
+      else if (mode === 'tail') rawText = data.content || '';
+      else await loadNextChunk(true);
+      render();
+    });
+  });
+  search.addEventListener('input', render);
+  drawer.querySelector('[data-copy-log]').addEventListener('click', async () => {
+    try { await copyText(rawText); toast('\u65e5\u5fd7\u5df2\u590d\u5236', 'success'); }
+    catch { toast('\u590d\u5236\u5931\u8d25\uff0c\u8bf7\u624b\u52a8\u9009\u62e9\u65e5\u5fd7', 'error'); }
+  });
+  terminal.addEventListener('scroll', () => {
+    const nearBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 40;
+    if (!nearBottom) autoScroll.checked = false;
+    if (nearBottom && mode === 'full' && !fullEof) loadNextChunk();
+  });
 
-  function showPanel(mode) {
-    Object.keys(panels).forEach((key) => {
-      if (panels[key]) panels[key].hidden = key !== mode;
+  if (data.status === 'running') {
+    eventSource = new EventSource(`/api/runs/${runId}/log/stream`);
+    eventSource.addEventListener('log', (event) => {
+      if (mode !== 'tail') return;
+      const payload = JSON.parse(event.data || '{}');
+      rawText += payload.text || '';
+      render();
+    });
+    eventSource.addEventListener('end', (event) => {
+      const payload = JSON.parse(event.data || '{}');
+      updateMeta(payload.status || 'success');
+      eventSource.close();
     });
   }
 
-  dialog.querySelectorAll('[data-log-mode]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const mode = btn.getAttribute('data-log-mode');
-      if (mode === 'full' && !fullLoaded) {
-        try {
-          const fullRes = await fetchJson(`/api/runs/${runId}/log?full=1`);
-          const fullData = fullRes.data || {};
-          panels.full.innerHTML = `<pre class="log-viewer-pre">${escapeHtml(fullData.content || '')}</pre>`;
-          fullLoaded = true;
-        } catch (error) {
-          toast(error.message || '\u52a0\u8f7d\u5168\u6587\u5931\u8d25', 'error');
-          return;
-        }
-      }
-      showPanel(mode);
-    });
-  });
-
-  if (window.lucide) window.lucide.createIcons({ root: dialog });
+  updateMeta();
+  render();
+  if (window.lucide) window.lucide.createIcons({ root: drawer });
 }
 
 async function showTaskRuns(id) {
