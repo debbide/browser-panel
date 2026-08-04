@@ -46,6 +46,8 @@ have apt-get || die "this installer requires Ubuntu/Debian with apt-get"
 # ---------------------------------------------------------------------------
 log "apt update + base packages"
 apt-get update -y
+# Required packages must fail loudly. A previous `|| true` swallowed one missing
+# distro package and let the script continue without python3-pip.
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
@@ -75,15 +77,13 @@ apt-get install -y --no-install-recommends \
   libxcb-dri3-0 \
   libdrm2 \
   libgbm1 \
-  libasound2 \
   libxcomposite1 \
   libxdamage1 \
   libxrandr2 \
   libpango-1.0-0 \
   libcups2 \
   unzip \
-  procps \
-  || true
+  procps
 
 # ---------------------------------------------------------------------------
 # Node.js + npm (system-wide; systemd must find node without nvm)
@@ -124,8 +124,14 @@ have python3 || die "python3 installation failed"
 python3 -m pip --version >/dev/null 2>&1 || die "python3-pip installation failed"
 log "Python $(python3 --version 2>&1) + $(python3 -m pip --version | cut -d' ' -f1-2) ready"
 
-# Some distros split libasound
-apt-get install -y --no-install-recommends libasound2t64 2>/dev/null || true
+# Ubuntu 24.04 renamed libasound2 to libasound2t64; older releases still use
+# libasound2. Install whichever package exists without weakening the required
+# base-package transaction above.
+if apt-cache show libasound2t64 >/dev/null 2>&1; then
+  apt-get install -y --no-install-recommends libasound2t64
+else
+  apt-get install -y --no-install-recommends libasound2
+fi
 
 # ---------------------------------------------------------------------------
 # Google Chrome / Chromium (single system browser) — no Playwright browser download
