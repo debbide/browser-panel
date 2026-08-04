@@ -28,6 +28,9 @@ tasks/**
 !tasks/example.py
 !tasks/lib/
 !tasks/lib/**
+# The tasks/lib/** re-include above out-ranks the generic __pycache__ rule,
+# so bytecode under it has to be excluded again explicitly.
+tasks/lib/**/__pycache__/
 
 # Optional local tools not part of panel runtime
 # automa-recorder/   # uncomment to ignore if not publishing
