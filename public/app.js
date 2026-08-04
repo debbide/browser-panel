@@ -2435,8 +2435,10 @@ function openTaskRunsModal(id, runs) {
   if (window.lucide) window.lucide.createIcons({ root: dialog });
 }
 
-function latestRunSummary(taskId) {
-  const run = lastRunsByTask.get(taskId);
+// task.latest_run 是服务端按任务单独查出来的，跨度多久都在；lastRunsByTask 只是
+// /api/runs 最近 100 条的兜底，低频任务会被别的任务挤出这个窗口。
+function latestRunSummary(taskId, task = null) {
+  const run = (task && task.latest_run) || lastRunsByTask.get(taskId);
   if (!run) return { status: '未运行', detail: '还没有运行记录', className: 'idle' };
   return {
     status: prettyStatus(run.status),
@@ -2449,7 +2451,7 @@ function taskCard(task) {
   // stoppingTaskIds 优先：点过停止就立刻按"未运行"渲染，不等服务端确认
   const isRunning = !stoppingTaskIds.has(task.id)
     && (runningTaskIds.has(task.id) || Boolean(task.is_running));
-  const latest = latestRunSummary(task.id);
+  const latest = latestRunSummary(task.id, task);
   const isPersistent = Boolean(Number(task.use_persistent));
   const profileName = (() => {
     if (!task.browser_profile_id) return isPersistent ? '默认配置' : '每次全新';

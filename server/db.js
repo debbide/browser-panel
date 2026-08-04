@@ -543,6 +543,20 @@ function listRunsByTask(taskId, limit = 20) {
   return db.prepare('SELECT * FROM task_runs WHERE task_id = ? ORDER BY id DESC LIMIT ?').all(taskId, limit);
 }
 
+/**
+ * Latest run per task, regardless of how long ago it happened.
+ * The task cards used to read this out of listRuns(100), so a task that ran
+ * days ago would fall out of that global window and render as "未运行" even
+ * though listRunsByTask still had its history.
+ */
+function listLatestRunPerTask() {
+  return db.prepare(`
+    SELECT r.* FROM task_runs r
+    JOIN (SELECT task_id, MAX(id) AS id FROM task_runs GROUP BY task_id) latest
+      ON latest.id = r.id
+  `).all();
+}
+
 function getSetting(key) {
   const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
   return row ? row.value : null;
@@ -987,6 +1001,7 @@ module.exports = {
   getRun,
   listRuns,
   listRunsByTask,
+  listLatestRunPerTask,
   getSetting,
   setSetting,
   getTelegramSettings,

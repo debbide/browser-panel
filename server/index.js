@@ -1136,9 +1136,15 @@ app.put('/api/browser-profiles/:id/env', (req, res) => {
 });
 
 app.get('/api/tasks', (req, res) => {
+  // Latest run is looked up per task, not sliced out of the global recent-runs
+  // window — otherwise an infrequent task drops off the list and its card
+  // regresses to "未运行" while its history is still intact.
+  const latestByTask = new Map();
+  for (const run of db.listLatestRunPerTask()) latestByTask.set(run.task_id, run);
   const tasks = db.listTasks().map((task) => ({
     ...decorateTaskForApi(task),
     is_running: isTaskRunning(task.id),
+    latest_run: latestByTask.get(task.id) || null,
   }));
   res.json({ data: tasks });
 });
