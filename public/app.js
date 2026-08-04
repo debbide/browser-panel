@@ -2249,29 +2249,30 @@ function logLineClass(line) {
 async function openRunLog(runId) {
   const res = await fetchJson(`/api/runs/${runId}/log?tail=150`);
   const data = res.data || {};
+  const tailLimit = Number(data.tail) || 150;
   const mask = document.createElement('div');
   mask.className = 'log-drawer-mask';
   const drawer = document.createElement('section');
   drawer.className = 'log-drawer';
-  drawer.setAttribute('aria-label', `\u8fd0\u884c\u65e5\u5fd7 #${runId}`);
+  drawer.setAttribute('aria-label', `运行日志 #${runId}`);
 
   drawer.innerHTML = `
     <div class="log-drawer-header">
-      <div><h2>\u8fd0\u884c\u65e5\u5fd7 #${runId}</h2><p class="muted" data-log-meta></p></div>
-      <button class="icon-btn" type="button" aria-label="\u5173\u95ed" data-close-log><i data-lucide="x" class="icon-md"></i></button>
+      <div><h2>运行日志 #${runId}</h2><p class="muted" data-log-meta></p></div>
+      <button class="icon-btn" type="button" aria-label="关闭" data-close-log><i data-lucide="x" class="icon-md"></i></button>
     </div>
     <div class="log-drawer-toolbar">
       <div class="log-mode-tabs">
-        <button type="button" class="alt is-active" data-log-mode="tail">\u672b\u5c3e ${data.tail || 150} \u884c</button>
-        <button type="button" class="alt" data-log-mode="summary">\u6458\u8981</button>
-        <button type="button" class="alt" data-log-mode="full">\u5168\u6587</button>
+        <button type="button" class="alt is-active" data-log-mode="tail">末尾 ${tailLimit} 行</button>
+        <button type="button" class="alt" data-log-mode="summary">摘要</button>
+        <button type="button" class="alt" data-log-mode="full">全文</button>
       </div>
       <div class="log-tools">
-        <input type="search" placeholder="\u641c\u7d22\u65e5\u5fd7\u2026" data-log-search />
+        <input type="search" placeholder="搜索日志…" data-log-search />
         <span class="muted log-match-count" data-log-match-count></span>
-        <label class="log-auto-scroll"><input type="checkbox" data-log-auto checked /> \u81ea\u52a8\u6eda\u52a8</label>
-        <button type="button" class="alt" data-copy-log><i data-lucide="copy" class="icon-sm"></i>\u590d\u5236</button>
-        <a class="alt btn-with-icon" href="/api/runs/${runId}/log/download" download><i data-lucide="download" class="icon-sm"></i>\u4e0b\u8f7d</a>
+        <label class="log-auto-scroll"><input type="checkbox" data-log-auto checked /> 自动滚动</label>
+        <button type="button" class="alt" data-copy-log><i data-lucide="copy" class="icon-sm"></i>复制</button>
+        <a class="alt btn-with-icon" href="/api/runs/${runId}/log/download" download><i data-lucide="download" class="icon-sm"></i>下载</a>
       </div>
     </div>
     <div class="log-progress muted" data-log-progress></div>
@@ -2284,48 +2285,199 @@ async function openRunLog(runId) {
   const search = drawer.querySelector('[data-log-search]');
   const matchCount = drawer.querySelector('[data-log-match-count]');
   const autoScroll = drawer.querySelector('[data-log-auto]');
+
   let mode = 'tail';
-  let rawText = data.content || '';
+  let tailText = data.content || '';
+  let summaryText = data.summary || '没有可用摘要。';
+  let fullText = '';
   let fullOffset = 0;
   let fullEof = false;
+  let fullKnownSize = Number(data.size) || 0;
   let loadingChunk = false;
   let eventSource = null;
+  let cursor = Number(data.size) || 0;
+  let targetSize = cursor;
+  let draining = false;
+  let drainPromise = null;
+  let finalizing = false;
+  let closed = false;
+  let currentStatus = data.status || '-';
+  let totalLines = Number(data.totalLines) || 0;
+  let unseenOutput = false;
+  let programmaticScroll = false;
 
-  const updateMeta = (status = data.status) => {
-    meta.textContent = `\u4efb\u52a1 #${data.taskId || '-'} \u00b7 ${prettyStatus(status || '-')} \u00b7 ${data.totalLines || 0} \u884c`;
+  function trimTail(text) {
+    const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const endsWithNewline = normalized.endsWith('\n');
+    const lines = normalized.split('\n');
+    if (endsWithNewline) lines.pop();
+    const kept = lines.slice(Math.max(0, lines.length - tailLimit));
+    return kept.join('\n') + (endsWithNewline && kept.length ? '\n' : '');
+  }
+
+  tailText = trimTail(tailText);
+
+  const activeText = () => {
+    if (mode === 'summary') return summaryText;
+    if (mode === 'full') return fullText;
+    return tailText;
   };
 
-  function render() {
+  const nearBottom = () => terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 40;
+
+  function updateMeta(status = currentStatus) {
+    currentStatus = status || currentStatus;
+    meta.textContent = `任务 #${data.taskId || '-'} · ${prettyStatus(currentStatus || '-')} · ${totalLines || 0} 行`;
+  }
+
+  function updateProgress(message = '') {
+    if (message) {
+      progress.textContent = message;
+      return;
+    }
+    if (unseenOutput && !autoScroll.checked) {
+      progress.textContent = '有新日志 · 勾选自动滚动或滚到底部查看';
+      return;
+    }
+    if (mode === 'full') {
+      progress.textContent = `已加载 ${formatBytes(fullOffset)} / ${formatBytes(fullKnownSize)}${fullEof ? ' · 已到当前末尾' : ''}`;
+      return;
+    }
+    progress.textContent = draining ? `正在同步日志… ${formatBytes(cursor)} / ${formatBytes(targetSize)}` : '';
+  }
+
+  function render({ forceFollow = false } = {}) {
+    if (closed) return;
+    const shouldFollow = forceFollow || (autoScroll.checked && nearBottom());
+    const rawText = activeText();
     const query = search.value.trim().toLowerCase();
-    const lines = rawText.replace(/\n$/, '').split('\n');
+    const visible = rawText.replace(/\n$/, '');
+    const lines = visible ? visible.split('\n') : [''];
     let matches = 0;
     terminal.innerHTML = lines.map((line, index) => {
       const match = query && line.toLowerCase().includes(query);
       if (match) matches += 1;
       return `<div class="log-line ${logLineClass(line)}${match ? ' is-match' : ''}"><span class="log-line-no">${index + 1}</span><span class="log-line-text">${escapeHtml(line) || ' '}</span></div>`;
     }).join('');
-    matchCount.textContent = query ? `${matches} \u4e2a\u5339\u914d` : '';
-    if (autoScroll.checked) terminal.scrollTop = terminal.scrollHeight;
+    matchCount.textContent = query ? `${matches} 个匹配` : '';
+    if (shouldFollow) {
+      programmaticScroll = true;
+      terminal.scrollTop = terminal.scrollHeight;
+      requestAnimationFrame(() => { programmaticScroll = false; });
+      unseenOutput = false;
+    }
+    updateProgress();
+  }
+
+  function appendTail(text) {
+    if (!text) return;
+    tailText = trimTail(tailText + text);
+    unseenOutput = mode !== 'tail' || !autoScroll.checked || !nearBottom();
+    if (mode === 'tail') render();
+    else updateProgress();
   }
 
   async function loadNextChunk(reset = false) {
     if (loadingChunk || (!reset && fullEof)) return;
     loadingChunk = true;
-    if (reset) { fullOffset = 0; fullEof = false; rawText = ''; }
+    if (reset) { fullOffset = 0; fullEof = false; fullText = ''; }
     try {
       const chunkRes = await fetchJson(`/api/runs/${runId}/log?offset=${fullOffset}&limit=${256 * 1024}`);
+      if (closed) return;
       const chunk = chunkRes.data || {};
-      rawText += chunk.content || '';
-      fullOffset = Number(chunk.nextOffset || fullOffset);
-      fullEof = Boolean(chunk.eof);
-      progress.textContent = `\u5df2\u52a0\u8f7d ${formatBytes(fullOffset)} / ${formatBytes(chunk.size || 0)}${fullEof ? ' \u00b7 \u5df2\u5b8c\u6210' : ''}`;
-      render();
+      const nextOffset = Number(chunk.nextOffset);
+      if (Number.isFinite(nextOffset) && nextOffset > fullOffset) {
+        fullText += chunk.content || '';
+        fullOffset = nextOffset;
+      }
+      fullKnownSize = Math.max(fullKnownSize, Number(chunk.size) || 0);
+      fullEof = Boolean(chunk.eof) && fullOffset >= fullKnownSize;
+      if (mode === 'full') render();
     } finally {
       loadingChunk = false;
+      updateProgress();
+    }
+  }
+
+  async function drainToTarget() {
+    if (closed) return;
+    if (drainPromise) return drainPromise;
+    draining = true;
+    drainPromise = (async () => {
+      updateProgress();
+      try {
+        while (!closed && cursor < targetSize) {
+          const requestedTarget = targetSize;
+          const chunkRes = await fetchJson(`/api/runs/${runId}/log?offset=${cursor}&limit=${256 * 1024}`);
+          if (closed) return;
+          const chunk = chunkRes.data || {};
+          const nextOffset = Number(chunk.nextOffset);
+          if (!Number.isFinite(nextOffset) || nextOffset <= cursor) {
+            targetSize = Math.min(targetSize, Number(chunk.size) || requestedTarget);
+            break;
+          }
+          appendTail(chunk.content || '');
+          cursor = nextOffset;
+          fullKnownSize = Math.max(fullKnownSize, Number(chunk.size) || targetSize);
+          if (fullOffset < fullKnownSize) fullEof = false;
+          if (mode === 'full' && autoScroll.checked && !loadingChunk && fullOffset < fullKnownSize) {
+            loadNextChunk();
+          }
+          updateProgress();
+        }
+      } catch (error) {
+        if (!closed) progress.textContent = error.message || '日志同步失败，等待重连';
+      } finally {
+        draining = false;
+        drainPromise = null;
+        updateProgress();
+      }
+    })();
+    return drainPromise;
+  }
+
+  function requestCatchUp(size) {
+    const nextSize = Number(size);
+    if (Number.isFinite(nextSize) && nextSize > targetSize) {
+      targetSize = nextSize;
+      fullKnownSize = Math.max(fullKnownSize, nextSize);
+      if (fullOffset < fullKnownSize) fullEof = false;
+    }
+    if (cursor < targetSize) return drainToTarget();
+    return Promise.resolve();
+  }
+
+  async function finalize(payload = {}) {
+    if (finalizing || closed) return;
+    finalizing = true;
+    try {
+      const finalSize = Number(payload.size);
+      if (Number.isFinite(finalSize)) {
+        targetSize = Math.max(targetSize, finalSize);
+        await drainToTarget();
+      }
+      const finalRes = await fetchJson(`/api/runs/${runId}/log?tail=${tailLimit}`);
+      if (closed) return;
+      const finalData = finalRes.data || {};
+      tailText = trimTail(finalData.content || tailText);
+      summaryText = finalData.summary || '没有可用摘要。';
+      cursor = Number(finalData.size) || cursor;
+      targetSize = Math.max(targetSize, cursor);
+      fullKnownSize = Math.max(fullKnownSize, cursor);
+      totalLines = Number(finalData.totalLines) || totalLines;
+      currentStatus = payload.status || finalData.status || currentStatus;
+      updateMeta();
+      render();
+      if (eventSource) eventSource.close();
+    } catch (error) {
+      if (!closed) progress.textContent = error.message || '最终日志同步失败，可关闭后重新打开';
+    } finally {
+      finalizing = false;
     }
   }
 
   const close = () => {
+    closed = true;
     if (eventSource) eventSource.close();
     document.removeEventListener('keydown', onKey);
     drawer.classList.remove('open'); mask.classList.remove('open');
@@ -2344,44 +2496,58 @@ async function openRunLog(runId) {
     button.addEventListener('click', async () => {
       mode = button.dataset.logMode;
       drawer.querySelectorAll('[data-log-mode]').forEach((item) => item.classList.toggle('is-active', item === button));
-      progress.textContent = '';
-      if (mode === 'summary') rawText = data.summary || '\u6ca1\u6709\u53ef\u7528\u6458\u8981\u3002';
-      else if (mode === 'tail') rawText = data.content || '';
-      else await loadNextChunk(true);
-      render();
+      if (mode === 'full' && !fullText) await loadNextChunk(true);
+      render({ forceFollow: autoScroll.checked });
     });
   });
-  search.addEventListener('input', render);
+  search.addEventListener('input', () => render());
   drawer.querySelector('[data-copy-log]').addEventListener('click', async () => {
-    try { await copyText(rawText); toast('\u65e5\u5fd7\u5df2\u590d\u5236', 'success'); }
-    catch { toast('\u590d\u5236\u5931\u8d25\uff0c\u8bf7\u624b\u52a8\u9009\u62e9\u65e5\u5fd7', 'error'); }
+    try { await copyText(activeText()); toast('日志已复制', 'success'); }
+    catch { toast('复制失败，请手动选择日志', 'error'); }
+  });
+  autoScroll.addEventListener('change', () => {
+    if (autoScroll.checked) {
+      unseenOutput = false;
+      render({ forceFollow: true });
+    } else {
+      updateProgress();
+    }
   });
   terminal.addEventListener('scroll', () => {
-    const nearBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 40;
-    if (!nearBottom) autoScroll.checked = false;
-    if (nearBottom && mode === 'full' && !fullEof) loadNextChunk();
+    const atBottom = nearBottom();
+    if (!programmaticScroll && !atBottom) autoScroll.checked = false;
+    if (atBottom) {
+      autoScroll.checked = true;
+      unseenOutput = false;
+      updateProgress();
+      if (mode === 'full' && !fullEof) loadNextChunk();
+    }
   });
 
-  if (data.status === 'running') {
-    eventSource = new EventSource(`/api/runs/${runId}/log/stream`);
-    eventSource.addEventListener('log', (event) => {
-      if (mode !== 'tail') return;
-      const payload = JSON.parse(event.data || '{}');
-      rawText += payload.text || '';
-      render();
+  // 即使初始快照显示任务已结束也建立一次连接：服务端会发 ready + end，
+  // 这样恰好在快照后结束的任务仍能完成最终对账。
+  eventSource = new EventSource(`/api/runs/${runId}/log/stream?offset=${cursor}`);
+  eventSource.addEventListener('ready', (event) => {
+    const payload = JSON.parse(event.data || '{}');
+    requestCatchUp(payload.size).catch((error) => {
+      if (!closed) progress.textContent = error.message || '日志同步失败，等待重连';
     });
-    eventSource.addEventListener('end', (event) => {
-      const payload = JSON.parse(event.data || '{}');
-      updateMeta(payload.status || 'success');
-      eventSource.close();
+  });
+  eventSource.addEventListener('log', (event) => {
+    const payload = JSON.parse(event.data || '{}');
+    requestCatchUp(payload.size).catch((error) => {
+      if (!closed) progress.textContent = error.message || '日志同步失败，等待重连';
     });
-  }
+  });
+  eventSource.addEventListener('end', (event) => {
+    const payload = JSON.parse(event.data || '{}');
+    finalize(payload);
+  });
 
   updateMeta();
-  render();
+  render({ forceFollow: true });
   if (window.lucide) window.lucide.createIcons({ root: drawer });
 }
-
 async function showTaskRuns(id) {
   const data = await fetchJson(`/api/tasks/${id}/runs`);
   openTaskRunsModal(id, data.data || []);

@@ -1856,6 +1856,7 @@ app.get('/api/runs/:id/log', (req, res) => {
   let content = '';
   let totalLines = 0;
   let chunk = null;
+  let snapshotSize = stat.size;
   try {
     if (hasOffset) {
       chunk = readUtf8Chunk(logPath, offset, limit, stat.size);
@@ -1863,10 +1864,14 @@ app.get('/api/runs/:id/log', (req, res) => {
       // Segment responses only need a stable byte range; line count is loaded lazily by the UI.
       totalLines = null;
     } else {
-      content = fs.readFileSync(logPath, 'utf8');
-      const allLines = content.split(/\r?\n/);
+      // content / line count / size 必须来自同一个快照。若先 stat 再 readFile，
+      // 并发追加会使正文比返回的 size 更新，客户端字节游标随后就会重复读取。
+      const snapshot = fs.readFileSync(logPath);
+      snapshotSize = snapshot.length;
+      const snapshotText = snapshot.toString('utf8');
+      const allLines = snapshotText.split(/\r?\n/);
       totalLines = allLines.length;
-      if (!full) content = allLines.slice(Math.max(0, totalLines - tail)).join('\n');
+      content = full ? snapshotText : allLines.slice(Math.max(0, totalLines - tail)).join('\n');
     }
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to read log' });
@@ -1903,7 +1908,7 @@ app.get('/api/runs/:id/log', (req, res) => {
     full,
     summary: summaryParts.join('\n\n'),
     content,
-    size: stat.size,
+    size: snapshotSize,
   };
   if (chunk) Object.assign(data, chunk);
   res.json({ data });
@@ -1936,10 +1941,13 @@ app.get('/api/runs/:id/log/stream', (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
-  const size = fs.statSync(run.log_path).size;
-  const cleanup = logStream.subscribe(run.log_path, res, size);
-  if (run.status !== 'running') {
-    logStream.end(run.log_path, { status: run.status });
+  if (res.socket && typeof res.socket.setNoDelay === 'function') res.socket.setNoDelay(true);
+  const cleanup = logStream.subscribe(run.log_path, res);
+  // subscribe 后重新读状态，封住“初始查询仍 running、订阅前任务刚结束”的窗口。
+  // 这段是同步执行：若完成发生在重读之后，全局 logStream.end 会命中该客户端。
+  const latestRun = db.getRun(run.id) || run;
+  if (latestRun.status !== 'running') {
+    logStream.endClient(run.log_path, res, { status: latestRun.status });
   }
   res.on('close', cleanup);
 });

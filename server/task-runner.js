@@ -136,7 +136,7 @@ function section(title) {
 function appendLog(logPath, text) {
   const value = safeString(text);
   fs.appendFileSync(logPath, value, 'utf8');
-  logStream.publish(logPath, value);
+  logStream.publish(logPath);
 }
 
 function isoNow() {
