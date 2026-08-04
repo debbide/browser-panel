@@ -389,16 +389,46 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# System Python packages (NO venv) — forced system-wide
-# Covers: SeleniumBase, DrissionPage, Playwright(py lib only),
-#         pyrogram, Pillow, speech audio, requests, ...
+# System Python packages (NO venv)
+#
+# Ubuntu 23.04+ marks the system interpreter as externally managed (PEP 668),
+# hence --break-system-packages. Some apt-owned packages (notably urllib3 /
+# requests and their transitive dependencies) cannot be uninstalled cleanly by
+# pip. --ignore-installed tells pip to install the requested versions under
+# /usr/local without removing apt's copies or deleting apt package metadata.
+# This host is intentionally a dedicated browser-task runtime.
 # ---------------------------------------------------------------------------
-log "pip system packages (break-system-packages)"
-python3 -m pip install --break-system-packages -U pip setuptools wheel || \
-  python3 -m pip install -U pip setuptools wheel
+log "pip system packages (PEP 668 compatible)"
 
-# Core stacks
-python3 -m pip install --break-system-packages -U \
+PIP_INSTALL=(
+  python3 -m pip install
+  --break-system-packages
+  --ignore-installed
+  --disable-pip-version-check
+  --no-cache-dir
+)
+
+# Do not upgrade the system pip itself: on Ubuntu 24.04 it is apt-owned, and
+# replacing it adds no value here. setuptools / wheel are regular build inputs.
+"${PIP_INSTALL[@]}" -U setuptools wheel
+
+# Include panel requirement files in the same resolver run when the panel is
+# already present. (On a clean VPS this script may run before bp.sh, so the
+# explicit core list below remains authoritative.)
+REQUIREMENT_ARGS=()
+for requirement_file in \
+  "$ROOT/requirements-dp.txt" \
+  "$ROOT/requirements-sb.txt" \
+  "$ROOT/requirements-playwright.txt"; do
+  if [[ -f "$requirement_file" ]]; then
+    REQUIREMENT_ARGS+=(-r "$requirement_file")
+  fi
+done
+
+# Core stacks. Keep this one command authoritative: if it fails, the installer
+# must fail too instead of printing "done" with a half-installed runtime.
+"${PIP_INSTALL[@]}" -U \
+  "${REQUIREMENT_ARGS[@]}" \
   "requests>=2.31.0" \
   "urllib3>=2.0.0" \
   "Pillow>=10.0.0" \
@@ -410,27 +440,43 @@ python3 -m pip install --break-system-packages -U \
   "TgCrypto>=1.2.0" \
   "SpeechRecognition>=3.10.0" \
   "pydub>=0.25.0" \
-  "numpy>=1.24.0" \
-  || python3 -m pip install -U \
-    requests urllib3 Pillow DrissionPage selenium seleniumbase playwright \
-    pyrogram TgCrypto SpeechRecognition pydub numpy
+  "numpy>=1.24.0"
 
-# Prefer panel requirement files when present
-if [[ -f "$ROOT/requirements-dp.txt" ]]; then
-  python3 -m pip install --break-system-packages -U -r "$ROOT/requirements-dp.txt" || true
-fi
-if [[ -f "$ROOT/requirements-sb.txt" ]]; then
-  python3 -m pip install --break-system-packages -U -r "$ROOT/requirements-sb.txt" || true
-fi
-if [[ -f "$ROOT/requirements-playwright.txt" ]]; then
-  # Install package only — do NOT run playwright install chromium
-  python3 -m pip install --break-system-packages -U -r "$ROOT/requirements-playwright.txt" || true
-fi
+# Fail the installer if the runtime it just installed is not importable. This
+# catches dependency-resolution and ABI errors before a scheduled task finds
+# them hours later.
+log "verify Python runtime imports"
+python3 - <<'PY'
+import importlib
+import sys
+
+modules = [
+    "DrissionPage", "seleniumbase", "selenium", "playwright",
+    "pyrogram", "PIL", "requests", "urllib3",
+    "speech_recognition", "pydub", "numpy",
+]
+failed = []
+for name in modules:
+    try:
+        importlib.import_module(name)
+    except Exception as exc:
+        failed.append(f"{name}: {exc}")
+if failed:
+    print("Python runtime verification failed:", file=sys.stderr)
+    for item in failed:
+        print(f"  - {item}", file=sys.stderr)
+    raise SystemExit(1)
+print("Python runtime imports: OK")
+PY
 
 # SeleniumBase chromedriver matching system Chrome (not a second browser)
 log "seleniumbase install chromedriver (matches system Chrome)"
-python3 -m seleniumbase install chromedriver 2>/dev/null \
-  || log "WARN: seleniumbase install chromedriver failed (SB may still auto-fetch later)"
+if ! python3 -m seleniumbase install chromedriver; then
+  # SeleniumBase can also resolve/download a matching driver lazily when a task
+  # starts. Keep this non-fatal because transient network/CDN failures should
+  # not discard an otherwise complete browser runtime installation.
+  log "WARN: seleniumbase install chromedriver failed; SeleniumBase will retry at task runtime"
+fi
 
 # Explicitly skip Playwright browser downloads
 export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1

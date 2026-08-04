@@ -25,6 +25,7 @@ const events = require('./events');
 const logStream = require('./log-stream');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { cleanupStorage, normalizeCategories, normalizeRetentionDays } = require('./storage-cleanup');
+const backup = require('./backup');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
@@ -541,7 +542,8 @@ function resolveTaskScriptPath(taskName, type, currentScriptPath = '', existingT
 }
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+// 备份包含脚本正文,可能明显大于普通设置请求;仍限制上限避免无限制内存占用。
+app.use(express.json({ limit: '20mb' }));
 
 // --- 鉴权分界线 -------------------------------------------------------------
 // 顺序有讲究，别把 requireAuth 往下挪：
@@ -1996,6 +1998,53 @@ app.post('/api/runs/cleanup', (req, res) => {
     res.json({ ok: data.failures.length === 0, data });
   } catch (error) {
     res.status(400).json({ message: error.message || '运行记录清理失败' });
+  }
+});
+
+// 备份导出/导入。挂在 requireAuth 下方——导出文件含任务脚本源码,
+// 且在 include_secrets=1 时含密钥明文,绝不能落到鉴权线上方。
+app.get('/api/backup/export', (req, res) => {
+  try {
+    const includeSecrets = req.query.include_secrets === '1' || req.query.include_secrets === 'true';
+    const data = backup.exportBackup({
+      taskIds: backup.normalizeTaskIds(req.query.task_ids),
+      includeSecrets,
+    });
+    const filename = backup.buildExportFilename();
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(data, null, 2));
+  } catch (error) {
+    res.status(400).json({ message: error.message || '导出备份失败' });
+  }
+});
+
+app.post('/api/backup/preview', (req, res) => {
+  try {
+    const body = req.body || {};
+    const parsed = backup.parseBackup(body.backup !== undefined ? body.backup : body);
+    const plan = backup.analyze(parsed, {
+      script_strategy: body.script_strategy,
+      task_strategy: body.task_strategy,
+    });
+    res.json({ data: backup.toPreview(plan) });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '解析备份文件失败' });
+  }
+});
+
+app.post('/api/backup/import', (req, res) => {
+  try {
+    const body = req.body || {};
+    const data = backup.importBackup(body.backup !== undefined ? body.backup : body, {
+      script_strategy: body.script_strategy,
+      task_strategy: body.task_strategy,
+    });
+    reloadJobs(executeTask);
+    events.emit('tasks', { imported: true });
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ message: error.message || '导入备份失败' });
   }
 });
 

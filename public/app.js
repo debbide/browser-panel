@@ -106,6 +106,17 @@ const resetBtn = document.getElementById('reset-btn');
 const modalImportBtn = document.getElementById('modal-import-btn');
 const refreshScriptsModalBtn = document.getElementById('refresh-scripts-modal-btn');
 const addTaskBtn = document.getElementById('add-task-btn');
+const backupSelectBtn = document.getElementById('backup-select-btn');
+const backupImportBtn = document.getElementById('backup-import-btn');
+const backupFileInput = document.getElementById('backup-file-input');
+const backupSelectionBar = document.getElementById('backup-selection-bar');
+const backupSelectAll = document.getElementById('backup-select-all');
+const backupSelectionCount = document.getElementById('backup-selection-count');
+const backupIncludeSecrets = document.getElementById('backup-include-secrets');
+const backupExportBtn = document.getElementById('backup-export-btn');
+const backupSelectCancelBtn = document.getElementById('backup-select-cancel-btn');
+const backupImportModal = document.getElementById('backup-import-modal');
+const backupImportMask = document.getElementById('backup-import-mask');
 const openBrowserBtn = document.getElementById('open-browser-btn');
 const browserProfileSelect = document.getElementById('browser-profile-select');
 const taskProfileSelect = document.getElementById('task-profile-select');
@@ -314,6 +325,9 @@ setupConfigSubnav();
 
 let editingId = null;
 let tasksCache = [];
+let backupSelectionMode = false;
+let selectedBackupTaskIds = new Set();
+let pendingBackupPayload = null;
 let runsCache = [];
 let runningTaskIds = new Set();
 // 点了停止、但服务端还没报 is_running=false 的任务。
@@ -2489,8 +2503,13 @@ function taskCard(task) {
           <span class="metric-value">${escapeHtml(describeNextRun(task))}</span>
         </div>`;
   }
+  const backupSelected = selectedBackupTaskIds.has(Number(task.id));
+  const backupClass = backupSelectionMode
+    ? ` backup-selectable${backupSelected ? ' backup-selected' : ''}`
+    : '';
   return `
-    <article class="task-card ${isRunning ? 'task-running' : ''}" data-testid="task-card" data-task-id="${task.id}">
+    <article class="task-card ${isRunning ? 'task-running' : ''}${backupClass}" data-testid="task-card" data-task-id="${task.id}" ${backupSelectionMode ? `onclick="toggleBackupTask(${task.id}, event)"` : ''}>
+      ${backupSelectionMode ? `<input class="backup-task-check" type="checkbox" ${backupSelected ? 'checked' : ''} aria-label="选择任务 ${escapeHtml(task.name)}" />` : ''}
       <div class="task-card-top">
         <div class="task-card-head-main">
           <div class="task-title-row">
@@ -2504,7 +2523,7 @@ function taskCard(task) {
             </span>
           </div>
         </div>
-        <button class="icon-btn" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="edit-task-btn">编辑</button>
+        <button class="icon-btn" onclick="editTask(${task.id})" ${(isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="edit-task-btn">编辑</button>
       </div>
       <div class="task-metrics">
         <div class="metric-card ${latest.className}" title="${escapeHtml(latest.detail || '')}">
@@ -2518,12 +2537,135 @@ function taskCard(task) {
         ${triggerMetric}
       </div>
       <div class="task-actions">
-        <button onclick="runTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>
-        <button class="alt" onclick="stopTask(${task.id})" ${!isRunning ? 'disabled' : ''} data-testid="stop-task-btn">停止</button>
-        <button class="alt" onclick="showTaskRuns(${task.id})">记录</button>
-        <button class="alt danger" onclick="deleteTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="delete-task-btn">删除</button>
+        <button onclick="runTask(${task.id})" ${(isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>
+        <button class="alt" onclick="stopTask(${task.id})" ${(!isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="stop-task-btn">停止</button>
+        <button class="alt" onclick="showTaskRuns(${task.id})" ${backupSelectionMode ? 'disabled' : ''}>记录</button>
+        <button class="alt danger" onclick="deleteTask(${task.id})" ${(isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="delete-task-btn">删除</button>
       </div>
     </article>`;
+}
+
+function setBackupSelectionMode(enabled) {
+  backupSelectionMode = Boolean(enabled);
+  if (!backupSelectionMode) selectedBackupTaskIds.clear();
+  if (backupSelectionBar) backupSelectionBar.hidden = !backupSelectionMode;
+  if (backupSelectBtn) backupSelectBtn.innerHTML = backupSelectionMode
+    ? '<i data-lucide="x" class="icon-sm"></i> 退出选择'
+    : '<i data-lucide="archive" class="icon-sm"></i> 备份';
+  updateBackupSelectionUi();
+  lastTasksHtml = null;
+  renderTasks();
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function updateBackupSelectionUi() {
+  const available = tasksCache.length;
+  const count = selectedBackupTaskIds.size;
+  if (backupSelectionCount) backupSelectionCount.textContent = `已选择 ${count} 个任务`;
+  if (backupExportBtn) backupExportBtn.disabled = count === 0;
+  if (backupSelectAll) {
+    backupSelectAll.checked = available > 0 && count === available;
+    backupSelectAll.indeterminate = count > 0 && count < available;
+  }
+}
+
+window.toggleBackupTask = function toggleBackupTask(id, event) {
+  if (!backupSelectionMode) return;
+  if (event && event.target && event.target.closest('button')) return;
+  const taskId = Number(id);
+  if (selectedBackupTaskIds.has(taskId)) selectedBackupTaskIds.delete(taskId);
+  else selectedBackupTaskIds.add(taskId);
+  updateBackupSelectionUi();
+  lastTasksHtml = null;
+  renderTasks();
+}
+
+function downloadBackup(taskIds, includeSecrets) {
+  const query = new URLSearchParams();
+  if (taskIds && taskIds.length) query.set('task_ids', taskIds.join(','));
+  if (includeSecrets) query.set('include_secrets', '1');
+  const link = document.createElement('a');
+  link.href = `/api/backup/export?${query.toString()}`;
+  link.download = '';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function closeBackupImportModal() {
+  if (!backupImportModal) return;
+  backupImportModal.classList.remove('open');
+  backupImportModal.hidden = true;
+  if (backupImportMask) backupImportMask.hidden = true;
+  backupImportModal.innerHTML = '';
+  pendingBackupPayload = null;
+}
+
+function showBackupImportModal(plan) {
+  if (!backupImportModal) return;
+  const conflicts = [
+    ...plan.scripts.filter((item) => ['overwrite', 'rename', 'skip'].includes(item.action)).map((item) => `脚本 ${item.path}：${item.action}`),
+    ...plan.tasks.filter((item) => ['overwrite', 'rename', 'skip'].includes(item.action)).map((item) => `任务「${item.name}」：${item.action}`),
+  ];
+  const warningList = [...(plan.warnings || []), ...(plan.includes_secrets ? [] : ['备份未包含密钥明文，导入后需要手动补填'])];
+  backupImportModal.innerHTML = `
+    <div class="modal-panel backup-import-panel">
+      <div class="modal-header" style="padding:18px 22px;">
+        <div><h2 style="margin:0;">恢复任务备份</h2><p class="muted" style="margin:3px 0 0;">导入后任务默认停用，请确认冲突处理方式。</p></div>
+        <button type="button" class="icon-btn" data-backup-close aria-label="关闭">关闭</button>
+      </div>
+      <div class="modal-body" style="padding:22px;">
+        <div class="backup-import-summary">
+          <div class="backup-summary-card"><strong>${plan.tasks.length}</strong><span class="muted">任务</span></div>
+          <div class="backup-summary-card"><strong>${plan.scripts.length}</strong><span class="muted">脚本</span></div>
+          <div class="backup-summary-card"><strong>${plan.profiles.length}</strong><span class="muted">浏览器配置</span></div>
+        </div>
+        <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
+          <label>任务重名处理<select id="backup-task-strategy"><option value="rename">重命名导入</option><option value="overwrite">覆盖已有任务</option><option value="skip">跳过重名任务</option></select></label>
+          <label>脚本冲突处理<select id="backup-script-strategy"><option value="skip">跳过已有脚本</option><option value="overwrite">覆盖已有脚本</option><option value="rename">重命名脚本</option></select></label>
+        </div>
+        ${conflicts.length ? `<h4>冲突摘要</h4><ul class="backup-conflict-list">${conflicts.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="muted">没有发现文件或任务冲突。</p>'}
+        ${warningList.length ? `<h4 class="backup-warning">导入提示</h4><ul class="backup-conflict-list backup-warning">${warningList.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+        <div class="backup-import-actions"><button type="button" class="alt" data-backup-close>取消</button><button type="button" data-backup-confirm><i data-lucide="upload" class="icon-sm"></i>确认导入</button></div>
+      </div>
+    </div>`;
+  backupImportModal.hidden = false;
+  if (backupImportMask) backupImportMask.hidden = false;
+  backupImportModal.classList.add('open');
+  backupImportModal.querySelectorAll('[data-backup-close]').forEach((button) => button.addEventListener('click', closeBackupImportModal));
+  backupImportModal.querySelector('[data-backup-confirm]').addEventListener('click', importPendingBackup);
+  if (window.lucide) window.lucide.createIcons({ root: backupImportModal });
+}
+
+async function previewBackupFile(file) {
+  const text = await file.text();
+  let backup;
+  try { backup = JSON.parse(text); } catch { throw new Error('备份文件不是合法 JSON'); }
+  const data = await fetchJson('/api/backup/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backup }),
+  });
+  pendingBackupPayload = backup;
+  showBackupImportModal(data.data);
+}
+
+async function importPendingBackup() {
+  if (!pendingBackupPayload) return;
+  const taskStrategy = backupImportModal.querySelector('#backup-task-strategy').value;
+  const scriptStrategy = backupImportModal.querySelector('#backup-script-strategy').value;
+  const confirmButton = backupImportModal.querySelector('[data-backup-confirm]');
+  confirmButton.disabled = true;
+  try {
+    const data = await fetchJson('/api/backup/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backup: pendingBackupPayload, task_strategy: taskStrategy, script_strategy: scriptStrategy }),
+    });
+    closeBackupImportModal();
+    toast(`备份已导入：新增 ${data.data.created.length} 个任务`, 'success');
+    await refreshAll();
+  } catch (error) {
+    confirmButton.disabled = false;
+    toast(error.message || '导入备份失败', 'error');
+  }
 }
 
 function renderScripts() {
@@ -4009,6 +4151,48 @@ function openVisionTestModal() {
   const first = visionChannelsList && visionChannelsList.querySelector('[data-vision-channel]');
   openVisionTestModalForCard(first);
 }
+
+if (backupSelectBtn) {
+  backupSelectBtn.addEventListener('click', () => setBackupSelectionMode(!backupSelectionMode));
+}
+if (backupSelectCancelBtn) {
+  backupSelectCancelBtn.addEventListener('click', () => setBackupSelectionMode(false));
+}
+if (backupSelectAll) {
+  backupSelectAll.addEventListener('change', () => {
+    if (backupSelectAll.checked) tasksCache.forEach((task) => selectedBackupTaskIds.add(Number(task.id)));
+    else selectedBackupTaskIds.clear();
+    updateBackupSelectionUi();
+    lastTasksHtml = null;
+    renderTasks();
+  });
+}
+if (backupExportBtn) {
+  backupExportBtn.addEventListener('click', () => {
+    if (!selectedBackupTaskIds.size) return;
+    if (backupIncludeSecrets && backupIncludeSecrets.checked) {
+      dialogConfirm('导出的文件会包含密钥明文，请像保管密码一样保管这个文件。继续导出吗？', () => {
+        downloadBackup([...selectedBackupTaskIds], true);
+      });
+      return;
+    }
+    downloadBackup([...selectedBackupTaskIds], false);
+  });
+}
+if (backupImportBtn && backupFileInput) {
+  backupImportBtn.addEventListener('click', () => backupFileInput.click());
+  backupFileInput.addEventListener('change', async () => {
+    const file = backupFileInput.files && backupFileInput.files[0];
+    backupFileInput.value = '';
+    if (!file) return;
+    try {
+      await previewBackupFile(file);
+    } catch (error) {
+      toast(error.message || '读取备份文件失败', 'error');
+    }
+  });
+}
+if (backupImportMask) backupImportMask.addEventListener('click', closeBackupImportModal);
 
 if (visionTestBtn) {
   // Legacy top-level button (if still in DOM): test primary

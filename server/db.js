@@ -1026,6 +1026,7 @@ module.exports = {
   getProfileEnvMap,
   getTaskEnvMap,
   replaceEnvEntries,
+  replaceEnvEntriesTxn,
   setTaskEnvFromParams,
   syncTaskParamsJsonFromEnv,
   migrateTaskParamsToEnvIfNeeded,

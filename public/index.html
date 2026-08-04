@@ -59,9 +59,33 @@
               <h2>任务</h2>
               <p>一个任务一张卡片。</p>
             </div>
-            <button id="add-task-btn" type="button" class="btn-primary btn-with-icon" data-testid="add-task-btn">
-              <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
+            <div class="task-header-actions">
+              <button id="backup-select-btn" type="button" class="alt btn-with-icon">
+                <i data-lucide="archive" class="icon-sm"></i> 备份
+              </button>
+              <button id="backup-import-btn" type="button" class="alt btn-with-icon">
+                <i data-lucide="upload" class="icon-sm"></i> 恢复
+              </button>
+              <button id="add-task-btn" type="button" class="btn-primary btn-with-icon" data-testid="add-task-btn">
+                <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
+              </button>
+            </div>
+            <input id="backup-file-input" type="file" accept="application/json,.json" hidden />
+          </div>
+          <div id="backup-selection-bar" class="backup-selection-bar" hidden>
+            <label class="inline-check backup-select-all">
+              <input id="backup-select-all" type="checkbox" />
+              <span>全选</span>
+            </label>
+            <span id="backup-selection-count" class="muted">已选择 0 个任务</span>
+            <label class="inline-check backup-secret-check">
+              <input id="backup-include-secrets" type="checkbox" />
+              <span>包含密钥明文</span>
+            </label>
+            <button id="backup-export-btn" type="button" class="btn-with-icon" disabled>
+              <i data-lucide="download" class="icon-sm"></i> 导出所选
             </button>
+            <button id="backup-select-cancel-btn" type="button" class="alt">取消</button>
           </div>
           <div id="tasks" class="task-grid"></div>
         </section>
@@ -400,6 +424,8 @@
   </div>
 
   <div id="modal-mask" class="modal-mask" hidden></div>
+  <div id="backup-import-mask" class="modal-mask" hidden></div>
+  <section id="backup-import-modal" class="modal" aria-hidden="true" hidden></section>
   <section id="task-modal" class="modal modal-wide task-modal" aria-hidden="true">
     <div class="modal-header task-modal-header">
       <div class="task-modal-header-main">
