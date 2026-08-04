@@ -39,6 +39,7 @@ case "$arch" in
 esac
 
 need_root
+have apt-get || die "this installer requires Ubuntu/Debian with apt-get"
 
 # ---------------------------------------------------------------------------
 # apt base
@@ -83,6 +84,45 @@ apt-get install -y --no-install-recommends \
   unzip \
   procps \
   || true
+
+# ---------------------------------------------------------------------------
+# Node.js + npm (system-wide; systemd must find node without nvm)
+# ---------------------------------------------------------------------------
+install_node() {
+  local major="0"
+  if have node; then
+    major="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+  fi
+
+  if [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 18 )); then
+    have npm || die "Node.js $(node -v) exists but npm is missing"
+    log "Node.js $(node -v) + npm $(npm -v) already available"
+    return 0
+  fi
+
+  if have node; then
+    log "Node.js $(node -v 2>/dev/null || echo unknown) is below 18; upgrading to Node.js 22"
+  else
+    log "installing Node.js 22 + npm"
+  fi
+
+  # NodeSource installs a system package under /usr/bin, which remains visible
+  # to the panel's systemd service. Do not use nvm in unattended server installs.
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+
+  have node || die "Node.js installation failed"
+  have npm || die "npm installation failed"
+  major="$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)"
+  [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 18 )) \
+    || die "Node.js >= 18 required; installed version: $(node -v 2>/dev/null || echo unknown)"
+  log "Node.js $(node -v) + npm $(npm -v) ready"
+}
+
+install_node
+have python3 || die "python3 installation failed"
+python3 -m pip --version >/dev/null 2>&1 || die "python3-pip installation failed"
+log "Python $(python3 --version 2>&1) + $(python3 -m pip --version | cut -d' ' -f1-2) ready"
 
 # Some distros split libasound
 apt-get install -y --no-install-recommends libasound2t64 2>/dev/null || true

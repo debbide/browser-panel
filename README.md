@@ -10,20 +10,42 @@
 
 ---
 
-## 一键安装 / 更新
+## 新服务器首次安装
 
-SSH 登录后粘贴回车即可（**没装过 → 安装，已装过 → 更新并重启面板**）：
+在干净的 Ubuntu/Debian VPS 上用 root 按顺序执行下面两步。
+
+### 第一步：安装完整运行环境
+
+安装系统级 Node.js 22 + npm、Python 3 + pip、Chrome/Chromium、Xvfb、字体、构建工具及 Python 浏览器任务依赖（DrissionPage、SeleniumBase、Playwright Python 等）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/install-browser-stack.sh | bash
+```
+
+> 这一步使用系统级 Python 依赖（Ubuntu 24.04 通过 PEP 668 兼容参数安装），不下载 Playwright 自带浏览器，只安装一个系统 Chrome/Chromium。通常只需在新服务器上执行一次。
+
+### 第二步：安装面板
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/bp.sh | bash
 ```
 
 - 默认目录：`/opt/browser-panel`
-- 换目录：`PANEL_ROOT=/data/panel curl -fsSL ... | bash`
-- 更新**不会删除** `tasks/`（业务脚本）、`data/`、日志与截图
-- 例外：共享库 `tasks/lib/` 会随面板版本**合并更新**（不删你放在 lib 里的其它文件）
+- 换目录：两步都加相同前缀，例如 `PANEL_ROOT=/data/panel curl -fsSL ... | bash`
 
-打开：`http://服务器IP:3210`
+安装完成后打开：`http://服务器IP:3210`
+
+## 更新面板
+
+已经安装过运行环境和面板时，只需执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/bp.sh | bash
+```
+
+- 更新会重装需要的 Node 项目依赖并重启面板
+- 更新**不会删除** `tasks/`（业务脚本）、`data/`、日志与截图
+- 例外：共享库 `tasks/lib/` 会随面板版本**合并更新**（不删你放在 lib 里的其他文件）
 
 ### 首次登录
 
@@ -49,9 +71,9 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 >
 > 注意：以上都只解决"谁能连到面板"。面板与浏览器之间的那一段（CF Tunnel / nginx 到 127.0.0.1）仍是明文，同机 root 可嗅探；单机场景通常可接受。
 
-### 浏览器 + 系统 Python 依赖（一键）
+### 单独重装/修复运行环境
 
-面板装好后，在服务器用 root 执行（**系统级 pip，不用 venv**；**只装一个系统 Chrome**，不装 Playwright 自带浏览器）：
+如果需要重新安装 Chrome、Xvfb、Node.js、Python 或浏览器任务依赖，可以随时重新执行（**系统级 pip，不用 venv**；**只装一个系统 Chrome**，不装 Playwright 自带浏览器）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/install-browser-stack.sh | bash
@@ -63,7 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 bash /opt/browser-panel/scripts/install-browser-stack.sh
 ```
 
-会安装：Chrome/Chromium、**Xvfb 系统服务常驻**（`xvfb-browser.service`，显示 `:1`）、字体、xdotool、ffmpeg、DrissionPage、SeleniumBase、Playwright（仅 Python 库）、pyrogram、Pillow、SpeechRecognition/pydub 等。
+会安装：系统级 Node.js 22 + npm、Python 3 + pip、构建工具、Chrome/Chromium、**Xvfb 系统服务常驻**（`xvfb-browser.service`，显示 `:1`）、字体、xdotool、ffmpeg、DrissionPage、SeleniumBase、Playwright（仅 Python 库）、pyrogram、Pillow、SpeechRecognition/pydub 等。
 
 ---
 
