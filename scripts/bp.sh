@@ -116,18 +116,8 @@ install_deps() {
   log "npm install"
   npm install --omit=dev
 
-  # 仅首次或没有 venv 时装 Python；升级不重装整套 pip（快）
-  if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
-    log "python venv + DrissionPage"
-    python3 -m venv "$ROOT/.venv"
-    # shellcheck disable=SC1091
-    source "$ROOT/.venv/bin/activate"
-    pip install -U pip setuptools wheel
-    pip install -r requirements-dp.txt
-    deactivate || true
-    python3 -m pip install --break-system-packages -r requirements-dp.txt 2>/dev/null \
-      || python3 -m pip install -r requirements-dp.txt 2>/dev/null || true
-  fi
+  # Python 浏览器任务统一使用 install-browser-stack.sh 准备的系统 Python。
+  # bp.sh 只安装/更新面板本身，不创建 venv，也不重复修改 Python 依赖。
 
   if [[ -x "$(command -v node)" ]]; then
     cp -f "$(command -v node)" /tmp/node-openclaw 2>/dev/null || true
