@@ -1213,8 +1213,7 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--glass-border);
   background: rgba(0, 0, 0, 0.18);
 }
-.log-mode-tabs, .log-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.log-mode-tabs .is-active { color: white; border-color: var(--accent-color); background: rgba(59, 130, 246, 0.2); }
+.log-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .log-tools input[type="search"] { flex: 1 1 220px; min-width: 160px; }
 .log-auto-scroll { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 13px; }
 .log-match-count { min-width: 64px; font-size: 12px; }

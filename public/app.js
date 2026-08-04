@@ -2247,9 +2247,8 @@ function logLineClass(line) {
 }
 
 async function openRunLog(runId) {
-  const res = await fetchJson(`/api/runs/${runId}/log?tail=150`);
+  const res = await fetchJson(`/api/runs/${runId}/log?offset=0&limit=${256 * 1024}`);
   const data = res.data || {};
-  const tailLimit = Number(data.tail) || 150;
   const mask = document.createElement('div');
   mask.className = 'log-drawer-mask';
   const drawer = document.createElement('section');
@@ -2262,11 +2261,6 @@ async function openRunLog(runId) {
       <button class="icon-btn" type="button" aria-label="关闭" data-close-log><i data-lucide="x" class="icon-md"></i></button>
     </div>
     <div class="log-drawer-toolbar">
-      <div class="log-mode-tabs">
-        <button type="button" class="alt is-active" data-log-mode="tail">末尾 ${tailLimit} 行</button>
-        <button type="button" class="alt" data-log-mode="summary">摘要</button>
-        <button type="button" class="alt" data-log-mode="full">全文</button>
-      </div>
       <div class="log-tools">
         <input type="search" placeholder="搜索日志…" data-log-search />
         <span class="muted log-match-count" data-log-match-count></span>
@@ -2286,48 +2280,26 @@ async function openRunLog(runId) {
   const matchCount = drawer.querySelector('[data-log-match-count]');
   const autoScroll = drawer.querySelector('[data-log-auto]');
 
-  let mode = 'tail';
-  let tailText = data.content || '';
-  let summaryText = data.summary || '没有可用摘要。';
-  let fullText = '';
-  let fullOffset = 0;
-  let fullEof = false;
-  let fullKnownSize = Number(data.size) || 0;
-  let loadingChunk = false;
-  let eventSource = null;
-  let cursor = Number(data.size) || 0;
-  let targetSize = cursor;
+  let logText = data.content || '';
+  let cursor = Number(data.nextOffset) || 0;
+  let targetSize = Math.max(Number(data.size) || 0, cursor);
   let draining = false;
   let drainPromise = null;
   let finalizing = false;
+  let eventSource = null;
   let closed = false;
   let currentStatus = data.status || '-';
-  let totalLines = Number(data.totalLines) || 0;
+  let totalLines = 0;
   let unseenOutput = false;
   let programmaticScroll = false;
 
-  function trimTail(text) {
-    const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    const endsWithNewline = normalized.endsWith('\n');
-    const lines = normalized.split('\n');
-    if (endsWithNewline) lines.pop();
-    const kept = lines.slice(Math.max(0, lines.length - tailLimit));
-    return kept.join('\n') + (endsWithNewline && kept.length ? '\n' : '');
-  }
-
-  tailText = trimTail(tailText);
-
-  const activeText = () => {
-    if (mode === 'summary') return summaryText;
-    if (mode === 'full') return fullText;
-    return tailText;
-  };
-
   const nearBottom = () => terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 40;
+  const countLines = (text) => text ? text.replace(/\n$/, '').split(/\r?\n/).length : 0;
 
   function updateMeta(status = currentStatus) {
     currentStatus = status || currentStatus;
-    meta.textContent = `任务 #${data.taskId || '-'} · ${prettyStatus(currentStatus || '-')} · ${totalLines || 0} 行`;
+    totalLines = countLines(logText);
+    meta.textContent = `任务 #${data.taskId || '-'} · ${prettyStatus(currentStatus || '-')} · ${totalLines} 行`;
   }
 
   function updateProgress(message = '') {
@@ -2339,19 +2311,14 @@ async function openRunLog(runId) {
       progress.textContent = '有新日志 · 勾选自动滚动或滚到底部查看';
       return;
     }
-    if (mode === 'full') {
-      progress.textContent = `已加载 ${formatBytes(fullOffset)} / ${formatBytes(fullKnownSize)}${fullEof ? ' · 已到当前末尾' : ''}`;
-      return;
-    }
     progress.textContent = draining ? `正在同步日志… ${formatBytes(cursor)} / ${formatBytes(targetSize)}` : '';
   }
 
   function render({ forceFollow = false } = {}) {
     if (closed) return;
     const shouldFollow = forceFollow || (autoScroll.checked && nearBottom());
-    const rawText = activeText();
     const query = search.value.trim().toLowerCase();
-    const visible = rawText.replace(/\n$/, '');
+    const visible = logText.replace(/\n$/, '');
     const lines = visible ? visible.split('\n') : [''];
     let matches = 0;
     terminal.innerHTML = lines.map((line, index) => {
@@ -2360,6 +2327,7 @@ async function openRunLog(runId) {
       return `<div class="log-line ${logLineClass(line)}${match ? ' is-match' : ''}"><span class="log-line-no">${index + 1}</span><span class="log-line-text">${escapeHtml(line) || ' '}</span></div>`;
     }).join('');
     matchCount.textContent = query ? `${matches} 个匹配` : '';
+    updateMeta();
     if (shouldFollow) {
       programmaticScroll = true;
       terminal.scrollTop = terminal.scrollHeight;
@@ -2369,34 +2337,11 @@ async function openRunLog(runId) {
     updateProgress();
   }
 
-  function appendTail(text) {
+  function appendLog(text) {
     if (!text) return;
-    tailText = trimTail(tailText + text);
-    unseenOutput = mode !== 'tail' || !autoScroll.checked || !nearBottom();
-    if (mode === 'tail') render();
-    else updateProgress();
-  }
-
-  async function loadNextChunk(reset = false) {
-    if (loadingChunk || (!reset && fullEof)) return;
-    loadingChunk = true;
-    if (reset) { fullOffset = 0; fullEof = false; fullText = ''; }
-    try {
-      const chunkRes = await fetchJson(`/api/runs/${runId}/log?offset=${fullOffset}&limit=${256 * 1024}`);
-      if (closed) return;
-      const chunk = chunkRes.data || {};
-      const nextOffset = Number(chunk.nextOffset);
-      if (Number.isFinite(nextOffset) && nextOffset > fullOffset) {
-        fullText += chunk.content || '';
-        fullOffset = nextOffset;
-      }
-      fullKnownSize = Math.max(fullKnownSize, Number(chunk.size) || 0);
-      fullEof = Boolean(chunk.eof) && fullOffset >= fullKnownSize;
-      if (mode === 'full') render();
-    } finally {
-      loadingChunk = false;
-      updateProgress();
-    }
+    unseenOutput = !autoScroll.checked || !nearBottom();
+    logText += text;
+    render();
   }
 
   async function drainToTarget() {
@@ -2416,13 +2361,9 @@ async function openRunLog(runId) {
             targetSize = Math.min(targetSize, Number(chunk.size) || requestedTarget);
             break;
           }
-          appendTail(chunk.content || '');
+          appendLog(chunk.content || '');
           cursor = nextOffset;
-          fullKnownSize = Math.max(fullKnownSize, Number(chunk.size) || targetSize);
-          if (fullOffset < fullKnownSize) fullEof = false;
-          if (mode === 'full' && autoScroll.checked && !loadingChunk && fullOffset < fullKnownSize) {
-            loadNextChunk();
-          }
+          targetSize = Math.max(targetSize, Number(chunk.size) || cursor);
           updateProgress();
         }
       } catch (error) {
@@ -2438,11 +2379,7 @@ async function openRunLog(runId) {
 
   function requestCatchUp(size) {
     const nextSize = Number(size);
-    if (Number.isFinite(nextSize) && nextSize > targetSize) {
-      targetSize = nextSize;
-      fullKnownSize = Math.max(fullKnownSize, nextSize);
-      if (fullOffset < fullKnownSize) fullEof = false;
-    }
+    if (Number.isFinite(nextSize) && nextSize > targetSize) targetSize = nextSize;
     if (cursor < targetSize) return drainToTarget();
     return Promise.resolve();
   }
@@ -2452,19 +2389,16 @@ async function openRunLog(runId) {
     finalizing = true;
     try {
       const finalSize = Number(payload.size);
-      if (Number.isFinite(finalSize)) {
-        targetSize = Math.max(targetSize, finalSize);
-        await drainToTarget();
-      }
-      const finalRes = await fetchJson(`/api/runs/${runId}/log?tail=${tailLimit}`);
+      if (Number.isFinite(finalSize)) targetSize = Math.max(targetSize, finalSize);
+      await drainToTarget();
+      const finalRes = await fetchJson(`/api/runs/${runId}/log?tail=20`);
       if (closed) return;
       const finalData = finalRes.data || {};
-      tailText = trimTail(finalData.content || tailText);
-      summaryText = finalData.summary || '没有可用摘要。';
-      cursor = Number(finalData.size) || cursor;
-      targetSize = Math.max(targetSize, cursor);
-      fullKnownSize = Math.max(fullKnownSize, cursor);
-      totalLines = Number(finalData.totalLines) || totalLines;
+      const reconciledSize = Number(finalData.size);
+      if (Number.isFinite(reconciledSize) && reconciledSize > targetSize) {
+        targetSize = reconciledSize;
+        await drainToTarget();
+      }
       currentStatus = payload.status || finalData.status || currentStatus;
       updateMeta();
       render();
@@ -2492,17 +2426,9 @@ async function openRunLog(runId) {
   drawer.querySelector('[data-close-log]').addEventListener('click', close);
   document.addEventListener('keydown', onKey);
 
-  drawer.querySelectorAll('[data-log-mode]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      mode = button.dataset.logMode;
-      drawer.querySelectorAll('[data-log-mode]').forEach((item) => item.classList.toggle('is-active', item === button));
-      if (mode === 'full' && !fullText) await loadNextChunk(true);
-      render({ forceFollow: autoScroll.checked });
-    });
-  });
   search.addEventListener('input', () => render());
   drawer.querySelector('[data-copy-log]').addEventListener('click', async () => {
-    try { await copyText(activeText()); toast('日志已复制', 'success'); }
+    try { await copyText(logText); toast('日志已复制', 'success'); }
     catch { toast('复制失败，请手动选择日志', 'error'); }
   });
   autoScroll.addEventListener('change', () => {
@@ -2520,32 +2446,25 @@ async function openRunLog(runId) {
       autoScroll.checked = true;
       unseenOutput = false;
       updateProgress();
-      if (mode === 'full' && !fullEof) loadNextChunk();
     }
   });
 
-  // 即使初始快照显示任务已结束也建立一次连接：服务端会发 ready + end，
-  // 这样恰好在快照后结束的任务仍能完成最终对账。
   eventSource = new EventSource(`/api/runs/${runId}/log/stream?offset=${cursor}`);
   eventSource.addEventListener('ready', (event) => {
     const payload = JSON.parse(event.data || '{}');
-    requestCatchUp(payload.size).catch((error) => {
-      if (!closed) progress.textContent = error.message || '日志同步失败，等待重连';
-    });
+    requestCatchUp(payload.size);
   });
   eventSource.addEventListener('log', (event) => {
     const payload = JSON.parse(event.data || '{}');
-    requestCatchUp(payload.size).catch((error) => {
-      if (!closed) progress.textContent = error.message || '日志同步失败，等待重连';
-    });
+    requestCatchUp(payload.size);
   });
   eventSource.addEventListener('end', (event) => {
     const payload = JSON.parse(event.data || '{}');
     finalize(payload);
   });
 
-  updateMeta();
   render({ forceFollow: true });
+  requestCatchUp(targetSize);
   if (window.lucide) window.lucide.createIcons({ root: drawer });
 }
 async function showTaskRuns(id) {
