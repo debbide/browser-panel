@@ -1727,6 +1727,12 @@ function toPublicAssetPath(absPath, kind) {
   return '';
 }
 
+// Task-name slugs can contain non-ASCII (e.g. Chinese), so percent-encode each
+// segment before it becomes an <img src>. Slashes stay as separators.
+function toPublicAssetUrl(relPath) {
+  return `/${String(relPath).split('/').map(encodeURIComponent).join('/')}`;
+}
+
 function listImageFilesRecursive(rootDir, subDir = '') {
   const abs = subDir ? path.join(rootDir, subDir) : rootDir;
   if (!abs || !fs.existsSync(abs)) return [];
@@ -1763,7 +1769,7 @@ function listRunScreenshots(run) {
       items.push({
         name,
         kind: classifyScreenshotName(name),
-        url: `/${rel}`,
+        url: toPublicAssetUrl(rel),
         size: stat ? stat.size : 0,
         mtime: stat ? stat.mtime.toISOString() : null,
       });
@@ -1779,7 +1785,7 @@ function listRunScreenshots(run) {
       items.push({
         name: path.basename(abs),
         kind: 'final',
-        url: `/${rel}`,
+        url: toPublicAssetUrl(rel),
         size: stat ? stat.size : 0,
         mtime: stat ? stat.mtime.toISOString() : null,
       });

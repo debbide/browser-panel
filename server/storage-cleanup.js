@@ -141,7 +141,9 @@ function collectCleanupItems(db, options = {}) {
       for (const { entry, path: target } of listChildren(root)) {
         const resolved = path.resolve(target);
         if (referencedScreenshots.has(resolved)) continue;
-        if (entry.isDirectory() && root === path.join(screenshotsRoot, 'runs') && /^task-\d+-run-/i.test(entry.name)) {
+        // Run dirs are `task-<id>[-<name slug>]-run-<runId>`; the slug is optional
+        // so pre-rename dirs keep matching.
+        if (entry.isDirectory() && root === path.join(screenshotsRoot, 'runs') && /^task-\d+-(?:.*-)?run-/i.test(entry.name)) {
           collector.add('orphanScreenshots', target, screenshotsRoot, { kind: 'screenshots_dir' });
         } else if (entry.isFile() && /^task-\d+-.*\.(png|jpe?g|webp|gif)$/i.test(entry.name)) {
           collector.add('orphanScreenshots', target, screenshotsRoot, { kind: 'screenshot' });

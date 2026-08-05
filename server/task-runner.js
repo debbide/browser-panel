@@ -23,17 +23,39 @@ function stamp() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
-function makeLogPath(taskId) {
-  return path.join(config.paths.logsDir, `task-${taskId}-${stamp()}.log`);
+// Human-readable filename fragment from a task name. Keeps Unicode letters and
+// digits (so Chinese task names survive) and collapses everything else to '-'.
+// The task id always stays in the name, so a collapsed or empty slug is cosmetic
+// only and never makes two different tasks share a path.
+function slugifyTaskName(name, maxLen = 40) {
+  const slug = String(name || '')
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLen)
+    .replace(/-+$/g, '');
+  return slug;
 }
 
-function makeScreenshotPath(taskId) {
-  return path.join(config.paths.screenshotsDir, `task-${taskId}-${stamp()}.png`);
+// Builds `task-<id>-<slug>` (or `task-<id>` when the name yields no slug).
+function taskFilePrefix(task) {
+  const id = task && typeof task === 'object' ? task.id : task;
+  const slug = task && typeof task === 'object' ? slugifyTaskName(task.name) : '';
+  return slug ? `task-${id}-${slug}` : `task-${id}`;
 }
 
-function makeRunScreenshotsDir(taskId, runId) {
+function makeLogPath(task) {
+  return path.join(config.paths.logsDir, `${taskFilePrefix(task)}-${stamp()}.log`);
+}
+
+function makeScreenshotPath(task) {
+  return path.join(config.paths.screenshotsDir, `${taskFilePrefix(task)}-${stamp()}.png`);
+}
+
+function makeRunScreenshotsDir(task, runId) {
+  const taskId = task && typeof task === 'object' ? task.id : task;
   const safeRunId = String(runId || `${taskId}-${Date.now()}`).replace(/[^a-zA-Z0-9._-]+/g, '-');
-  return path.join(config.paths.screenshotsDir, 'runs', `task-${taskId}-run-${safeRunId}`);
+  return path.join(config.paths.screenshotsDir, 'runs', `${taskFilePrefix(task)}-run-${safeRunId}`);
 }
 
 function listImageFiles(dirPath) {
@@ -478,8 +500,13 @@ function resolveBrowserContext(task) {
   };
 }
 
-function prepareLogForTask(taskId) {
-  const logPath = makeLogPath(taskId);
+// Accepts a task object (preferred, so the name lands in the filename) or a bare
+// id, which is resolved through the db to recover the name.
+function prepareLogForTask(taskOrId) {
+  const task = taskOrId && typeof taskOrId === 'object'
+    ? taskOrId
+    : (db.getTask(Number(taskOrId)) || { id: taskOrId });
+  const logPath = makeLogPath(task);
   fs.writeFileSync(logPath, '', 'utf8');
   return logPath;
 }
@@ -554,7 +581,7 @@ function getCommand(task) {
   return { cmd: 'node', args: [task.script_path] };
 }
 
-function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id)) {
+function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
   return new Promise((resolve) => {
     const startedAt = new Date().toISOString();
     writeLogHeader(logPath, 'TASK START', [
@@ -657,12 +684,12 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task.id))
   });
 }
 
-async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
+async function runBrowserTask(task, logPath = makeLogPath(task)) {
   const profile = resolveTaskProfile(task);
   if (profile) task = { ...task, _profile: profile };
-  const screenshotPath = makeScreenshotPath(task.id);
+  const screenshotPath = makeScreenshotPath(task);
   const runId = `${task.id}-${Date.now()}`;
-  const screenshotsDir = makeRunScreenshotsDir(task.id, runId);
+  const screenshotsDir = makeRunScreenshotsDir(task, runId);
   fs.mkdirSync(screenshotsDir, { recursive: true });
   const browserContext = resolveBrowserContext(task);
   const startedAt = new Date().toISOString();
@@ -898,11 +925,11 @@ async function runBrowserTask(task, logPath = makeLogPath(task.id)) {
 }
 
 async function runTask(task, options = {}) {
-  const logPath = options.logPath || prepareLogForTask(task.id);
+  const logPath = options.logPath || prepareLogForTask(task);
   if (task.use_browser) {
     return runBrowserTask(task, logPath);
   }
-  return runForegroundTask(task, makeScreenshotPath(task.id), logPath);
+  return runForegroundTask(task, makeScreenshotPath(task), logPath);
 }
 
 function stopTask(taskId) {
