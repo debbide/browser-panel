@@ -14,6 +14,7 @@ const TASK_CONFIG_COLUMNS = Object.freeze([
   'name', 'type', 'script_path', 'cron_expr', 'schedule_mode',
   'interval_min', 'interval_max', 'interval_unit',
   'daily_time_start', 'daily_time_end',
+  'daily_day_min', 'daily_day_max',
   'use_browser', 'use_persistent', 'timeout_sec',
   'condition_enabled', 'condition_json',
 ]);
@@ -479,6 +480,8 @@ function buildTaskRow(plan, profileIdByName, existing = null) {
     interval_unit: config_.interval_unit ? String(config_.interval_unit) : null,
     daily_time_start: config_.daily_time_start ? String(config_.daily_time_start) : null,
     daily_time_end: config_.daily_time_end ? String(config_.daily_time_end) : null,
+    daily_day_min: config_.daily_day_min == null ? null : Number(config_.daily_day_min),
+    daily_day_max: config_.daily_day_max == null ? null : Number(config_.daily_day_max),
     // 运行态一律重置:导入后由调度器重新算,不继承备份里的时间点。
     next_run_at: null,
     // 导入后一律停用。否则文件一传,一批任务立刻按 cron 在新机器上开跑,

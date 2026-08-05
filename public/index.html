@@ -640,6 +640,18 @@
                         <input name="daily_time_end" type="time" value="12:00" data-testid="daily-time-end-input" />
                       </div>
                     </div>
+                    <div class="grid interval-range-grid" style="margin-top:8px;">
+                      <div>
+                        <label class="field-label">间隔天数（最少）</label>
+                        <input name="daily_day_min" type="number" min="1" step="1" value="1" data-testid="daily-day-min-input" />
+                      </div>
+                      <div class="range-sep">至</div>
+                      <div>
+                        <label class="field-label">间隔天数（最多）</label>
+                        <input name="daily_day_max" type="number" min="1" step="1" value="1" data-testid="daily-day-max-input" />
+                      </div>
+                    </div>
+                    <div id="daily-window-schedule-summary" class="field-span-2 muted">每天 08:00 - 12:00 之间随机执行</div>
                   </div>
                 </div>
               </section>

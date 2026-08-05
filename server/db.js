@@ -118,6 +118,9 @@ if (!taskTableColumns.includes('interval_unit')) db.exec('ALTER TABLE tasks ADD 
 if (!taskTableColumns.includes('next_run_at')) db.exec('ALTER TABLE tasks ADD COLUMN next_run_at TEXT');
 if (!taskTableColumns.includes('daily_time_start')) db.exec('ALTER TABLE tasks ADD COLUMN daily_time_start TEXT');
 if (!taskTableColumns.includes('daily_time_end')) db.exec('ALTER TABLE tasks ADD COLUMN daily_time_end TEXT');
+// 每天时间窗模式的天数间隔；null 视为 1，保持旧任务"每天跑"的行为不变。
+if (!taskTableColumns.includes('daily_day_min')) db.exec('ALTER TABLE tasks ADD COLUMN daily_day_min INTEGER');
+if (!taskTableColumns.includes('daily_day_max')) db.exec('ALTER TABLE tasks ADD COLUMN daily_day_max INTEGER');
 
 if (!taskTableColumns.includes('browser_profile_id')) db.exec('ALTER TABLE tasks ADD COLUMN browser_profile_id INTEGER REFERENCES browser_profiles(id)');
 if (!taskTableColumns.includes('params_json')) db.exec("ALTER TABLE tasks ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}'");
@@ -143,7 +146,8 @@ if (!browserProfileColumns.includes('timezone_id')) db.exec("ALTER TABLE browser
 
 const taskColumns = [
   'name', 'type', 'script_path', 'cron_expr', 'schedule_mode',
-  'interval_min', 'interval_max', 'interval_unit', 'daily_time_start', 'daily_time_end', 'next_run_at',
+  'interval_min', 'interval_max', 'interval_unit', 'daily_time_start', 'daily_time_end',
+  'daily_day_min', 'daily_day_max', 'next_run_at',
   'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id',
   'condition_enabled', 'condition_json', 'condition_next_check_at',
   'condition_last_status', 'condition_last_detail', 'condition_last_checked_at', 'condition_cooldown_until',
@@ -163,7 +167,8 @@ function createTask(payload) {
   const stmt = db.prepare(`
     INSERT INTO tasks (
       name, type, script_path, cron_expr, schedule_mode,
-      interval_min, interval_max, interval_unit, daily_time_start, daily_time_end, next_run_at,
+      interval_min, interval_max, interval_unit, daily_time_start, daily_time_end,
+      daily_day_min, daily_day_max, next_run_at,
       enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id,
       condition_enabled, condition_json, condition_next_check_at,
       condition_last_status, condition_last_detail, condition_last_checked_at, condition_cooldown_until,
@@ -173,7 +178,8 @@ function createTask(payload) {
     )
     VALUES (
       @name, @type, @script_path, @cron_expr, @schedule_mode,
-      @interval_min, @interval_max, @interval_unit, @daily_time_start, @daily_time_end, @next_run_at,
+      @interval_min, @interval_max, @interval_unit, @daily_time_start, @daily_time_end,
+      @daily_day_min, @daily_day_max, @next_run_at,
       @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id,
       @condition_enabled, @condition_json, @condition_next_check_at,
       @condition_last_status, @condition_last_detail, @condition_last_checked_at, @condition_cooldown_until,
@@ -183,6 +189,8 @@ function createTask(payload) {
     )
   `);
   const result = stmt.run({
+    daily_day_min: null,
+    daily_day_max: null,
     condition_enabled: 0,
     condition_json: '{}',
     condition_next_check_at: null,

@@ -150,6 +150,9 @@ const intervalMaxEl = form.elements.interval_max;
 const intervalUnitEl = form.elements.interval_unit;
 const dailyTimeStartEl = form.elements.daily_time_start;
 const dailyTimeEndEl = form.elements.daily_time_end;
+const dailyDayMinEl = form.elements.daily_day_min;
+const dailyDayMaxEl = form.elements.daily_day_max;
+const dailyWindowSummaryEl = document.getElementById('daily-window-schedule-summary');
 
 const tgForm = document.getElementById('tg-form');
 const tgStatusText = document.getElementById('tg-status-text');
@@ -492,6 +495,18 @@ function updateIntervalSummary() {
   intervalSummaryEl.textContent = `每次检查将在 ${min} - ${max} ${unit}内随机触发`;
 }
 
+function updateDailyWindowSummary() {
+  if (!dailyWindowSummaryEl) return;
+  const start = dailyTimeStartEl?.value || '08:00';
+  const end = dailyTimeEndEl?.value || '12:00';
+  const min = Math.max(1, Number(dailyDayMinEl?.value || 1));
+  const max = Math.max(min, Number(dailyDayMaxEl?.value || min));
+  const gap = min === max
+    ? (min === 1 ? '每天' : `每 ${min} 天`)
+    : `每隔 ${min} - ${max} 天随机`;
+  dailyWindowSummaryEl.textContent = `${gap} ${start} - ${end} 之间随机执行`;
+}
+
 function updateScheduleModeUI() {
   const mode = getScheduleMode();
   fixedFieldsEl.hidden = mode !== 'fixed';
@@ -518,18 +533,23 @@ function updateScheduleModeUI() {
   fixedMinutesEl.disabled = !isFixed;
   if (dailyTimeStartEl) dailyTimeStartEl.disabled = !isDaily;
   if (dailyTimeEndEl) dailyTimeEndEl.disabled = !isDaily;
+  if (dailyDayMinEl) dailyDayMinEl.disabled = !isDaily;
+  if (dailyDayMaxEl) dailyDayMaxEl.disabled = !isDaily;
 
   updateFixedSummary();
   updateIntervalSummary();
+  updateDailyWindowSummary();
 }
 
 function buildSchedulePayloadFromForm() {
   const enabled = form.elements.enabled.checked;
   if (!enabled) {
-    return { enabled: false, cron_expr: '', schedule_mode: 'fixed', interval_min: null, interval_max: null, interval_unit: null, daily_time_start: null, daily_time_end: null, next_run_at: null };
+    return { enabled: false, cron_expr: '', schedule_mode: 'fixed', interval_min: null, interval_max: null, interval_unit: null, daily_time_start: null, daily_time_end: null, daily_day_min: null, daily_day_max: null, next_run_at: null };
   }
 
   if (getScheduleMode() === 'daily_window') {
+    const dayMin = Math.max(1, Number(dailyDayMinEl?.value || 1));
+    const dayMax = Math.max(dayMin, Number(dailyDayMaxEl?.value || dayMin));
     return {
       enabled: true,
       cron_expr: '',
@@ -539,6 +559,8 @@ function buildSchedulePayloadFromForm() {
       interval_unit: null,
       daily_time_start: dailyTimeStartEl?.value || '08:00',
       daily_time_end: dailyTimeEndEl?.value || '12:00',
+      daily_day_min: dayMin,
+      daily_day_max: dayMax,
       next_run_at: null,
     };
   }
@@ -597,13 +619,13 @@ function buildSchedulePayloadFromForm() {
 
 function parseTaskSchedule(task) {
   if (!task || !task.enabled) {
-    return { enabled: false, mode: 'fixed', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00' };
+    return { enabled: false, mode: 'fixed', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00', dailyDayMin: 1, dailyDayMax: 1 };
   }
   if (task.schedule_mode === 'daily_window') {
-    return { enabled: true, mode: 'daily_window', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: task.daily_time_start || '08:00', dailyTimeEnd: task.daily_time_end || '12:00' };
+    return { enabled: true, mode: 'daily_window', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: task.daily_time_start || '08:00', dailyTimeEnd: task.daily_time_end || '12:00', dailyDayMin: Number(task.daily_day_min || 1), dailyDayMax: Number(task.daily_day_max || task.daily_day_min || 1) };
   }
   if (task.schedule_mode === 'interval') {
-    return { enabled: true, mode: 'interval', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: Number(task.interval_min || 5), intervalMax: Number(task.interval_max || 10), intervalUnit: task.interval_unit || 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00' };
+    return { enabled: true, mode: 'interval', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: Number(task.interval_min || 5), intervalMax: Number(task.interval_max || 10), intervalUnit: task.interval_unit || 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00', dailyDayMin: 1, dailyDayMax: 1 };
   }
   let totalMinutes = Number(task.interval_min || task.interval_max || 0);
   if ((task.interval_unit || 'minutes') === 'days') totalMinutes *= 24 * 60;
@@ -612,7 +634,7 @@ function parseTaskSchedule(task) {
   totalMinutes -= fixedDays * 24 * 60;
   const fixedHours = Math.floor(totalMinutes / 60);
   totalMinutes -= fixedHours * 60;
-  return { enabled: true, mode: 'fixed', fixedDays, fixedHours, fixedMinutes: totalMinutes, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00' };
+  return { enabled: true, mode: 'fixed', fixedDays, fixedHours, fixedMinutes: totalMinutes, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00', dailyDayMin: 1, dailyDayMax: 1 };
 }
 
 function describeTaskSchedule(task) {
@@ -2009,6 +2031,8 @@ function resetTaskForm() {
   intervalUnitEl.value = 'minutes';
   if (dailyTimeStartEl) dailyTimeStartEl.value = '08:00';
   if (dailyTimeEndEl) dailyTimeEndEl.value = '12:00';
+  if (dailyDayMinEl) dailyDayMinEl.value = '1';
+  if (dailyDayMaxEl) dailyDayMaxEl.value = '1';
   updateScheduleModeUI();
   resetConditionForm();
   syncTaskParamsUI('', {});
@@ -3496,6 +3520,8 @@ function fillTaskForm(task) {
   intervalUnitEl.value = schedule.intervalUnit;
   if (dailyTimeStartEl) dailyTimeStartEl.value = schedule.dailyTimeStart;
   if (dailyTimeEndEl) dailyTimeEndEl.value = schedule.dailyTimeEnd;
+  if (dailyDayMinEl) dailyDayMinEl.value = schedule.dailyDayMin;
+  if (dailyDayMaxEl) dailyDayMaxEl.value = schedule.dailyDayMax;
   updateScheduleModeUI();
   fillConditionForm(task);
   // use_persistent=1 → 持久；否则默认临时（含历史任务字段缺失）
@@ -3927,6 +3953,10 @@ fixedMinutesEl.addEventListener('input', updateFixedSummary);
 intervalMinEl.addEventListener('input', updateIntervalSummary);
 intervalMaxEl.addEventListener('input', updateIntervalSummary);
 intervalUnitEl.addEventListener('change', updateIntervalSummary);
+dailyTimeStartEl?.addEventListener('input', updateDailyWindowSummary);
+dailyTimeEndEl?.addEventListener('input', updateDailyWindowSummary);
+dailyDayMinEl?.addEventListener('input', updateDailyWindowSummary);
+dailyDayMaxEl?.addEventListener('input', updateDailyWindowSummary);
 
 window.runTask = runTask;
 window.stopTask = stopTask;

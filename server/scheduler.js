@@ -116,6 +116,16 @@ function getTzDate(baseDate, targetMin, addDays = 0) {
   return new Date(localStr + offsetStr);
 }
 
+// 每天时间窗模式的天数间隔。null/0 视为 1，保持旧任务"每天跑"的行为。
+// min 与 max 相同即固定间隔，不同则每次在区间内随机抽一个。
+function resolveDayGap(task) {
+  const rawMin = Number(task.daily_day_min || 0);
+  const rawMax = Number(task.daily_day_max || 0);
+  const min = Math.max(1, rawMin || 1);
+  const max = Math.max(min, rawMax || min);
+  return randomIntInclusive(min, max);
+}
+
 function computeNextRun(task, fromDate = new Date(), isReschedule = false) {
   if (task.schedule_mode === 'daily_window') {
     const startStr = task.daily_time_start || '00:00';
@@ -131,7 +141,9 @@ function computeNextRun(task, fromDate = new Date(), isReschedule = false) {
        targetMin = randomIntInclusive(startTotalMin, endTotalMin);
     }
 
-    let candidate = getTzDate(fromDate, targetMin, isReschedule ? 1 : 0);
+    // 跑完重排时按配置的天数间隔往后推；首次排程（启用任务）只看今天的窗口，
+    // 让用户启用后能尽快跑到第一次，天数间隔从第二次起生效。
+    let candidate = getTzDate(fromDate, targetMin, isReschedule ? resolveDayGap(task) : 0);
 
     if (!isReschedule && candidate.getTime() <= fromDate.getTime()) {
       if (endTotalMin > startTotalMin) {
