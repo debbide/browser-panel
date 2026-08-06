@@ -70,7 +70,7 @@
                 <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
               </button>
             </div>
-            <input id="backup-file-input" type="file" accept="application/json,.json" hidden />
+            <input id="backup-file-input" type="file" accept="application/json,application/octet-stream,.json,.bpenc" hidden />
           </div>
           <div id="backup-selection-bar" class="backup-selection-bar" hidden>
             <label class="inline-check backup-select-all">
@@ -80,7 +80,7 @@
             <span id="backup-selection-count" class="muted">已选择 0 个任务</span>
             <label class="inline-check backup-secret-check">
               <input id="backup-include-secrets" type="checkbox" />
-              <span>包含密钥明文</span>
+              <span>包含配置（加密导出）</span>
             </label>
             <button id="backup-export-btn" type="button" class="btn-with-icon" disabled>
               <i data-lucide="download" class="icon-sm"></i> 导出所选

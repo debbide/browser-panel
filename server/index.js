@@ -2020,18 +2020,27 @@ app.post('/api/runs/cleanup', (req, res) => {
 });
 
 // 备份导出/导入。挂在 requireAuth 下方——导出文件含任务脚本源码,
-// 且在 include_secrets=1 时含密钥明文,绝不能落到鉴权线上方。
-app.get('/api/backup/export', (req, res) => {
+// 且在加密模式下含密钥(虽已加密,但密码是用户自己给的,强度不由我们保证)。
+//
+// 导出用 POST 不用 GET:密码走 body。放 query 会进 access log、浏览器历史
+// 和 Referer,那等于把密码明文写了三份。
+app.post('/api/backup/export', (req, res) => {
   try {
-    const includeSecrets = req.query.include_secrets === '1' || req.query.include_secrets === 'true';
-    const data = backup.exportBackup({
-      taskIds: backup.normalizeTaskIds(req.query.task_ids),
-      includeSecrets,
+    const body = req.body || {};
+    // 空串 / 只有空白 一律当作"不加密"。别让用户以为按了空格就加密了。
+    const passphrase = typeof body.passphrase === 'string' && body.passphrase.trim().length
+      ? body.passphrase
+      : null;
+    const result = backup.exportBackup({
+      taskIds: backup.normalizeTaskIds(body.task_ids),
+      passphrase,
     });
-    const filename = backup.buildExportFilename();
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    const filename = backup.buildExportFilename(new Date(), { encrypted: result.header.encrypted });
+    res.setHeader('Content-Type', result.header.encrypted
+      ? 'application/octet-stream'
+      : 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(JSON.stringify(data, null, 2));
+    res.send(result.data);
   } catch (error) {
     res.status(400).json({ message: error.message || '导出备份失败' });
   }
@@ -2040,7 +2049,10 @@ app.get('/api/backup/export', (req, res) => {
 app.post('/api/backup/preview', (req, res) => {
   try {
     const body = req.body || {};
-    const parsed = backup.parseBackup(body.backup !== undefined ? body.backup : body);
+    const parsed = backup.parseBackup(
+      body.backup !== undefined ? body.backup : body,
+      { passphrase: body.passphrase },
+    );
     const plan = backup.analyze(parsed, {
       script_strategy: body.script_strategy,
       task_strategy: body.task_strategy,
@@ -2057,6 +2069,7 @@ app.post('/api/backup/import', (req, res) => {
     const data = backup.importBackup(body.backup !== undefined ? body.backup : body, {
       script_strategy: body.script_strategy,
       task_strategy: body.task_strategy,
+      passphrase: body.passphrase,
     });
     reloadJobs(executeTask);
     events.emit('tasks', { imported: true });

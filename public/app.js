@@ -92,6 +92,115 @@ window.dialogConfirm = function(msg, onConfirm) {
   dialog.querySelector('#cd-confirm').addEventListener('click', () => { close(); onConfirm(); });
 };
 
+function dialogPassphrase(msg, onConfirm, allowEmpty = false) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '9999';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'modal open';
+  dialog.style.alignItems = 'center';
+  dialog.style.justifyContent = 'center';
+  dialog.style.zIndex = '10000';
+  dialog.innerHTML = `
+    <div class="modal-panel" style="max-width: 360px; width: 100%; padding: 24px;">
+      <h3 style="margin-bottom: 8px;">设置密码</h3>
+      <p class="muted" style="margin-bottom: 16px;">${escapeHtml(msg)}</p>
+      <label style="display:block; margin-bottom:4px; font-size:0.85em; font-weight:600;">密码</label>
+      <input id="bp-pp-input" type="password" autocomplete="off" placeholder="输入密码" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
+      <label style="display:block; margin-bottom:4px; font-size:0.85em; font-weight:600;">确认密码</label>
+      <input id="bp-pp-confirm" type="password" autocomplete="off" placeholder="再次输入" style="width:100%; box-sizing:border-box; margin-bottom:18px;" />
+      <p id="bp-pp-error" class="muted" style="color:#ef4444; margin-bottom:12px; display:none;"></p>
+      <div class="row" style="justify-content: flex-end;">
+        <button id="bp-pp-cancel" class="alt">取消</button>
+        <button id="bp-pp-confirm-btn">确定</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
+
+  const input = dialog.querySelector('#bp-pp-input');
+  const confirm = dialog.querySelector('#bp-pp-confirm');
+  const error = dialog.querySelector('#bp-pp-error');
+  const close = () => { mask.remove(); dialog.remove(); };
+
+  const validate = () => {
+    const pw = input.value;
+    const pw2 = confirm.value;
+    if (!allowEmpty && !pw.trim()) return '密码不能为空';
+    if (!allowEmpty && pw.length < 8) return '密码至少需要 8 个字符';
+    if (pw !== pw2) return '两次输入的密码不一致';
+    return null;
+  };
+
+  dialog.querySelector('#bp-pp-cancel').addEventListener('click', close);
+  dialog.querySelector('#bp-pp-confirm-btn').addEventListener('click', () => {
+    const err = validate();
+    if (err) { error.textContent = err; error.style.display = 'block'; return; }
+    close();
+    onConfirm(input.value || null);
+  });
+
+  // Enter in either field submits
+  const submit = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const err = validate();
+      if (err) { error.textContent = err; error.style.display = 'block'; return; }
+      close();
+      onConfirm(input.value || null);
+    }
+  };
+  input.addEventListener('keydown', submit);
+  confirm.addEventListener('keydown', submit);
+  // Focus first input
+  setTimeout(() => input.focus(), 100);
+}
+
+window.dialogPassphrase = dialogPassphrase;
+
+/** 导入用：只问一次密码，不需要确认输入（错了会被解密直接顶回来）。 */
+function dialogPassphraseOnce(msg, onConfirm) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '9999';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'modal open';
+  dialog.style.alignItems = 'center';
+  dialog.style.justifyContent = 'center';
+  dialog.style.zIndex = '10000';
+  dialog.innerHTML = `
+    <div class="modal-panel" style="max-width: 360px; width: 100%; padding: 24px;">
+      <h3 style="margin-bottom: 8px;">输入密码</h3>
+      <p class="muted" style="margin-bottom: 16px;">${escapeHtml(msg)}</p>
+      <input id="bp-pp1-input" type="password" autocomplete="off" placeholder="导出时设置的密码" style="width:100%; box-sizing:border-box; margin-bottom:18px;" />
+      <p id="bp-pp1-error" class="muted" style="color:#ef4444; margin-bottom:12px; display:none;"></p>
+      <div class="row" style="justify-content: flex-end;">
+        <button id="bp-pp1-cancel" class="alt">取消</button>
+        <button id="bp-pp1-ok">确定</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+
+  const input = dialog.querySelector('#bp-pp1-input');
+  const error = dialog.querySelector('#bp-pp1-error');
+  const close = () => { mask.remove(); dialog.remove(); };
+  const go = () => {
+    if (!input.value) { error.textContent = '密码不能为空'; error.style.display = 'block'; return; }
+    close();
+    onConfirm(input.value);
+  };
+  dialog.querySelector('#bp-pp1-cancel').addEventListener('click', close);
+  dialog.querySelector('#bp-pp1-ok').addEventListener('click', go);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+  setTimeout(() => input.focus(), 100);
+}
+
 const tasksEl = document.getElementById('tasks');
 const form = document.getElementById('task-form');
 const modalImportForm = document.getElementById('modal-import-form');
@@ -2689,16 +2798,44 @@ window.toggleBackupTask = function toggleBackupTask(id, event) {
   renderTasks();
 }
 
-function downloadBackup(taskIds, includeSecrets) {
-  const query = new URLSearchParams();
-  if (taskIds && taskIds.length) query.set('task_ids', taskIds.join(','));
-  if (includeSecrets) query.set('include_secrets', '1');
-  const link = document.createElement('a');
-  link.href = `/api/backup/export?${query.toString()}`;
-  link.download = '';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+async function downloadBackup(taskIds, passphrase) {
+  try {
+    const body = {};
+    if (taskIds && taskIds.length) body.task_ids = taskIds.join(',');
+    if (passphrase) body.passphrase = passphrase;
+
+    const res = await fetch('/api/backup/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401) { goLogin(); return; }
+    if (!res.ok) {
+      let message = '导出失败';
+      try {
+        const err = JSON.parse(await res.text());
+        message = err.message || message;
+      } catch {}
+      throw new Error(message);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^";\n]+)"?/);
+    const filename = match ? match[1] : (passphrase ? 'backup.bpenc' : 'backup.json');
+
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+
+    // 退出选择模式
+    setBackupSelectionMode(false);
+  } catch (error) {
+    toast(error.message || '导出备份失败', 'error');
+  }
 }
 
 function closeBackupImportModal() {
@@ -2716,7 +2853,10 @@ function showBackupImportModal(plan) {
     ...plan.scripts.filter((item) => ['overwrite', 'rename', 'skip'].includes(item.action)).map((item) => `脚本 ${item.path}：${item.action}`),
     ...plan.tasks.filter((item) => ['overwrite', 'rename', 'skip'].includes(item.action)).map((item) => `任务「${item.name}」：${item.action}`),
   ];
-  const warningList = [...(plan.warnings || []), ...(plan.includes_secrets ? [] : ['备份未包含密钥明文，导入后需要手动补填'])];
+  const warningList = [
+    ...(plan.warnings || []),
+    ...(plan.names_only ? ['此备份只包含变量名，导入后需要手动补填所有变量值'] : []),
+  ];
   backupImportModal.innerHTML = `
     <div class="modal-panel backup-import-panel">
       <div class="modal-header" style="padding:18px 22px;">
@@ -2746,15 +2886,34 @@ function showBackupImportModal(plan) {
   if (window.lucide) window.lucide.createIcons({ root: backupImportModal });
 }
 
+async function previewBackupPayload(backup, passphrase = null) {
+  const data = await fetchJson('/api/backup/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup, passphrase }),
+  });
+  pendingBackupPayload = { backup, passphrase };
+  showBackupImportModal(data.data);
+}
+
 async function previewBackupFile(file) {
   const text = await file.text();
+  if (!text.trim()) throw new Error('备份文件为空');
+
+  if (text.trimStart().startsWith('bp-enc$')) {
+    dialogPassphraseOnce('这是加密备份，请输入导出时设置的密码。', async (passphrase) => {
+      try {
+        await previewBackupPayload(text.trim(), passphrase);
+      } catch (error) {
+        toast(error.message || '解析加密备份失败', 'error');
+      }
+    });
+    return;
+  }
+
   let backup;
-  try { backup = JSON.parse(text); } catch { throw new Error('备份文件不是合法 JSON'); }
-  const data = await fetchJson('/api/backup/preview', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backup }),
-  });
-  pendingBackupPayload = backup;
-  showBackupImportModal(data.data);
+  try { backup = JSON.parse(text); } catch { throw new Error('备份文件不是合法 JSON 或加密备份'); }
+  await previewBackupPayload(backup);
 }
 
 async function importPendingBackup() {
@@ -2766,7 +2925,12 @@ async function importPendingBackup() {
   try {
     const data = await fetchJson('/api/backup/import', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ backup: pendingBackupPayload, task_strategy: taskStrategy, script_strategy: scriptStrategy }),
+      body: JSON.stringify({
+        backup: pendingBackupPayload.backup,
+        passphrase: pendingBackupPayload.passphrase,
+        task_strategy: taskStrategy,
+        script_strategy: scriptStrategy,
+      }),
     });
     closeBackupImportModal();
     toast(`备份已导入：新增 ${data.data.created.length} 个任务`, 'success');
@@ -4285,13 +4449,17 @@ if (backupSelectAll) {
 if (backupExportBtn) {
   backupExportBtn.addEventListener('click', () => {
     if (!selectedBackupTaskIds.size) return;
+    const ids = [...selectedBackupTaskIds];
     if (backupIncludeSecrets && backupIncludeSecrets.checked) {
-      dialogConfirm('导出的文件会包含密钥明文，请像保管密码一样保管这个文件。继续导出吗？', () => {
-        downloadBackup([...selectedBackupTaskIds], true);
-      });
+      // 带配置 ⇒ 必须加密。密码只在这一刻存在于内存里，不落库、不进 URL。
+      dialogPassphrase(
+        '导出文件将包含所有环境变量的值，整体加密后保存。密码不会被保存，忘记就无法恢复。',
+        (passphrase) => downloadBackup(ids, passphrase),
+      );
       return;
     }
-    downloadBackup([...selectedBackupTaskIds], false);
+    // 不带配置 ⇒ 只有变量名，可以放心分享，不需要密码。
+    downloadBackup(ids, null);
   });
 }
 if (backupImportBtn && backupFileInput) {

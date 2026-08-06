@@ -4,7 +4,79 @@ const crypto = require('crypto');
 const config = require('../config');
 const db = require('./db');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+// --- 加密层（不引入新依赖，与 auth.js 的 scrypt 约定共用参数） ---
+const SCRYPT_N = 16384;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_KEYLEN = 64;          // 派生密钥 64 字节 ⇒ 前 32 给 AES-256-GCM，后 32 保留
+const AES_KEYLEN = 32;
+const AES_NONCE_LEN = 12;          // GCM 推荐 12 字节
+const AES_TAG_LEN = 16;
+
+/**
+ * scrypt 派生 + AES-256-GCM 加密。盐和 nonce 随机生成，输出自描述信封，
+ * 格式与 auth.js 的 `hashPassword` 一致（`$` 分隔，头部标识算法）。
+ *
+ * 信封: "bp-enc$scrypt_n$scrypt_r$scrypt_p$salt(b64)$nonce(b64)$ciphertext(b64)"
+ */
+function encryptBackup(plaintext, passphrase) {
+  const salt = crypto.randomBytes(16);
+  const key = crypto.scryptSync(String(passphrase), salt, SCRYPT_KEYLEN, {
+    N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P,
+  });
+  const aesKey = key.subarray(0, AES_KEYLEN);
+  const nonce = crypto.randomBytes(AES_NONCE_LEN);
+  const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, nonce);
+  const encrypted = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [
+    'bp-enc',
+    SCRYPT_N,
+    SCRYPT_R,
+    SCRYPT_P,
+    salt.toString('base64'),
+    nonce.toString('base64'),
+    Buffer.concat([encrypted, tag]).toString('base64'),
+  ].join('$');
+}
+
+/**
+ * 反向解密。返回明文字符串；密码错或信封损坏时抛 Error。
+ */
+function decryptBackup(envelope, passphrase) {
+  try {
+    const parts = String(envelope || '').split('$');
+    if (parts.length !== 7 || parts[0] !== 'bp-enc') {
+      throw new Error('不是合法的加密备份文件');
+    }
+    const [, n, r, p, saltB64, nonceB64, payloadB64] = parts;
+    if (Number(n) !== SCRYPT_N || Number(r) !== SCRYPT_R || Number(p) !== SCRYPT_P) {
+      throw new Error('不支持的加密参数');
+    }
+    const salt = Buffer.from(saltB64, 'base64');
+    const nonce = Buffer.from(nonceB64, 'base64');
+    if (salt.length !== 16) throw new Error('盐长度异常');
+    if (nonce.length !== AES_NONCE_LEN) throw new Error('nonce 长度异常');
+    const key = crypto.scryptSync(String(passphrase), salt, SCRYPT_KEYLEN, {
+      N: Number(n), r: Number(r), p: Number(p),
+    });
+    const aesKey = key.subarray(0, AES_KEYLEN);
+    const payload = Buffer.from(payloadB64, 'base64');
+    if (payload.length < AES_TAG_LEN) throw new Error('密文太短');
+    const ciphertext = payload.subarray(0, payload.length - AES_TAG_LEN);
+    const tag = payload.subarray(payload.length - AES_TAG_LEN);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, nonce);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return decrypted.toString('utf8');
+  } catch (error) {
+    // 密码错误时 GCM 的 final() 会抛；把异常统一成明确提示。
+    throw new Error(error.message.includes('unable to auth')
+      ? '密码错误或备份文件已损坏' : `解密失败: ${error.message}`);
+  }
+}
 
 // 只导出"配置",不导出"运行态"。next_run_at / condition_last_* / callback_* 属于
 // 后者:换台机器后它们必须由调度器和条件门重新算,带过去只会让新面板读到过期状态。
@@ -94,11 +166,29 @@ function pick(row, columns) {
 // ---------------------------------------------------------------- 导出
 
 /**
+ * 导出备份。
+ *
  * 按依赖闭包导出:选中的任务 → 它们引用的脚本 → 它们引用的浏览器配置。
  * 没被引用的脚本和 profile 不进备份文件,否则导出 1 个任务却带上一堆无关脚本,
  * 导入端还要为这些脚本处理覆盖冲突。
+ *
+ * 模式由 passphrase 控制：
+ *   - passphrase 为空 ⇒ "仅名称"模式：去掉所有环境变量值、不导出代理、
+ *     user_data_dir 置空，适合分享任务结构。
+ *   - passphrase 非空 ⇒ "加密完整"模式：带着所有配置和密钥，整体 AES-256-GCM
+ *     加密后返回，杜绝隐私泄露。
+ *
+ * 无论哪种模式，proxy 都不导出、user_data_dir 都置空 —— 代理凭据是本机资产，
+ * 换机必然要重配；user_data_dir 是本机绝对路径，带过去也没意义。
+ *
+ * 返回 { data, header } — data 是输出的字符串，header 是发给前端的元信息
+ * （Content-Disposition 文件名里需要加密标记）。
  */
-function exportBackup({ taskIds = null, includeSecrets = false } = {}) {
+function exportBackup({ taskIds = null, passphrase = null } = {}) {
+  const encrypt = Boolean(passphrase);
+  if (encrypt && String(passphrase).length < 8) {
+    throw new Error('加密密码至少需要 8 个字符');
+  }
   const allTasks = db.listTasks();
   const wanted = normalizeTaskIds(taskIds);
 
@@ -114,7 +204,6 @@ function exportBackup({ taskIds = null, includeSecrets = false } = {}) {
   const warnings = [];
   const selectedIds = new Set(selected.map((task) => Number(task.id)));
 
-  // 脚本平铺去重:多个任务可以共用一个脚本,平铺才能把共用关系原样带过去。
   const scripts = [];
   const seenScripts = new Set();
   for (const task of selected) {
@@ -136,7 +225,6 @@ function exportBackup({ taskIds = null, includeSecrets = false } = {}) {
     const content = fs.readFileSync(resolved.absPath, 'utf8');
     scripts.push({ path: resolved.relPath, content, sha256: sha256(content) });
 
-    // 共用脚本提醒:同机以 overwrite 导入会连带改到未选中的任务。
     const alsoUsedBy = allTasks
       .filter((other) => !selectedIds.has(Number(other.id))
         && String(other.script_path || '').replace(/\\/g, '/') === resolved.relPath)
@@ -158,27 +246,31 @@ function exportBackup({ taskIds = null, includeSecrets = false } = {}) {
       warnings.push(`任务「${task.name}」引用的浏览器配置已不存在(id=${profileId})`);
       continue;
     }
-    profiles.push({
-      ...pick(profile, PROFILE_CONFIG_COLUMNS),
-      env: db.listEnvEntriesRaw('profile', Number(profile.id)).map((row) => {
-        const isSecret = Boolean(row.is_secret);
-        return isSecret && !includeSecrets
-          ? { name: row.name, value: '', is_secret: 1, omitted: true }
-          : { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: isSecret ? 1 : 0 };
-      }),
+    const profileConfig = pick(profile, PROFILE_CONFIG_COLUMNS);
+    // 代理绝不导出；user_data_dir 导出为空（临时目录占位）。
+    profileConfig.proxy = null;
+    profileConfig.user_data_dir = '';
+
+    const profileEnv = db.listEnvEntriesRaw('profile', Number(profile.id)).map((row) => {
+      if (encrypt) {
+        return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: row.is_secret ? 1 : 0 };
+      }
+      // 仅名称模式：所有环境变量只保留变量名
+      return { name: row.name, value: '', is_secret: row.is_secret ? 1 : 0 };
     });
+
+    profiles.push({ ...profileConfig, env: profileEnv });
   }
 
   const tasks = selected.map((task) => {
     const config_ = pick(task, TASK_CONFIG_COLUMNS);
     const profile = profileById.get(Number(task.browser_profile_id));
     const env = db.listEnvEntriesRaw('task', Number(task.id)).map((row) => {
-      const isSecret = Boolean(row.is_secret);
-      // 脱敏时保留变量名:导入后用户只需填值,不用回想当初配了哪些密钥。
-      if (isSecret && !includeSecrets) {
-        return { name: row.name, value: '', is_secret: 1, omitted: true };
+      if (encrypt) {
+        return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: row.is_secret ? 1 : 0 };
       }
-      return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: isSecret ? 1 : 0 };
+      // 仅名称模式：所有环境变量只保留变量名
+      return { name: row.name, value: '', is_secret: row.is_secret ? 1 : 0 };
     });
     return {
       ...config_,
@@ -188,21 +280,58 @@ function exportBackup({ taskIds = null, includeSecrets = false } = {}) {
     };
   });
 
-  return {
+  const payload = {
     schema_version: SCHEMA_VERSION,
     exported_at: new Date().toISOString(),
-    includes_secrets: Boolean(includeSecrets),
+    encrypted: encrypt,
+    names_only: !encrypt,
     scripts,
     browser_profiles: profiles,
     tasks,
     warnings,
   };
+
+  if (encrypt) {
+    const plaintext = JSON.stringify(payload, null, 2);
+    const envelope = encryptBackup(plaintext, passphrase);
+    return {
+      data: envelope,
+      header: { encrypted: true },
+    };
+  }
+
+  return {
+    data: JSON.stringify(payload, null, 2),
+    header: { encrypted: false },
+  };
 }
 
 // ---------------------------------------------------------------- 解析与分析
 
-function parseBackup(input) {
+/** 加密备份的信封是一整行 "bp-enc$..." 字符串，不是 JSON。 */
+function isEncryptedEnvelope(input) {
+  return typeof input === 'string' && input.trimStart().startsWith('bp-enc$');
+}
+
+/**
+ * 解析备份内容。
+ *
+ * input 可以是：
+ *   - 加密信封字符串（"bp-enc$..."）—— 此时必须给 passphrase
+ *   - JSON 字符串
+ *   - 已经 parse 好的对象
+ *
+ * schema_version 2 起 `encrypted` 取代了 v1 的 `includes_secrets`。v1 文件仍可导入：
+ * 它的 includes_secrets 语义等价于"值都在明文里"，所以按未加密的完整备份处理。
+ */
+function parseBackup(input, { passphrase = null } = {}) {
   let data = input;
+
+  if (isEncryptedEnvelope(data)) {
+    if (!passphrase) throw new Error('这是加密备份文件，请输入导出时设置的密码');
+    data = decryptBackup(data.trim(), passphrase);
+  }
+
   if (typeof data === 'string') {
     try {
       data = JSON.parse(data);
@@ -223,10 +352,18 @@ function parseBackup(input) {
   if (!Array.isArray(data.tasks) || !data.tasks.length) {
     throw new Error('备份文件里没有任务');
   }
+
+  // v1 → v2：includes_secrets 只表示"密钥值有没有跟着走"，那种文件从不加密。
+  const encrypted = version >= 2
+    ? Boolean(data.encrypted)
+    : false;
+  const namesOnly = version >= 2 && !encrypted;
+
   return {
     schema_version: version,
     exported_at: data.exported_at ? String(data.exported_at) : null,
-    includes_secrets: Boolean(data.includes_secrets),
+    encrypted,
+    names_only: namesOnly,
     scripts: Array.isArray(data.scripts) ? data.scripts : [],
     browser_profiles: Array.isArray(data.browser_profiles) ? data.browser_profiles : [],
     tasks: data.tasks,
@@ -371,8 +508,16 @@ function analyze(backup, options = {}) {
     }
 
     const env = Array.isArray(entry.env) ? entry.env : [];
+    // v2 仅名称模式: 所有变量值都是空的，导入后都需要补填。
+    // v1 select-secrets 模式: 只有标记了 omitted 的才缺值。
+    // encrypted 模式: 值都在，不需要补。
     const secretsPending = env
-      .filter((item) => item && (item.omitted || (Number(item.is_secret) === 1 && !String(item.value || '').length)))
+      .filter((item) => {
+        if (!item || !item.name) return false;
+        if (backup.encrypted) return false;            // 密文备份，值都在
+        if (backup.names_only) return true;            // 仅名称模式，包括原本就为空的变量
+        return item.omitted || (Number(item.is_secret) === 1 && !String(item.value || '').length);  // v1
+      })
       .map((item) => String(item.name));
 
     taskPlans.push({
@@ -400,7 +545,8 @@ function analyze(backup, options = {}) {
   return {
     schema_version: backup.schema_version,
     exported_at: backup.exported_at,
-    includes_secrets: backup.includes_secrets,
+    encrypted: backup.encrypted,
+    names_only: backup.names_only,
     script_strategy: scriptStrategy,
     task_strategy: taskStrategy,
     scripts: scriptPlans,
@@ -525,7 +671,7 @@ function normalizeEnvForImport(env) {
 }
 
 function importBackup(input, options = {}) {
-  const backup = parseBackup(input);
+  const backup = parseBackup(input, { passphrase: options.passphrase });
   const plan = analyze(backup, options);
 
   const result = { created: [], overwritten: [], skipped: [], profiles_created: [], secrets_pending: [] };
@@ -593,9 +739,12 @@ function importBackup(input, options = {}) {
   };
 }
 
-function buildExportFilename(date = new Date()) {
+function buildExportFilename(date = new Date(), { encrypted = false } = {}) {
   const stamp = date.toISOString().slice(0, 19).replace(/[:T]/g, '').replace(/-/g, '');
-  return `browser-panel-tasks-${stamp}.json`;
+  // 加密文件用 .bpenc 后缀：它不是 JSON，别让用户拿文本编辑器去改。
+  return encrypted
+    ? `browser-panel-tasks-${stamp}.bpenc`
+    : `browser-panel-tasks-${stamp}.json`;
 }
 
 module.exports = {
@@ -606,6 +755,9 @@ module.exports = {
   normalizeStrategy,
   exportBackup,
   parseBackup,
+  isEncryptedEnvelope,
+  encryptBackup,
+  decryptBackup,
   analyze,
   toPreview,
   importBackup,
