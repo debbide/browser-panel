@@ -351,12 +351,15 @@ const appNavToggle = document.getElementById('app-nav-toggle');
 const appNavMask = document.getElementById('app-nav-mask');
 const workspaceTitle = document.getElementById('workspace-title');
 const workspaceSubtitle = document.getElementById('workspace-subtitle');
+const workspaceHeaderActions = Array.from(document.querySelectorAll('[data-header-actions-for]'));
 const mobileNavQuery = window.matchMedia('(max-width: 900px)');
 
 const tabMeta = {
-  'tasks-tab': ['任务看板', '管理任务、运行状态与手动浏览器。'],
-  'profiles-tab': ['浏览器配置', '维护独立的浏览器数据与代理配置。'],
-  'config-tab': ['全局配置', '查找并调整面板级运行设置。'],
+  'tasks-tab': ['Dashboard', '管理任务、运行状态与手动浏览器。'],
+  'profiles-tab': ['Browser Profiles', '维护独立的浏览器数据与代理配置。'],
+  'scripts-tab': ['Script Management', '管理任务脚本、目录与上传文件。'],
+  'notifications-tab': ['TG Notifications', '配置 Telegram 通知与测试消息。'],
+  'config-tab': ['Global Settings', '查找并调整面板级运行设置。'],
 };
 
 function syncAppSidebarAccessibility() {
@@ -407,12 +410,18 @@ function activateAppTab(targetId, { focus = false } = {}) {
     content.setAttribute('aria-hidden', selected ? 'false' : 'true');
   });
 
+  workspaceHeaderActions.forEach((actions) => {
+    actions.hidden = actions.getAttribute('data-header-actions-for') !== targetId;
+  });
+  closeTaskOverflow();
+
   const meta = tabMeta[targetId] || ['', ''];
   if (workspaceTitle) workspaceTitle.textContent = meta[0];
   if (workspaceSubtitle) workspaceSubtitle.textContent = meta[1];
   closeAppNav();
   if (focus) btn.focus();
 
+  if (targetId === 'scripts-tab') loadTasksFs(fsCurrentPath);
   if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
     window.__onConfigTabShow();
   }
@@ -2905,7 +2914,22 @@ function taskCard(task) {
             </span>
           </div>
         </div>
-        <button class="icon-btn" onclick="editTask(${task.id})" ${(isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="edit-task-btn">编辑</button>
+        <div class="task-overflow" data-task-action-area>
+          <button type="button" class="icon-btn task-overflow-trigger" data-task-overflow-trigger aria-expanded="false" aria-controls="task-overflow-${task.id}" aria-label="打开 ${escapeHtml(task.name)} 的更多操作" ${backupSelectionMode ? 'disabled' : ''}>
+            <i data-lucide="ellipsis" class="icon-sm"></i>
+          </button>
+          <div id="task-overflow-${task.id}" class="task-overflow-panel" data-task-overflow-panel hidden>
+            <button type="button" class="task-overflow-item" onclick="editTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="edit-task-btn">
+              <i data-lucide="pencil" class="icon-sm"></i> 编辑
+            </button>
+            <button type="button" class="task-overflow-item" onclick="showTaskRuns(${task.id})">
+              <i data-lucide="history" class="icon-sm"></i> 记录
+            </button>
+            <button type="button" class="task-overflow-item task-overflow-danger" onclick="deleteTask(${task.id})" ${isRunning ? 'disabled' : ''} data-testid="delete-task-btn">
+              <i data-lucide="trash-2" class="icon-sm"></i> 删除
+            </button>
+          </div>
+        </div>
       </div>
       <div class="task-metrics">
         <div class="metric-card ${latest.className}" title="${escapeHtml(latest.detail || '')}">
@@ -2918,11 +2942,10 @@ function taskCard(task) {
         </div>
         ${triggerMetric}
       </div>
-      <div class="task-actions">
-        <button onclick="runTask(${task.id})" ${(isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="run-task-btn">${isRunning ? '运行中…' : '启动'}</button>
-        <button class="alt" onclick="stopTask(${task.id})" ${(!isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="stop-task-btn">停止</button>
-        <button class="alt" onclick="showTaskRuns(${task.id})" ${backupSelectionMode ? 'disabled' : ''}>记录</button>
-        <button class="alt danger" onclick="deleteTask(${task.id})" ${(isRunning || backupSelectionMode) ? 'disabled' : ''} data-testid="delete-task-btn">删除</button>
+      <div class="task-actions" data-task-action-area>
+        ${isRunning
+          ? `<button class="task-primary-action task-stop-action" onclick="stopTask(${task.id})" ${backupSelectionMode ? 'disabled' : ''} data-testid="stop-task-btn"><i data-lucide="square" class="icon-sm"></i> 停止</button>`
+          : `<button class="task-primary-action" onclick="runTask(${task.id})" ${backupSelectionMode ? 'disabled' : ''} data-testid="run-task-btn"><i data-lucide="play" class="icon-sm"></i> 启动</button>`}
       </div>
     </article>`;
 }
@@ -2953,7 +2976,7 @@ function updateBackupSelectionUi() {
 
 window.toggleBackupTask = function toggleBackupTask(id, event) {
   if (!backupSelectionMode) return;
-  if (event && event.target && event.target.closest('button')) return;
+  if (event && event.target && event.target.closest('[data-task-action-area]')) return;
   const taskId = Number(id);
   if (selectedBackupTaskIds.has(taskId)) selectedBackupTaskIds.delete(taskId);
   else selectedBackupTaskIds.add(taskId);
@@ -3122,6 +3145,54 @@ async function loadScripts() {
 }
 
 let lastTasksHtml = null;
+let openTaskOverflowTrigger = null;
+
+function closeTaskOverflow({ restoreFocus = false } = {}) {
+  if (!openTaskOverflowTrigger) return;
+  const trigger = openTaskOverflowTrigger;
+  const panelId = trigger.getAttribute('aria-controls');
+  const panel = panelId ? document.getElementById(panelId) : null;
+  trigger.setAttribute('aria-expanded', 'false');
+  if (panel) panel.hidden = true;
+  openTaskOverflowTrigger = null;
+  if (restoreFocus && trigger.isConnected) trigger.focus();
+}
+
+function openTaskOverflow(trigger) {
+  if (openTaskOverflowTrigger === trigger) {
+    closeTaskOverflow({ restoreFocus: true });
+    return;
+  }
+  closeTaskOverflow();
+  const panelId = trigger.getAttribute('aria-controls');
+  const panel = panelId ? document.getElementById(panelId) : null;
+  if (!panel) return;
+  trigger.setAttribute('aria-expanded', 'true');
+  panel.hidden = false;
+  openTaskOverflowTrigger = trigger;
+  requestAnimationFrame(() => panel.querySelector('button:not(:disabled)')?.focus());
+}
+
+tasksEl?.addEventListener('click', (event) => {
+  const trigger = event.target.closest('[data-task-overflow-trigger]');
+  if (trigger) {
+    event.stopPropagation();
+    openTaskOverflow(trigger);
+    return;
+  }
+  if (event.target.closest('[data-task-overflow-panel]')) closeTaskOverflow();
+});
+
+document.addEventListener('click', (event) => {
+  if (openTaskOverflowTrigger && !event.target.closest('.task-overflow')) closeTaskOverflow();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && openTaskOverflowTrigger) {
+    event.preventDefault();
+    closeTaskOverflow({ restoreFocus: true });
+  }
+});
 
 // 从 tasksCache 同步重渲染，不发请求。
 // 本地状态（stoppingTaskIds / runningTaskIds）变化后调它，点击就能立刻见效。
@@ -3137,8 +3208,10 @@ function renderTasks() {
   // 比的是自己上次生成的字符串，不是 tasksEl.innerHTML —— 后者被浏览器重新序列化过
   // （自闭合标签展开、实体归一化），跟原始字符串永远不相等，这个判断就会永远不生效。
   if (html === lastTasksHtml) return;
+  closeTaskOverflow();
   lastTasksHtml = html;
   tasksEl.innerHTML = html;
+  if (window.lucide) window.lucide.createIcons({ root: tasksEl });
 }
 
 async function loadTasks() {
@@ -3632,9 +3705,7 @@ async function refreshAll() {
     loadScripts(),
     loadRuns(),
     loadBrowserStatus(),
-    loadTelegramSettings(),
     loadProfiles(),
-    loadGlobalEnvSettings(),
   ]);
   await loadTasks();
 }
@@ -3649,8 +3720,8 @@ async function refreshAll() {
 // 不带状态，只是"变了，自己去拉"的信号 —— 拉取走 fetchJson，会话过期时能正常
 // 走 401 跳登录页那条路。
 //
-// 刻意不刷 refreshAll()：它含 loadTelegramSettings / loadGlobalEnvSettings，
-// 会把用户正在编辑的表单输入直接覆盖掉。只拉状态相关的三个。
+// 刻意不刷 refreshAll()：状态推送只需拉运行记录、浏览器状态与任务，
+// 避免额外刷新脚本选择项和浏览器配置，更不能覆盖用户正在编辑的设置表单。
 const SSE_URL = '/api/events';
 // 事件到刷新之间的合并窗口。一个任务结束会连着触发 task + 后续状态变化，
 // 200ms 内的多条事件合并成一次拉取。
@@ -5351,19 +5422,6 @@ function wireTasksFsUi() {
     });
   }
 
-  // 进入全局配置时加载；页内目录状态由统一的 tab 激活逻辑同步。
-  const configTabBtn = document.getElementById('tab-config');
-  if (configTabBtn) {
-    configTabBtn.addEventListener('click', () => {
-      loadTasksFs(fsCurrentPath);
-      loadSchedulerSettings();
-      loadSuccessHeuristicsSettings();
-      loadBrowserRuntimeSettings();
-      loadVisionSettings();
-      loadGlobalEnvSettings();
-      loadTelegramSettings();
-    });
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -5498,7 +5556,8 @@ async function bootPanel() {
   loadBrowserRuntimeSettings();
   loadVisionSettings();
   loadGlobalEnvSettings();
-  loadTasksFs('');
+  loadTelegramSettings();
+  loadTasksFs(fsCurrentPath);
 }
 
 bootPanel();

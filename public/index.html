@@ -9,27 +9,30 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260806a" />
+  <link rel="stylesheet" href="/styles.css?v=20260806b" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
     <aside class="app-sidebar" id="app-sidebar" aria-label="应用导航">
       <div class="app-brand">
-        <span class="app-brand-mark"><i data-lucide="panel-left" class="icon-md"></i></span>
-        <div>
-          <strong>任务面板</strong>
-          <span>Browser Automation</span>
-        </div>
+        <span class="app-brand-code" aria-hidden="true">[ BA ]</span>
+        <strong>Browser Automation</strong>
       </div>
 
       <nav class="app-nav" role="tablist" aria-label="主要页面" aria-orientation="vertical">
         <button id="tab-tasks" class="tab-btn active btn-with-icon" type="button" role="tab" tabindex="0" data-tab="tasks-tab" aria-controls="tasks-tab" aria-selected="true">
-          <i data-lucide="layout-dashboard" class="icon-sm"></i> 任务看板
+          <i data-lucide="layout-dashboard" class="icon-sm"></i> Dashboard
         </button>
         <button id="tab-profiles" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="profiles-tab" aria-controls="profiles-tab" aria-selected="false">
           <i data-lucide="monitor-smartphone" class="icon-sm"></i> 浏览器配置
         </button>
-        <button id="tab-config" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="config-tab" aria-controls="config-tab" aria-selected="false">
+        <button id="tab-scripts" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="scripts-tab" aria-controls="scripts-tab" aria-selected="false">
+          <i data-lucide="file-code-2" class="icon-sm"></i> 脚本管理
+        </button>
+        <button id="tab-notifications" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="notifications-tab" aria-controls="notifications-tab" aria-selected="false">
+          <i data-lucide="send" class="icon-sm"></i> TG 通知
+        </button>
+        <button id="tab-config" class="tab-btn tab-btn-global btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="config-tab" aria-controls="config-tab" aria-selected="false">
           <i data-lucide="settings-2" class="icon-sm"></i> 全局配置
         </button>
       </nav>
@@ -55,32 +58,26 @@
           <i data-lucide="menu" class="icon-md"></i>
         </button>
         <div class="workspace-heading">
-          <h1 id="workspace-title">任务看板</h1>
+          <h1 id="workspace-title">Dashboard</h1>
           <p id="workspace-subtitle">管理任务、运行状态与手动浏览器。</p>
+        </div>
+        <div class="workspace-header-actions" data-header-actions-for="tasks-tab">
+          <button id="backup-select-btn" type="button" class="alt btn-with-icon">
+            <i data-lucide="archive" class="icon-sm"></i> 备份
+          </button>
+          <button id="backup-import-btn" type="button" class="alt btn-with-icon">
+            <i data-lucide="upload" class="icon-sm"></i> 恢复
+          </button>
+          <button id="add-task-btn" type="button" class="btn-primary btn-with-icon" data-testid="add-task-btn">
+            <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
+          </button>
+          <input id="backup-file-input" type="file" accept="application/json,application/octet-stream,.json,.bpenc" hidden />
         </div>
       </header>
 
       <main class="content">
         <div id="tasks-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-tasks">
           <section>
-            <div class="section-header task-page-header">
-              <div>
-                <h2>任务</h2>
-                <p>集中查看任务状态并执行日常操作。</p>
-              </div>
-              <div class="task-header-actions">
-                <button id="backup-select-btn" type="button" class="alt btn-with-icon">
-                  <i data-lucide="archive" class="icon-sm"></i> 备份
-                </button>
-                <button id="backup-import-btn" type="button" class="alt btn-with-icon">
-                  <i data-lucide="upload" class="icon-sm"></i> 恢复
-                </button>
-                <button id="add-task-btn" type="button" class="btn-primary btn-with-icon" data-testid="add-task-btn">
-                  <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
-                </button>
-              </div>
-              <input id="backup-file-input" type="file" accept="application/json,application/octet-stream,.json,.bpenc" hidden />
-            </div>
             <div class="browser-session-toolbar" aria-label="手动浏览器控制">
               <div class="browser-session-copy">
                 <i data-lucide="monitor-play" class="icon-sm"></i>
@@ -134,40 +131,43 @@
         </section>
       </div>
 
-        <div id="config-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-config" hidden>
-          <div class="section-header config-page-header">
+      <div id="scripts-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-scripts" hidden>
+        <section id="cfg-scripts" class="modal-panel config-panel">
+          <div class="section-header compact">
             <div>
-              <h2>全局配置</h2>
-              <p>搜索设置，或按分类快速定位。</p>
-            </div>
-            <div class="config-search" role="search">
-              <label class="field-label" for="config-search-input">搜索设置</label>
-              <div class="config-search-field">
-                <i data-lucide="search" class="icon-sm"></i>
-                <input id="config-search-input" type="search" placeholder="例如：代理、API Key、清理日志" autocomplete="off" aria-describedby="config-search-status" />
-              </div>
-              <div id="config-search-results" class="config-search-results" hidden></div>
-              <p id="config-search-status" class="config-search-status muted" aria-live="polite">输入设置名称或用途</p>
+              <h2>脚本管理</h2>
+              <p class="muted">管理 <code>tasks/</code>：文件夹、上传、下载、编辑、删除。</p>
             </div>
           </div>
+          <div class="files-toolbar row" style="gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <button type="button" class="alt btn-with-icon" id="fs-btn-up" title="上级目录">
+              <i data-lucide="corner-left-up" class="icon-sm"></i> 上级
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-refresh">
+              <i data-lucide="refresh-cw" class="icon-sm"></i> 刷新
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-new-file">
+              <i data-lucide="file-plus" class="icon-sm"></i> 新建文件
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-new-folder">
+              <i data-lucide="folder-plus" class="icon-sm"></i> 新建文件夹
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-upload" title="选择一个或多个文件">
+              <i data-lucide="upload" class="icon-sm"></i> 上传文件
+            </button>
+            <button type="button" class="alt btn-with-icon" id="fs-btn-upload-folder" title="选择整个文件夹（保留目录结构）">
+              <i data-lucide="folder-up" class="icon-sm"></i> 上传文件夹
+            </button>
+            <input type="file" id="fs-upload-input" multiple hidden />
+            <input type="file" id="fs-upload-folder-input" webkitdirectory directory multiple hidden />
+          </div>
+          <div id="fs-breadcrumb" class="files-breadcrumb muted" style="margin-bottom:8px; font-size:13px;">tasks/</div>
+          <div id="fs-list" class="files-list"></div>
+        </section>
+      </div>
 
-          <div class="config-layout">
-            <nav class="config-subnav" id="config-subnav" aria-label="全局配置目录">
-              <span class="config-subnav-label">配置目录</span>
-              <button type="button" class="config-subnav-btn active" data-config-target="cfg-notify" aria-current="location">通知</button>
-              <button type="button" class="config-subnav-btn" data-config-target="cfg-schedule">调度</button>
-              <button type="button" class="config-subnav-btn" data-config-target="cfg-vision">Vision</button>
-              <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量与密钥</button>
-              <button type="button" class="config-subnav-btn" data-config-target="cfg-scripts">脚本管理</button>
-              <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
-              <span class="config-subnav-group">高级设置</span>
-              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-runtime" data-config-parent="cfg-advanced">运行时插件</button>
-              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-storage" data-config-parent="cfg-advanced">存储清理</button>
-              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-github" data-config-parent="cfg-advanced">GitHub 兼容</button>
-            </nav>
-
-            <div class="config-sections">
-              <section id="cfg-notify" class="modal-panel config-panel config-section" data-config-section="notify" data-config-title="Telegram 通知" data-config-path="通知" data-config-keywords="telegram notification 通知 bot token chat id 代理 proxy 发送测试消息">
+      <div id="notifications-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-notifications" hidden>
+        <section id="cfg-notify" class="modal-panel config-panel">
           <div class="section-header compact">
             <div>
               <h2>Telegram 通知</h2>
@@ -198,8 +198,40 @@
             </div>
           </form>
         </section>
+      </div>
 
-        <section id="cfg-schedule" class="modal-panel config-panel config-section" data-config-section="schedule" data-config-title="任务调度" data-config-path="调度" data-config-keywords="scheduler schedule 调度 并行 parallel concurrency 串行 多任务">
+      <div id="config-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-config" hidden>
+          <div class="section-header config-page-header">
+            <div>
+              <h2>全局配置</h2>
+              <p>搜索设置，或按分类快速定位。</p>
+            </div>
+            <div class="config-search" role="search">
+              <label class="field-label" for="config-search-input">搜索设置</label>
+              <div class="config-search-field">
+                <i data-lucide="search" class="icon-sm"></i>
+                <input id="config-search-input" type="search" placeholder="例如：代理、API Key、清理日志" autocomplete="off" aria-describedby="config-search-status" />
+              </div>
+              <div id="config-search-results" class="config-search-results" hidden></div>
+              <p id="config-search-status" class="config-search-status muted" aria-live="polite">输入设置名称或用途</p>
+            </div>
+          </div>
+
+          <div class="config-layout">
+            <nav class="config-subnav" id="config-subnav" aria-label="全局配置目录">
+              <span class="config-subnav-label">配置目录</span>
+              <button type="button" class="config-subnav-btn active" data-config-target="cfg-schedule" aria-current="location">调度</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-vision">Vision</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量与密钥</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
+              <span class="config-subnav-group">高级设置</span>
+              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-runtime" data-config-parent="cfg-advanced">运行时插件</button>
+              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-storage" data-config-parent="cfg-advanced">存储清理</button>
+              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-github" data-config-parent="cfg-advanced">GitHub 兼容</button>
+            </nav>
+
+            <div class="config-sections">
+              <section id="cfg-schedule" class="modal-panel config-panel config-section" data-config-section="schedule" data-config-title="任务调度" data-config-path="调度" data-config-keywords="scheduler schedule 调度 并行 parallel concurrency 串行 多任务">
           <div class="section-header compact">
             <div>
               <h2>任务调度</h2>
@@ -276,39 +308,6 @@
               脚本通过 <code>os.environ["NAME"]</code> / <code>process.env.NAME</code> 读取。Secret 保存后只显示掩码，留空再保存表示不修改。
             </div>
           </div>
-        </section>
-
-        <section id="cfg-scripts" class="modal-panel config-panel config-section" data-config-section="scripts" data-config-title="脚本管理" data-config-path="脚本管理" data-config-keywords="script file folder 脚本 文件 文件夹 上传 upload 下载 download 编辑 删除 tasks">
-          <div class="section-header compact">
-            <div>
-              <h2>脚本管理</h2>
-              <p class="muted">管理 <code>tasks/</code>：文件夹、上传、下载、编辑、删除。</p>
-            </div>
-          </div>
-          <div class="files-toolbar row" style="gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-            <button type="button" class="alt btn-with-icon" id="fs-btn-up" title="上级目录">
-              <i data-lucide="corner-left-up" class="icon-sm"></i> 上级
-            </button>
-            <button type="button" class="alt btn-with-icon" id="fs-btn-refresh">
-              <i data-lucide="refresh-cw" class="icon-sm"></i> 刷新
-            </button>
-            <button type="button" class="alt btn-with-icon" id="fs-btn-new-file">
-              <i data-lucide="file-plus" class="icon-sm"></i> 新建文件
-            </button>
-            <button type="button" class="alt btn-with-icon" id="fs-btn-new-folder">
-              <i data-lucide="folder-plus" class="icon-sm"></i> 新建文件夹
-            </button>
-            <button type="button" class="alt btn-with-icon" id="fs-btn-upload" title="选择一个或多个文件">
-              <i data-lucide="upload" class="icon-sm"></i> 上传文件
-            </button>
-            <button type="button" class="alt btn-with-icon" id="fs-btn-upload-folder" title="选择整个文件夹（保留目录结构）">
-              <i data-lucide="folder-up" class="icon-sm"></i> 上传文件夹
-            </button>
-            <input type="file" id="fs-upload-input" multiple hidden />
-            <input type="file" id="fs-upload-folder-input" webkitdirectory directory multiple hidden />
-          </div>
-          <div id="fs-breadcrumb" class="files-breadcrumb muted" style="margin-bottom:8px; font-size:13px;">tasks/</div>
-          <div id="fs-list" class="files-list"></div>
         </section>
 
         <section id="cfg-advanced" class="modal-panel config-panel config-section config-advanced" data-config-section="advanced" data-config-title="高级设置" data-config-path="高级" data-config-keywords="advanced 高级 运行时 插件 存储 清理 github 兼容">
@@ -891,7 +890,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260806a"></script>
+  <script src="/app.js?v=20260806b"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();
