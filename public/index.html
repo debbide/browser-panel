@@ -9,70 +9,98 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260803a" />
+  <link rel="stylesheet" href="/styles.css?v=20260806a" />
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div>
-        <h1>任务面板</h1>
-        <p class="subtitle">导入脚本，设定规则，直接运行。</p>
-      </div>
-      <div class="topbar-actions">
-        <div class="browser-launch-group">
-          <select id="browser-profile-select">
-            <option value="">默认配置</option>
-          </select>
-          <button id="open-browser-btn" type="button" data-testid="open-browser-btn">
-            <i data-lucide="monitor-play" class="icon-sm"></i> 启动
-          </button>
+  <div class="app-shell" id="app-shell">
+    <aside class="app-sidebar" id="app-sidebar" aria-label="应用导航">
+      <div class="app-brand">
+        <span class="app-brand-mark"><i data-lucide="panel-left" class="icon-md"></i></span>
+        <div>
+          <strong>任务面板</strong>
+          <span>Browser Automation</span>
         </div>
-        <button id="close-browser-btn" type="button" class="alt btn-with-icon" data-testid="close-browser-btn">
-          <i data-lucide="monitor-stop" class="icon-sm"></i> 关闭浏览器
-        </button>
-        <button id="tab-tasks" class="tab-btn active btn-with-icon" type="button" role="tab" data-tab="tasks-tab" aria-controls="tasks-tab" aria-selected="true" style="margin-left: 20px;">
+      </div>
+
+      <nav class="app-nav" role="tablist" aria-label="主要页面" aria-orientation="vertical">
+        <button id="tab-tasks" class="tab-btn active btn-with-icon" type="button" role="tab" tabindex="0" data-tab="tasks-tab" aria-controls="tasks-tab" aria-selected="true">
           <i data-lucide="layout-dashboard" class="icon-sm"></i> 任务看板
         </button>
-        <button id="tab-profiles" class="tab-btn btn-with-icon" type="button" role="tab" data-tab="profiles-tab" aria-controls="profiles-tab" aria-selected="false">
+        <button id="tab-profiles" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="profiles-tab" aria-controls="profiles-tab" aria-selected="false">
           <i data-lucide="monitor-smartphone" class="icon-sm"></i> 浏览器配置
         </button>
-        <button id="tab-config" class="tab-btn btn-with-icon" type="button" role="tab" data-tab="config-tab" aria-controls="config-tab" aria-selected="false">
+        <button id="tab-config" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="config-tab" aria-controls="config-tab" aria-selected="false">
           <i data-lucide="settings-2" class="icon-sm"></i> 全局配置
         </button>
-        <div class="topbar-user" id="topbar-user" hidden>
-          <span class="topbar-username" id="topbar-username" title="当前登录账号"></span>
-          <button id="change-password-btn" type="button" class="alt btn-with-icon" title="修改密码">
-            <i data-lucide="key-round" class="icon-sm"></i> 修改密码
-          </button>
-          <button id="logout-btn" type="button" class="alt btn-with-icon" title="退出登录">
-            <i data-lucide="log-out" class="icon-sm"></i> 退出
-          </button>
-        </div>
-      </div>
-    </header>
+      </nav>
 
-    <main class="content">
-      <div id="tasks-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-tasks">
-        <section>
-          <div class="section-header">
-            <div>
-              <h2>任务</h2>
-              <p>一个任务一张卡片。</p>
+      <div class="topbar-user" id="topbar-user" hidden>
+        <div class="sidebar-account">
+          <span class="sidebar-account-label">当前账号</span>
+          <span class="topbar-username" id="topbar-username" title="当前登录账号"></span>
+        </div>
+        <button id="change-password-btn" type="button" class="alt btn-with-icon" title="修改密码">
+          <i data-lucide="key-round" class="icon-sm"></i> 修改密码
+        </button>
+        <button id="logout-btn" type="button" class="alt btn-with-icon" title="退出登录">
+          <i data-lucide="log-out" class="icon-sm"></i> 退出
+        </button>
+      </div>
+    </aside>
+    <button id="app-nav-mask" class="app-nav-mask" type="button" aria-label="关闭主导航" hidden></button>
+
+    <div class="app-workspace">
+      <header class="workspace-header">
+        <button id="app-nav-toggle" class="icon-btn app-nav-toggle" type="button" aria-controls="app-sidebar" aria-expanded="false" aria-label="打开主导航">
+          <i data-lucide="menu" class="icon-md"></i>
+        </button>
+        <div class="workspace-heading">
+          <h1 id="workspace-title">任务看板</h1>
+          <p id="workspace-subtitle">管理任务、运行状态与手动浏览器。</p>
+        </div>
+      </header>
+
+      <main class="content">
+        <div id="tasks-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-tasks">
+          <section>
+            <div class="section-header task-page-header">
+              <div>
+                <h2>任务</h2>
+                <p>集中查看任务状态并执行日常操作。</p>
+              </div>
+              <div class="task-header-actions">
+                <button id="backup-select-btn" type="button" class="alt btn-with-icon">
+                  <i data-lucide="archive" class="icon-sm"></i> 备份
+                </button>
+                <button id="backup-import-btn" type="button" class="alt btn-with-icon">
+                  <i data-lucide="upload" class="icon-sm"></i> 恢复
+                </button>
+                <button id="add-task-btn" type="button" class="btn-primary btn-with-icon" data-testid="add-task-btn">
+                  <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
+                </button>
+              </div>
+              <input id="backup-file-input" type="file" accept="application/json,application/octet-stream,.json,.bpenc" hidden />
             </div>
-            <div class="task-header-actions">
-              <button id="backup-select-btn" type="button" class="alt btn-with-icon">
-                <i data-lucide="archive" class="icon-sm"></i> 备份
-              </button>
-              <button id="backup-import-btn" type="button" class="alt btn-with-icon">
-                <i data-lucide="upload" class="icon-sm"></i> 恢复
-              </button>
-              <button id="add-task-btn" type="button" class="btn-primary btn-with-icon" data-testid="add-task-btn">
-                <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
-              </button>
+            <div class="browser-session-toolbar" aria-label="手动浏览器控制">
+              <div class="browser-session-copy">
+                <i data-lucide="monitor-play" class="icon-sm"></i>
+                <span><strong>手动浏览器</strong><small>选择配置后启动独立浏览器会话</small></span>
+              </div>
+              <div class="browser-session-actions">
+                <div class="browser-launch-group">
+                  <select id="browser-profile-select" aria-label="浏览器配置">
+                    <option value="">默认配置</option>
+                  </select>
+                  <button id="open-browser-btn" type="button" data-testid="open-browser-btn">
+                    <i data-lucide="play" class="icon-sm"></i> 启动
+                  </button>
+                </div>
+                <button id="close-browser-btn" type="button" class="alt btn-with-icon" data-testid="close-browser-btn">
+                  <i data-lucide="square" class="icon-sm"></i> 关闭
+                </button>
+              </div>
             </div>
-            <input id="backup-file-input" type="file" accept="application/json,application/octet-stream,.json,.bpenc" hidden />
-          </div>
-          <div id="backup-selection-bar" class="backup-selection-bar" hidden>
+            <div id="backup-selection-bar" class="backup-selection-bar" hidden>
             <label class="inline-check backup-select-all">
               <input id="backup-select-all" type="checkbox" />
               <span>全选</span>
@@ -106,17 +134,40 @@
         </section>
       </div>
 
-      <div id="config-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-config" hidden>
-        <nav class="config-subnav" id="config-subnav" aria-label="全局配置分段">
-          <button type="button" class="config-subnav-btn active" data-config-target="cfg-notify">通知</button>
-          <button type="button" class="config-subnav-btn" data-config-target="cfg-schedule">调度</button>
-          <button type="button" class="config-subnav-btn" data-config-target="cfg-vision">Vision</button>
-          <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量</button>
-          <button type="button" class="config-subnav-btn" data-config-target="cfg-scripts">脚本</button>
-          <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
-        </nav>
+        <div id="config-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-config" hidden>
+          <div class="section-header config-page-header">
+            <div>
+              <h2>全局配置</h2>
+              <p>搜索设置，或按分类快速定位。</p>
+            </div>
+            <div class="config-search" role="search">
+              <label class="field-label" for="config-search-input">搜索设置</label>
+              <div class="config-search-field">
+                <i data-lucide="search" class="icon-sm"></i>
+                <input id="config-search-input" type="search" placeholder="例如：代理、API Key、清理日志" autocomplete="off" aria-describedby="config-search-status" />
+              </div>
+              <div id="config-search-results" class="config-search-results" hidden></div>
+              <p id="config-search-status" class="config-search-status muted" aria-live="polite">输入设置名称或用途</p>
+            </div>
+          </div>
 
-        <section id="cfg-notify" class="modal-panel config-panel config-section" data-config-section="notify">
+          <div class="config-layout">
+            <nav class="config-subnav" id="config-subnav" aria-label="全局配置目录">
+              <span class="config-subnav-label">配置目录</span>
+              <button type="button" class="config-subnav-btn active" data-config-target="cfg-notify" aria-current="location">通知</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-schedule">调度</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-vision">Vision</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量与密钥</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-scripts">脚本管理</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
+              <span class="config-subnav-group">高级设置</span>
+              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-runtime" data-config-parent="cfg-advanced">运行时插件</button>
+              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-storage" data-config-parent="cfg-advanced">存储清理</button>
+              <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-github" data-config-parent="cfg-advanced">GitHub 兼容</button>
+            </nav>
+
+            <div class="config-sections">
+              <section id="cfg-notify" class="modal-panel config-panel config-section" data-config-section="notify" data-config-title="Telegram 通知" data-config-path="通知" data-config-keywords="telegram notification 通知 bot token chat id 代理 proxy 发送测试消息">
           <div class="section-header compact">
             <div>
               <h2>Telegram 通知</h2>
@@ -148,7 +199,7 @@
           </form>
         </section>
 
-        <section id="cfg-schedule" class="modal-panel config-panel config-section" data-config-section="schedule">
+        <section id="cfg-schedule" class="modal-panel config-panel config-section" data-config-section="schedule" data-config-title="任务调度" data-config-path="调度" data-config-keywords="scheduler schedule 调度 并行 parallel concurrency 串行 多任务">
           <div class="section-header compact">
             <div>
               <h2>任务调度</h2>
@@ -171,7 +222,7 @@
           </form>
         </section>
 
-        <section id="cfg-vision" class="modal-panel config-panel config-section" data-config-section="vision">
+        <section id="cfg-vision" class="modal-panel config-panel config-section" data-config-section="vision" data-config-title="Vision 模型" data-config-path="Vision" data-config-keywords="vision model 模型 api key base url 通道 channel 主通道 故障转移 failover 测试">
           <div class="section-header compact">
             <div>
               <h2>Vision Model</h2>
@@ -197,7 +248,7 @@
           </form>
         </section>
 
-        <section id="cfg-env" class="modal-panel config-panel config-section" data-config-section="env">
+        <section id="cfg-env" class="modal-panel config-panel config-section" data-config-section="env" data-config-title="变量与密钥" data-config-path="变量与密钥" data-config-keywords="environment env variable secret 变量 密钥 github actions ci 导入 保存">
           <div class="section-header compact">
             <div>
               <h2>变量与密钥</h2>
@@ -227,7 +278,7 @@
           </div>
         </section>
 
-        <section id="cfg-scripts" class="modal-panel config-panel config-section" data-config-section="scripts">
+        <section id="cfg-scripts" class="modal-panel config-panel config-section" data-config-section="scripts" data-config-title="脚本管理" data-config-path="脚本管理" data-config-keywords="script file folder 脚本 文件 文件夹 上传 upload 下载 download 编辑 删除 tasks">
           <div class="section-header compact">
             <div>
               <h2>脚本管理</h2>
@@ -260,7 +311,7 @@
           <div id="fs-list" class="files-list"></div>
         </section>
 
-        <section id="cfg-advanced" class="modal-panel config-panel config-section config-advanced" data-config-section="advanced">
+        <section id="cfg-advanced" class="modal-panel config-panel config-section config-advanced" data-config-section="advanced" data-config-title="高级设置" data-config-path="高级" data-config-keywords="advanced 高级 运行时 插件 存储 清理 github 兼容">
           <div class="section-header compact">
             <div>
               <h2>高级</h2>
@@ -268,7 +319,7 @@
             </div>
           </div>
 
-          <details class="config-details" id="cfg-details-runtime">
+          <details class="config-details" id="cfg-details-runtime" data-config-title="浏览器运行时插件" data-config-path="高级 / 浏览器运行时插件" data-config-keywords="chrome chromium executable 可执行文件 路径 extension 扩展 playwright seleniumbase chromedriver plugin package 安装浏览器环境">
             <summary>
               <span class="config-details-title">浏览器运行时插件</span>
               <span class="muted" id="browser-runtime-status">状态：加载中...</span>
@@ -347,7 +398,7 @@
             </div>
           </details>
 
-          <details class="config-details" id="cfg-details-storage" style="margin-top:12px;">
+          <details class="config-details" id="cfg-details-storage" style="margin-top:12px;" data-config-title="存储清理" data-config-path="高级 / 存储清理" data-config-keywords="storage cleanup 存储 清理 保留天数 retention 日志 log 截图 screenshot 临时配置 profile 预览 删除">
             <summary>
               <span class="config-details-title">存储清理</span>
               <span class="muted" id="storage-cleanup-status">尚未预览</span>
@@ -383,7 +434,7 @@
             </div>
           </details>
 
-          <details class="config-details" id="cfg-details-github" style="margin-top:12px;">
+          <details class="config-details" id="cfg-details-github" style="margin-top:12px;" data-config-title="GitHub 脚本兼容" data-config-path="高级 / GitHub 脚本兼容" data-config-keywords="github compatibility 兼容 软成功 soft success 宽限 grace 强退 成功日志 失败日志 regex 正则 timeout">
             <summary>
               <span class="config-details-title">GitHub 脚本兼容</span>
               <span class="muted" id="success-heuristics-status">状态：加载中...</span>
@@ -418,9 +469,12 @@
               </form>
             </div>
           </details>
-        </section>
-      </div>
-    </main>
+              </section>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
   </div>
 
   <div id="modal-mask" class="modal-mask" hidden></div>
@@ -837,7 +891,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260804a"></script>
+  <script src="/app.js?v=20260806a"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

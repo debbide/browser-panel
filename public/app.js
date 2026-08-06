@@ -343,92 +343,256 @@ const conditionCallbackStatusText = document.getElementById('condition-callback-
 const conditionTestBtn = document.getElementById('condition-test-btn');
 const conditionLastStatusText = document.getElementById('condition-last-status-text');
 
-const tabBtns = document.querySelectorAll('.tab-btn');
-const tabContents = document.querySelectorAll('.tab-content');
+const tabBtns = Array.from(document.querySelectorAll('.tab-btn'));
+const tabContents = Array.from(document.querySelectorAll('.tab-content'));
+const appShell = document.getElementById('app-shell');
+const appSidebar = document.getElementById('app-sidebar');
+const appNavToggle = document.getElementById('app-nav-toggle');
+const appNavMask = document.getElementById('app-nav-mask');
+const workspaceTitle = document.getElementById('workspace-title');
+const workspaceSubtitle = document.getElementById('workspace-subtitle');
+const mobileNavQuery = window.matchMedia('(max-width: 900px)');
 
-tabBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    const targetId = btn.getAttribute('data-tab');
+const tabMeta = {
+  'tasks-tab': ['任务看板', '管理任务、运行状态与手动浏览器。'],
+  'profiles-tab': ['浏览器配置', '维护独立的浏览器数据与代理配置。'],
+  'config-tab': ['全局配置', '查找并调整面板级运行设置。'],
+};
 
-    tabBtns.forEach(b => {
-      b.classList.remove('active');
-      b.setAttribute('aria-selected', 'false');
-    });
-    tabContents.forEach(c => {
-      c.classList.remove('active');
-      c.hidden = true;
-      c.setAttribute('aria-hidden', 'true');
-    });
+function syncAppSidebarAccessibility() {
+  if (!appSidebar) return;
+  const drawerOpen = appShell?.classList.contains('is-nav-open');
+  appSidebar.inert = mobileNavQuery.matches && !drawerOpen;
+  appSidebar.setAttribute('aria-hidden', mobileNavQuery.matches && !drawerOpen ? 'true' : 'false');
+}
 
-    btn.classList.add('active');
-    btn.setAttribute('aria-selected', 'true');
-    const panel = document.getElementById(targetId);
-    panel.classList.add('active');
-    panel.hidden = false;
-    panel.setAttribute('aria-hidden', 'false');
+function closeAppNav({ restoreFocus = false } = {}) {
+  if (!appShell || !appNavToggle || !appNavMask) return;
+  appShell.classList.remove('is-nav-open');
+  document.body.classList.remove('app-nav-open');
+  appNavMask.hidden = true;
+  appNavToggle.setAttribute('aria-expanded', 'false');
+  appNavToggle.setAttribute('aria-label', '打开主导航');
+  syncAppSidebarAccessibility();
+  if (restoreFocus) appNavToggle.focus();
+}
 
-    if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
-      window.__onConfigTabShow();
-    }
+function openAppNav() {
+  if (!appShell || !appNavToggle || !appNavMask) return;
+  appShell.classList.add('is-nav-open');
+  document.body.classList.add('app-nav-open');
+  appNavMask.hidden = false;
+  appNavToggle.setAttribute('aria-expanded', 'true');
+  appNavToggle.setAttribute('aria-label', '关闭主导航');
+  syncAppSidebarAccessibility();
+  const selected = tabBtns.find((btn) => btn.getAttribute('aria-selected') === 'true');
+  requestAnimationFrame(() => selected?.focus());
+}
+
+function activateAppTab(targetId, { focus = false } = {}) {
+  const btn = tabBtns.find((item) => item.getAttribute('data-tab') === targetId);
+  const panel = document.getElementById(targetId);
+  if (!btn || !panel) return;
+
+  tabBtns.forEach((item) => {
+    const selected = item === btn;
+    item.classList.toggle('active', selected);
+    item.setAttribute('aria-selected', selected ? 'true' : 'false');
+    item.tabIndex = selected ? 0 : -1;
+  });
+  tabContents.forEach((content) => {
+    const selected = content === panel;
+    content.classList.toggle('active', selected);
+    content.hidden = !selected;
+    content.setAttribute('aria-hidden', selected ? 'false' : 'true');
+  });
+
+  const meta = tabMeta[targetId] || ['', ''];
+  if (workspaceTitle) workspaceTitle.textContent = meta[0];
+  if (workspaceSubtitle) workspaceSubtitle.textContent = meta[1];
+  closeAppNav();
+  if (focus) btn.focus();
+
+  if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
+    window.__onConfigTabShow();
+  }
+}
+
+tabBtns.forEach((btn, index) => {
+  btn.addEventListener('click', () => activateAppTab(btn.getAttribute('data-tab')));
+  btn.addEventListener('keydown', (event) => {
+    let nextIndex = null;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (index + 1) % tabBtns.length;
+    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (index - 1 + tabBtns.length) % tabBtns.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = tabBtns.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    activateAppTab(tabBtns[nextIndex].getAttribute('data-tab'), { focus: true });
   });
 });
 
-/* ---------- Global config: sticky sub-nav + section scroll ---------- */
+appNavToggle?.addEventListener('click', () => {
+  if (appShell?.classList.contains('is-nav-open')) closeAppNav({ restoreFocus: true });
+  else openAppNav();
+});
+appNavMask?.addEventListener('click', () => closeAppNav({ restoreFocus: true }));
+mobileNavQuery.addEventListener('change', () => closeAppNav());
+syncAppSidebarAccessibility();
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && appShell?.classList.contains('is-nav-open')) {
+    closeAppNav({ restoreFocus: true });
+  }
+});
+
+/* ---------- Global config: searchable index + section scroll ---------- */
 function setupConfigSubnav() {
   const root = document.getElementById('config-tab');
   const nav = document.getElementById('config-subnav');
+  const searchInput = document.getElementById('config-search-input');
+  const searchResults = document.getElementById('config-search-results');
+  const searchStatus = document.getElementById('config-search-status');
   if (!root || !nav) return;
 
   const buttons = Array.from(nav.querySelectorAll('.config-subnav-btn[data-config-target]'));
-  const sections = buttons
-    .map((btn) => document.getElementById(btn.getAttribute('data-config-target')))
-    .filter(Boolean);
+  const topSections = Array.from(root.querySelectorAll('.config-section[id]'));
+  const searchable = Array.from(root.querySelectorAll('[data-config-title][id]')).map((el) => ({
+    id: el.id,
+    title: el.dataset.configTitle || '',
+    path: el.dataset.configPath || '',
+    haystack: `${el.dataset.configTitle || ''} ${el.dataset.configPath || ''} ${el.dataset.configKeywords || ''}`.toLocaleLowerCase(),
+  }));
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   function setActive(id) {
     buttons.forEach((btn) => {
-      btn.classList.toggle('active', btn.getAttribute('data-config-target') === id);
+      const active = btn.getAttribute('data-config-target') === id;
+      btn.classList.toggle('active', active);
+      if (active) btn.setAttribute('aria-current', 'location');
+      else btn.removeAttribute('aria-current');
     });
   }
 
+  function navigateTo(id, { focus = true } = {}) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el instanceof HTMLDetailsElement) el.open = true;
+    const parent = el.closest('.config-section');
+    setActive(id);
+    el.classList.remove('config-search-target');
+    void el.offsetWidth;
+    el.classList.add('config-search-target');
+    el.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'start' });
+    if (focus) {
+      const focusTarget = el instanceof HTMLDetailsElement ? el.querySelector('summary') : el.querySelector('h2');
+      if (focusTarget) {
+        focusTarget.tabIndex = -1;
+        window.setTimeout(() => focusTarget.focus({ preventScroll: true }), reducedMotion.matches ? 0 : 300);
+      }
+    }
+    if (parent && id !== parent.id && !buttons.some((btn) => btn.getAttribute('data-config-target') === id)) {
+      setActive(parent.id);
+    }
+  }
+
   buttons.forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      const id = btn.getAttribute('data-config-target');
-      const el = document.getElementById(id);
-      if (!el) return;
-      setActive(id);
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      navigateTo(btn.getAttribute('data-config-target'));
     });
   });
 
-  // Highlight section while scrolling (only when config tab is visible)
   let ticking = false;
   function updateActiveFromScroll() {
     ticking = false;
     if (root.hidden || !root.classList.contains('active')) return;
-    const marker = 96; // sticky nav offset
-    let current = sections[0]?.id;
-    for (const sec of sections) {
-      const top = sec.getBoundingClientRect().top;
-      if (top - marker <= 8) current = sec.id;
+    const headerHeight = document.querySelector('.workspace-header')?.getBoundingClientRect().height || 0;
+    const navHeight = window.innerWidth <= 1060 ? nav.getBoundingClientRect().height : 0;
+    const marker = headerHeight + navHeight + 18;
+    let current = topSections[0]?.id;
+    topSections.forEach((section) => {
+      if (section.getBoundingClientRect().top <= marker) current = section.id;
+    });
+    if (current === 'cfg-advanced') {
+      root.querySelectorAll('#cfg-advanced > .config-details').forEach((details) => {
+        if (details.getBoundingClientRect().top <= marker + 8) current = details.id;
+      });
     }
     if (current) setActive(current);
   }
 
-  window.addEventListener(
-    'scroll',
-    () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(updateActiveFromScroll);
-    },
-    { passive: true }
-  );
+  window.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(updateActiveFromScroll);
+  }, { passive: true });
+
+  let highlightedIndex = -1;
+  let currentMatches = [];
+  function highlightResult(index) {
+    const resultButtons = Array.from(searchResults?.querySelectorAll('.config-search-result') || []);
+    if (!resultButtons.length) return;
+    highlightedIndex = (index + resultButtons.length) % resultButtons.length;
+    resultButtons.forEach((btn, i) => btn.classList.toggle('is-highlighted', i === highlightedIndex));
+    resultButtons[highlightedIndex].scrollIntoView({ block: 'nearest' });
+  }
+
+  function closeSearchResults({ clear = false } = {}) {
+    if (clear && searchInput) searchInput.value = '';
+    if (searchResults) searchResults.hidden = true;
+    highlightedIndex = -1;
+    currentMatches = [];
+    if (clear && searchStatus) searchStatus.textContent = '输入设置名称或用途';
+  }
+
+  function renderSearch() {
+    if (!searchInput || !searchResults || !searchStatus) return;
+    const query = searchInput.value.trim().toLocaleLowerCase();
+    highlightedIndex = -1;
+    if (!query) {
+      closeSearchResults();
+      searchStatus.textContent = '输入设置名称或用途';
+      return;
+    }
+    currentMatches = searchable.filter((item) => item.haystack.includes(query)).slice(0, 8);
+    searchStatus.textContent = currentMatches.length ? `找到 ${currentMatches.length} 项设置` : '未找到匹配设置';
+    searchResults.innerHTML = currentMatches.length
+      ? currentMatches.map((item, index) => `<button type="button" class="config-search-result" data-result-index="${index}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.path)}</span></button>`).join('')
+      : '<div class="config-search-empty">换一个名称或用途试试</div>';
+    searchResults.hidden = false;
+  }
+
+  searchInput?.addEventListener('input', renderSearch);
+  searchInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' && currentMatches.length) {
+      event.preventDefault();
+      highlightResult(highlightedIndex + 1);
+    } else if (event.key === 'ArrowUp' && currentMatches.length) {
+      event.preventDefault();
+      highlightResult(highlightedIndex - 1);
+    } else if (event.key === 'Enter' && currentMatches.length) {
+      event.preventDefault();
+      const item = currentMatches[highlightedIndex >= 0 ? highlightedIndex : 0];
+      closeSearchResults();
+      navigateTo(item.id);
+    } else if (event.key === 'Escape') {
+      closeSearchResults({ clear: true });
+    }
+  });
+  searchResults?.addEventListener('click', (event) => {
+    const btn = event.target.closest('.config-search-result');
+    if (!btn) return;
+    const item = currentMatches[Number(btn.dataset.resultIndex)];
+    if (!item) return;
+    closeSearchResults();
+    navigateTo(item.id);
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.config-search')) closeSearchResults();
+  });
 
   window.__onConfigTabShow = () => {
-    // keep current highlight; ensure first section active if none
-    const active = nav.querySelector('.config-subnav-btn.active');
-    if (!active && buttons[0]) setActive(buttons[0].getAttribute('data-config-target'));
+    if (!nav.querySelector('.config-subnav-btn.active') && buttons[0]) setActive(buttons[0].getAttribute('data-config-target'));
     requestAnimationFrame(updateActiveFromScroll);
   };
 }
@@ -5187,7 +5351,7 @@ function wireTasksFsUi() {
     });
   }
 
-  // 进入全局配置时加载（与顶栏 tab 切换配合）
+  // 进入全局配置时加载；页内目录状态由统一的 tab 激活逻辑同步。
   const configTabBtn = document.getElementById('tab-config');
   if (configTabBtn) {
     configTabBtn.addEventListener('click', () => {
@@ -5198,9 +5362,6 @@ function wireTasksFsUi() {
       loadVisionSettings();
       loadGlobalEnvSettings();
       loadTelegramSettings();
-      if (typeof window.__onConfigTabShow === 'function') {
-        window.__onConfigTabShow();
-      }
     });
   }
 }
