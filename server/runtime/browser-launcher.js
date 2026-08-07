@@ -7,6 +7,8 @@ const {
   parseTaskParams,
   resolveUseTempProfile,
   resolveEffectiveProxy,
+  resolveEffectiveLocale,
+  resolveEffectiveTimezone,
   buildBrowserUserEnvPairs,
   summarizeEnvPairs,
   applyProxyAliases,
@@ -828,10 +830,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     profile && profile.name,
     ''
   );
-  const profileLocale = profile && profile.locale ? String(profile.locale).trim() : '';
-  const profileTimezone = profile && profile.timezone_id ? String(profile.timezone_id).trim() : '';
-  const effectiveLocale = profileLocale || config.browser.locale || 'zh-CN';
-  const effectiveTimezone = profileTimezone || config.browser.timezoneId || 'Asia/Shanghai';
+  const effectiveLocale = resolveEffectiveLocale(task, profile);
+  const effectiveTimezone = resolveEffectiveTimezone(task, profile);
   const runtimeSettings = db.getBrowserRuntimeSettings();
   const runtimeStack = resolveRuntimeStack(task._profile, runtimeSettings);
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);

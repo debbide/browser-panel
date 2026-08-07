@@ -201,6 +201,115 @@ function dialogPassphraseOnce(msg, onConfirm) {
   setTimeout(() => input.focus(), 100);
 }
 
+const LOCALE_PRESETS = ['zh-CN', 'zh-TW', 'en-US', 'en-GB', 'ja-JP', 'ko-KR'];
+const TIMEZONE_PRESETS = [
+  'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Taipei', 'Asia/Tokyo', 'Asia/Seoul',
+  'UTC', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin',
+];
+
+function setupPresetCustomControl(selectEl, inputEl, value = '', onChange) {
+  if (!selectEl || !inputEl) return;
+  const raw = String(value || '').trim();
+  const known = Array.from(selectEl.options).some((option) => option.value === raw);
+  selectEl.value = raw && known ? raw : (raw ? '__custom__' : '');
+  inputEl.value = raw && !known ? raw : '';
+  inputEl.hidden = selectEl.value !== '__custom__';
+  inputEl.disabled = selectEl.value !== '__custom__';
+  if (onChange !== undefined) selectEl._presetCustomOnChange = onChange;
+  if (!selectEl.dataset.presetCustomBound) {
+    selectEl.addEventListener('change', () => {
+      const custom = selectEl.value === '__custom__';
+      inputEl.hidden = !custom;
+      inputEl.disabled = !custom;
+      if (!custom) inputEl.value = '';
+      if (typeof selectEl._presetCustomOnChange === 'function') {
+        selectEl._presetCustomOnChange();
+      }
+    });
+    inputEl.addEventListener('input', () => {
+      if (typeof selectEl._presetCustomOnChange === 'function') {
+        selectEl._presetCustomOnChange();
+      }
+    });
+    selectEl.dataset.presetCustomBound = '1';
+  }
+}
+
+function getPresetCustomValue(selectEl, inputEl) {
+  if (!selectEl) return '';
+  return selectEl.value === '__custom__'
+    ? String(inputEl?.value || '').trim()
+    : String(selectEl.value || '').trim();
+}
+
+const MANAGED_TASK_ENV_KEYS = new Set([
+  'USE_GLOBAL_TELEGRAM',
+  'USE_TEMP_PROFILE',
+  'BROWSER_PROXY',
+  'BROWSER_LOCALE',
+  'BROWSER_TIMEZONE',
+]);
+const PROFILE_MANAGED_ENV_KEYS = new Set(['BROWSER_LOCALE', 'BROWSER_TIMEZONE']);
+
+function isManagedEnvKey(name, keys = MANAGED_TASK_ENV_KEYS) {
+  return keys.has(String(name || '').trim().toUpperCase());
+}
+
+function filterManagedEnvRows(rows, keys = MANAGED_TASK_ENV_KEYS) {
+  return (Array.isArray(rows) ? rows : []).filter((entry) => !isManagedEnvKey(entry?.name, keys));
+}
+
+function filterManagedEnvObject(source, keys = MANAGED_TASK_ENV_KEYS) {
+  const out = {};
+  for (const [name, value] of Object.entries(source || {})) {
+    if (!isManagedEnvKey(name, keys)) out[name] = value;
+  }
+  return out;
+}
+
+function findManagedEnvValue(rows, name) {
+  const target = String(name || '').toUpperCase();
+  const hit = (Array.isArray(rows) ? rows : []).find(
+    (entry) => String(entry?.name || '').trim().toUpperCase() === target
+  );
+  return hit ? String(hit.value || '').trim() : '';
+}
+
+function findManagedParamValue(params, name) {
+  const target = String(name || '').toUpperCase();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (String(key || '').trim().toUpperCase() === target) return String(value || '').trim();
+  }
+  return '';
+}
+
+function deleteManagedMapKeys(map, names) {
+  const targets = new Set(names.map((name) => String(name).toUpperCase()));
+  for (const key of [...map.keys()]) {
+    if (targets.has(String(key || '').toUpperCase())) map.delete(key);
+  }
+}
+
+function deleteManagedObjectKeys(object, names) {
+  const targets = new Set(names.map((name) => String(name).toUpperCase()));
+  for (const key of Object.keys(object || {})) {
+    if (targets.has(String(key || '').toUpperCase())) delete object[key];
+  }
+}
+
+function setManagedLocaleControls(locale = '', timezone = '') {
+  setupPresetCustomControl(taskLocaleSelect, taskLocaleCustom, locale, updateTaskFormSummary);
+  setupPresetCustomControl(taskTimezoneSelect, taskTimezoneCustom, timezone, updateTaskFormSummary);
+}
+
+function getTaskLocaleFromForm() {
+  return getPresetCustomValue(taskLocaleSelect, taskLocaleCustom);
+}
+
+function getTaskTimezoneFromForm() {
+  return getPresetCustomValue(taskTimezoneSelect, taskTimezoneCustom);
+}
+
 const tasksEl = document.getElementById('tasks');
 const form = document.getElementById('task-form');
 const modalImportForm = document.getElementById('modal-import-form');
@@ -236,6 +345,11 @@ const taskUsePersistentInput = document.getElementById('task-use-persistent');
 const taskProxyInput = document.getElementById('task-proxy-input');
 const taskProxyFromProfileBtn = document.getElementById('task-proxy-from-profile');
 const taskProxyHint = document.getElementById('task-proxy-hint');
+const taskLocaleSelect = document.getElementById('task-locale-select');
+const taskLocaleCustom = document.getElementById('task-locale-custom');
+const taskTimezoneSelect = document.getElementById('task-timezone-select');
+const taskTimezoneCustom = document.getElementById('task-timezone-custom');
+const taskLocaleInheritHint = document.getElementById('task-locale-inherit-hint');
 const addProfileBtn = document.getElementById('add-profile-btn');
 const profilesList = document.getElementById('profiles-list');
 let profilesCache = [];
@@ -1173,6 +1287,8 @@ function updateTaskFormSummary() {
     : (mode === 'interval' ? '随机区间' : '固定周期');
   const condOn = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
   const temp = isTaskTempProfileMode();
+  const locale = getTaskLocaleFromForm();
+  const timezone = getTaskTimezoneFromForm();
 
   if (scriptSummaryEl) {
     scriptSummaryEl.textContent = scriptPath
@@ -1184,6 +1300,8 @@ function updateTaskFormSummary() {
       scriptPath ? `脚本 ${scriptLabel}` : '未选脚本',
       `超时 ${timeout}s`,
       temp ? '临时（用完删除）' : '持久配置',
+      `语言 ${locale || '继承'}`,
+      `时区 ${timezone || '继承'}`,
       schedOn ? `定时·${modeLabel}` : '手动运行',
       condOn ? '条件触发' : '无条件',
     ];
@@ -1815,29 +1933,11 @@ function syncTaskParamsUI(scriptPath, paramsOrEnv = {}) {
       : '键值注入脚本 env；Secret 勾选后掩码保存';
   }
 
-  // Hide internal control keys from the visible list (managed by UI switches)
-  const HIDDEN_ENV_KEYS = new Set([
-    'USE_GLOBAL_TELEGRAM',
-    'USE_TEMP_PROFILE',
-    'use_temp_profile',
-    'use_global_telegram',
-  ]);
-  let rows = paramsOrEnv;
+  // Dedicated controls own browser/profile settings and internal switches.
   if (Array.isArray(paramsOrEnv)) {
-    rows = paramsOrEnv.filter((e) => !HIDDEN_ENV_KEYS.has(String(e?.name || '').toUpperCase()) && !HIDDEN_ENV_KEYS.has(String(e?.name || '')));
-    // also filter case-insensitively
-    rows = paramsOrEnv.filter((e) => {
-      const n = String(e?.name || '').toUpperCase();
-      return n !== 'USE_GLOBAL_TELEGRAM' && n !== 'USE_TEMP_PROFILE';
-    });
-    taskEnvUI.setRows(rows);
+    taskEnvUI.setRows(filterManagedEnvRows(paramsOrEnv));
   } else {
-    const obj = { ...(paramsOrEnv || {}) };
-    delete obj.USE_GLOBAL_TELEGRAM;
-    delete obj.use_global_telegram;
-    delete obj.USE_TEMP_PROFILE;
-    delete obj.use_temp_profile;
-    taskEnvUI.setRows(entriesFromParamsObject(obj));
+    taskEnvUI.setRows(entriesFromParamsObject(filterManagedEnvObject(paramsOrEnv)));
   }
 
   if (taskUseGlobalTelegram) {
@@ -2301,6 +2401,7 @@ function resetTaskForm() {
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = '';
   if (taskUsePersistentInput) taskUsePersistentInput.value = '0';
   setTaskProxyInput('');
+  setManagedLocaleControls('', '');
   setTaskProfileMode('temp');
   if (taskProfileSelect) renderProfileOptions(taskProfileSelect, '');
   form.elements.enabled.checked = false;
@@ -3432,12 +3533,24 @@ function isTaskTempProfileMode() {
   return String(taskProfileModeSelect.value || 'temp') !== 'persistent';
 }
 
+function updateTaskLocaleInheritHint() {
+  if (!taskLocaleInheritHint) return;
+  const profile = profilesCache.find((item) => String(item.id) === String(taskProfileSelect?.value || ''));
+  if (!profile) {
+    taskLocaleInheritHint.textContent = '留空时使用系统默认语言与时区。';
+    return;
+  }
+  const locale = String(profile.locale || '').trim() || '系统默认';
+  const timezone = String(profile.timezone_id || '').trim() || '系统默认';
+  taskLocaleInheritHint.textContent = `留空时继承「${profile.name}」：Locale ${locale} · Timezone ${timezone}；临时模式不会写入该配置的数据目录。`;
+}
+
 function updateTaskProfileModeUI() {
   const temp = isTaskTempProfileMode();
   if (taskUsePersistentInput) taskUsePersistentInput.value = temp ? '0' : '1';
   if (taskProfileModeHint) {
     taskProfileModeHint.textContent = temp
-      ? '\u4e34\u65f6\u6a21\u5f0f\uff1a\u6bcf\u6b21\u72ec\u7acb user-data-dir\uff0c\u8dd1\u5b8c\u9694\u79bb\u3002\u4ee3\u7406\u53ef\u5355\u72ec\u586b\u5199\uff0c\u65e0\u9700\u7ed1\u5b9a\u4f1a\u5199\u6570\u636e\u7684\u914d\u7f6e\u3002'
+      ? '\u4e34\u65f6\u6a21\u5f0f\uff1a\u6bcf\u6b21\u72ec\u7acb user-data-dir\uff0c\u8dd1\u5b8c\u5220\u9664\u3002\u53ef\u501f\u7528\u6240\u9009\u914d\u7f6e\u7684\u8bed\u8a00\u3001\u65f6\u533a\u3001\u4ee3\u7406\u4e0e\u914d\u7f6e\u7ea7\u53d8\u91cf\uff0c\u4f46\u4e0d\u4f1a\u5199\u5165\u5176\u6570\u636e\u76ee\u5f55\u3002'
       : '\u6301\u4e45\u6a21\u5f0f\uff1a\u4f7f\u7528\u4e0b\u65b9\u6d4f\u89c8\u5668\u914d\u7f6e\u7684 user-data-dir\uff1b\u4ee3\u7406\u53ef\u8986\u76d6\u8be5\u914d\u7f6e\u7684\u4ee3\u7406\u3002';
   }
   if (taskProfilePersistentFields) {
@@ -3460,6 +3573,7 @@ function updateTaskProfileModeUI() {
   if (taskProfileSelect) {
     renderProfileOptions(taskProfileSelect, taskProfileSelect.value);
   }
+  updateTaskLocaleInheritHint();
 }
 
 function setTaskProfileMode(mode) {
@@ -3493,17 +3607,6 @@ function fillTaskProxyFromSelectedProfile() {
   }
   setTaskProxyInput(p.proxy);
   toast('\u5df2\u586b\u5165\u914d\u7f6e\u4ee3\u7406\uff08\u4ecd\u4f7f\u7528\u4e34\u65f6\u6570\u636e\u76ee\u5f55\uff09', 'success');
-}
-
-function extractProxyFromEnvList(envList) {
-  if (!Array.isArray(envList)) return '';
-  const hit = envList.find((e) => String(e?.name || '').toUpperCase() === 'BROWSER_PROXY');
-  return hit ? String(hit.value || '') : '';
-}
-
-function extractProxyFromParams(params = {}) {
-  if (!params || typeof params !== 'object') return '';
-  return String(params.BROWSER_PROXY || params.browser_proxy || '').trim();
 }
 
 function renderProfiles() {
@@ -3603,13 +3706,25 @@ async function openProfileModal(profile) {
             <option value="seleniumbase" ${(profile?.runtime_stack || '') === 'seleniumbase' ? 'selected' : ''}>SeleniumBase + ChromeDriver</option>
           </select>
         </div>
-        <div>
-          <label class="field-label">Locale</label>
-          <input name="locale" placeholder="zh-CN" value="${escapeHtml(profile?.locale || '')}" />
-        </div>
-        <div>
-          <label class="field-label">Timezone</label>
-          <input name="timezone_id" placeholder="Asia/Shanghai" value="${escapeHtml(profile?.timezone_id || '')}" />
+        <div class="locale-setting-grid">
+          <div class="locale-setting-control">
+            <label class="field-label" for="profile-locale-select">Locale</label>
+            <select id="profile-locale-select" class="locale-preset-select">
+              <option value="">跟随全局默认</option>
+              ${LOCALE_PRESETS.map((value) => `<option value="${value}">${value}</option>`).join('')}
+              <option value="__custom__">自定义…</option>
+            </select>
+            <input id="profile-locale-custom" class="locale-custom-input" type="text" placeholder="例如 fr-FR" autocomplete="off" hidden disabled />
+          </div>
+          <div class="locale-setting-control">
+            <label class="field-label" for="profile-timezone-select">Timezone</label>
+            <select id="profile-timezone-select" class="locale-preset-select">
+              <option value="">跟随全局默认</option>
+              ${TIMEZONE_PRESETS.map((value) => `<option value="${value}">${value}</option>`).join('')}
+              <option value="__custom__">自定义…</option>
+            </select>
+            <input id="profile-timezone-custom" class="locale-custom-input" type="text" placeholder="例如 Europe/Paris" autocomplete="off" hidden disabled />
+          </div>
         </div>
         <div class="config-block" style="margin-top:8px;">
           <div class="section-header compact">
@@ -3632,8 +3747,14 @@ async function openProfileModal(profile) {
   `;
   document.body.appendChild(mask);
   document.body.appendChild(dialog);
+  const profileLocaleSelect = dialog.querySelector('#profile-locale-select');
+  const profileLocaleCustom = dialog.querySelector('#profile-locale-custom');
+  const profileTimezoneSelect = dialog.querySelector('#profile-timezone-select');
+  const profileTimezoneCustom = dialog.querySelector('#profile-timezone-custom');
+  setupPresetCustomControl(profileLocaleSelect, profileLocaleCustom, profile?.locale || '');
+  setupPresetCustomControl(profileTimezoneSelect, profileTimezoneCustom, profile?.timezone_id || '');
   const profileEnvUI = createEnvEditor(dialog.querySelector('#profile-env-editor'));
-  profileEnvUI.setRows(profileEnv);
+  profileEnvUI.setRows(filterManagedEnvRows(profileEnv, PROFILE_MANAGED_ENV_KEYS));
   dialog.querySelector('#profile-env-add')?.addEventListener('click', () => profileEnvUI.addRow());
   if (window.lucide) window.lucide.createIcons({ root: dialog });
   const close = () => { mask.remove(); dialog.remove(); };
@@ -3655,8 +3776,8 @@ async function openProfileModal(profile) {
       user_data_dir: fd.get('user_data_dir'),
       proxy: fd.get('proxy'),
       runtime_stack: fd.get('runtime_stack'),
-      locale: fd.get('locale'),
-      timezone_id: fd.get('timezone_id'),
+      locale: getPresetCustomValue(profileLocaleSelect, profileLocaleCustom),
+      timezone_id: getPresetCustomValue(profileTimezoneSelect, profileTimezoneCustom),
     };
     try {
       let profileId = profile?.id;
@@ -3930,20 +4051,22 @@ function fillTaskForm(task) {
   }
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
   let proxyValue = '';
+  let localeValue = '';
+  let timezoneValue = '';
   if (Array.isArray(task.env) && task.env.length) {
-    proxyValue = extractProxyFromEnvList(task.env);
-    // 表格里不再重复展示 BROWSER_PROXY（有专用输入框）
-    const envWithoutProxy = task.env.filter((e) => String(e?.name || '').toUpperCase() !== 'BROWSER_PROXY');
-    syncTaskParamsUI(task.script_path, envWithoutProxy);
+    proxyValue = findManagedEnvValue(task.env, 'BROWSER_PROXY');
+    localeValue = findManagedEnvValue(task.env, 'BROWSER_LOCALE');
+    timezoneValue = findManagedEnvValue(task.env, 'BROWSER_TIMEZONE');
+    syncTaskParamsUI(task.script_path, filterManagedEnvRows(task.env));
   } else {
     const params = task.params || parseParamsJson(task.params_json);
-    proxyValue = extractProxyFromParams(params);
-    const paramsWithoutProxy = { ...params };
-    delete paramsWithoutProxy.BROWSER_PROXY;
-    delete paramsWithoutProxy.browser_proxy;
-    syncTaskParamsUI(task.script_path, paramsWithoutProxy);
+    proxyValue = findManagedParamValue(params, 'BROWSER_PROXY');
+    localeValue = findManagedParamValue(params, 'BROWSER_LOCALE');
+    timezoneValue = findManagedParamValue(params, 'BROWSER_TIMEZONE');
+    syncTaskParamsUI(task.script_path, filterManagedEnvObject(params));
   }
   setTaskProxyInput(proxyValue);
+  setManagedLocaleControls(localeValue, timezoneValue);
   updateTaskProfileModeUI();
 }
 
@@ -4064,8 +4187,12 @@ form.addEventListener('submit', async (event) => {
   payload.browser_profile_id = taskProfileSelect && taskProfileSelect.value ? Number(taskProfileSelect.value) : null;
   // 临时/持久只走 use_persistent 字段，不再写入可见 env 列表
   const envByName = new Map(env.map((e) => [e.name, e]));
-  envByName.delete('USE_TEMP_PROFILE');
-  envByName.delete('use_temp_profile');
+  deleteManagedMapKeys(envByName, [
+    'USE_TEMP_PROFILE',
+    'BROWSER_PROXY',
+    'BROWSER_LOCALE',
+    'BROWSER_TIMEZONE',
+  ]);
 
   // 全局 Telegram 开关：只存内部键，列表展示时会过滤掉
   const useGlobalTg = taskUseGlobalTelegram ? taskUseGlobalTelegram.checked : true;
@@ -4081,16 +4208,18 @@ form.addEventListener('submit', async (event) => {
     }
   }
 
-  // 任务代理单独输入框 → BROWSER_PROXY（业务需要，保留在 env）
+  // Dedicated browser controls are stored as canonical, non-secret env entries.
   const taskProxy = getTaskProxyFromForm();
-  if (taskProxy) {
-    envByName.set('BROWSER_PROXY', {
-      name: 'BROWSER_PROXY',
-      value: taskProxy,
-      is_secret: 0,
-    });
-  } else {
-    envByName.delete('BROWSER_PROXY');
+  const taskLocale = getTaskLocaleFromForm();
+  const taskTimezone = getTaskTimezoneFromForm();
+  for (const [name, value] of [
+    ['BROWSER_PROXY', taskProxy],
+    ['BROWSER_LOCALE', taskLocale],
+    ['BROWSER_TIMEZONE', taskTimezone],
+  ]) {
+    if (value) {
+      envByName.set(name, { name, value, is_secret: 0 });
+    }
   }
 
   payload.env = [...envByName.values()].filter((e) => {
@@ -4101,10 +4230,15 @@ form.addEventListener('submit', async (event) => {
     ...params,
     USE_GLOBAL_TELEGRAM: useGlobalTg ? '1' : '0',
   };
-  delete payload.params.USE_TEMP_PROFILE;
-  delete payload.params.use_temp_profile;
+  deleteManagedObjectKeys(payload.params, [
+    'USE_TEMP_PROFILE',
+    'BROWSER_PROXY',
+    'BROWSER_LOCALE',
+    'BROWSER_TIMEZONE',
+  ]);
   if (taskProxy) payload.params.BROWSER_PROXY = taskProxy;
-  else delete payload.params.BROWSER_PROXY;
+  if (taskLocale) payload.params.BROWSER_LOCALE = taskLocale;
+  if (taskTimezone) payload.params.BROWSER_TIMEZONE = taskTimezone;
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
   const method = editingId ? 'PUT' : 'POST';
   await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -4969,6 +5103,22 @@ if (storageCleanupRunBtn) {
   });
 }
 
+if (taskLocaleSelect && taskLocaleCustom) {
+  setupPresetCustomControl(
+    taskLocaleSelect,
+    taskLocaleCustom,
+    getTaskLocaleFromForm(),
+    updateTaskFormSummary
+  );
+}
+if (taskTimezoneSelect && taskTimezoneCustom) {
+  setupPresetCustomControl(
+    taskTimezoneSelect,
+    taskTimezoneCustom,
+    getTaskTimezoneFromForm(),
+    updateTaskFormSummary
+  );
+}
 if (taskProfileModeSelect) {
   taskProfileModeSelect.addEventListener('change', () => {
     updateTaskProfileModeUI();
@@ -4997,8 +5147,31 @@ if (taskEnvTemplateHost2playBtn) {
 if (taskEnvApplyRawBtn) {
   taskEnvApplyRawBtn.addEventListener('click', () => {
     try {
-      taskEnvUI.importText(paramJsonRaw?.value || '');
-      toast('已应用到表格', 'success');
+      const parsed = parseEnvText(paramJsonRaw?.value || '');
+      if (!parsed.length) throw new Error('未解析到任何 KEY=value');
+      const combined = new Map(
+        collectTaskEnvFromForm().map((entry) => [String(entry.name || '').toUpperCase(), entry])
+      );
+      for (const entry of parsed) combined.set(String(entry.name || '').toUpperCase(), entry);
+      const rows = [...combined.values()];
+      const locale = findManagedEnvValue(rows, 'BROWSER_LOCALE');
+      const timezone = findManagedEnvValue(rows, 'BROWSER_TIMEZONE');
+      const proxy = findManagedEnvValue(rows, 'BROWSER_PROXY');
+      if (rows.some((entry) => String(entry.name || '').toUpperCase() === 'BROWSER_LOCALE')) {
+        setupPresetCustomControl(taskLocaleSelect, taskLocaleCustom, locale);
+      }
+      if (rows.some((entry) => String(entry.name || '').toUpperCase() === 'BROWSER_TIMEZONE')) {
+        setupPresetCustomControl(taskTimezoneSelect, taskTimezoneCustom, timezone);
+      }
+      if (rows.some((entry) => String(entry.name || '').toUpperCase() === 'BROWSER_PROXY')) {
+        setTaskProxyInput(proxy);
+      }
+      if (taskUseGlobalTelegram && rows.some((entry) => String(entry.name || '').toUpperCase() === 'USE_GLOBAL_TELEGRAM')) {
+        taskUseGlobalTelegram.checked = readUseGlobalTelegramFlag(rows);
+      }
+      taskEnvUI.setRows(filterManagedEnvRows(rows));
+      updateTaskFormSummary();
+      toast('已应用到表格与专用设置', 'success');
     } catch (error) {
       toast(error.message || '导入失败', 'error');
     }
@@ -5007,7 +5180,20 @@ if (taskEnvApplyRawBtn) {
 if (taskEnvExportRawBtn) {
   taskEnvExportRawBtn.addEventListener('click', () => {
     try {
-      if (paramJsonRaw) paramJsonRaw.value = taskEnvUI.exportText();
+      const rows = filterManagedEnvRows(collectTaskEnvFromForm());
+      const managed = [
+        ['BROWSER_PROXY', getTaskProxyFromForm()],
+        ['BROWSER_LOCALE', getTaskLocaleFromForm()],
+        ['BROWSER_TIMEZONE', getTaskTimezoneFromForm()],
+      ];
+      for (const [name, value] of managed) {
+        if (value) rows.push({ name, value });
+      }
+      if (paramJsonRaw) {
+        paramJsonRaw.value = rows
+          .map((entry) => `${entry.name}=${String(entry.value || '').replace(/\n/g, '\\n')}`)
+          .join('\n');
+      }
       toast('已导出到文本框', 'success');
     } catch (error) {
       toast(error.message || '导出失败', 'error');

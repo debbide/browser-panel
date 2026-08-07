@@ -241,15 +241,66 @@ function normalizeEnvEntriesPayload(input) {
   }));
 }
 
-function applyTaskEnvPayload(taskId, payload = {}) {
+function normalizeManagedTaskEnvValue(name, value) {
+  const normalized = String(value === undefined || value === null ? '' : value).trim();
+  if (!normalized) return '';
+  if (name === 'BROWSER_TIMEZONE' && !isValidTimeZone(normalized)) {
+    throw new Error('Invalid timezone, use IANA format like Asia/Shanghai');
+  }
+  return normalized;
+}
+
+function normalizeTaskEnvPayload(payload = {}) {
   if (Array.isArray(payload.env)) {
-    db.replaceEnvEntries('task', taskId, normalizeEnvEntriesPayload(payload.env));
+    const entries = normalizeEnvEntriesPayload(payload.env);
+    const managed = new Map();
+    const ordinary = [];
+    for (const entry of entries) {
+      const upperName = String(entry.name || '').trim().toUpperCase();
+      if (upperName !== 'BROWSER_LOCALE' && upperName !== 'BROWSER_TIMEZONE') {
+        ordinary.push(entry);
+        continue;
+      }
+      const value = normalizeManagedTaskEnvValue(upperName, entry.value);
+      if (value) {
+        managed.set(upperName, { name: upperName, value, is_secret: 0 });
+      } else {
+        managed.delete(upperName);
+      }
+    }
+    return { env: [...ordinary, ...managed.values()] };
+  }
+
+  if (payload.params !== undefined || payload.params_json !== undefined) {
+    const source = normalizeTaskParams(payload.params ?? payload.params_json);
+    const params = {};
+    const managed = new Map();
+    for (const [name, rawValue] of Object.entries(source)) {
+      const upperName = String(name || '').trim().toUpperCase();
+      if (upperName !== 'BROWSER_LOCALE' && upperName !== 'BROWSER_TIMEZONE') {
+        params[name] = rawValue;
+        continue;
+      }
+      const value = normalizeManagedTaskEnvValue(upperName, rawValue);
+      if (value) managed.set(upperName, value);
+      else managed.delete(upperName);
+    }
+    for (const [name, value] of managed) params[name] = value;
+    return { params };
+  }
+
+  return null;
+}
+
+function applyTaskEnvPayload(taskId, payload = {}) {
+  const normalized = normalizeTaskEnvPayload(payload);
+  if (normalized && Array.isArray(normalized.env)) {
+    db.replaceEnvEntries('task', taskId, normalized.env);
     return db.syncTaskParamsJsonFromEnv(taskId);
   }
   // Legacy: flat params / params_json object
-  if (payload.params !== undefined || payload.params_json !== undefined) {
-    const params = normalizeTaskParams(payload.params ?? payload.params_json);
-    db.setTaskEnvFromParams(taskId, params);
+  if (normalized && normalized.params) {
+    db.setTaskEnvFromParams(taskId, normalized.params);
     return db.syncTaskParamsJsonFromEnv(taskId);
   }
   return db.getTask(taskId);
@@ -1154,6 +1205,7 @@ app.get('/api/tasks', (req, res) => {
 app.post('/api/tasks', (req, res) => {
   try {
     const payload = req.body || {};
+    normalizeTaskEnvPayload(payload);
     const type = payload.type === 'python' ? 'python' : 'javascript';
     const name = String(payload.name || 'Untitled Task');
     const conditionFields = buildConditionFieldsFromPayload(payload, null);
@@ -1191,6 +1243,7 @@ app.put('/api/tasks/:id', (req, res) => {
   try {
     const id = Number(req.params.id);
     const payload = req.body || {};
+    normalizeTaskEnvPayload(payload);
     const existing = db.getTask(id);
     if (!existing) return res.status(404).json({ message: 'Task not found' });
     const type = payload.type === 'python' ? 'python' : 'javascript';

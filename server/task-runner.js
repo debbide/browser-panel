@@ -8,6 +8,8 @@ const {
   parseTaskParams,
   resolveUseTempProfile,
   resolveEffectiveProxy,
+  resolveEffectiveLocale,
+  resolveEffectiveTimezone,
   buildForegroundEnv,
 } = require('./runtime/env-builder');
 const { evaluateLogSuccess } = require('./runtime/success-heuristics');
@@ -480,14 +482,8 @@ function resolveBrowserContext(task) {
       task.use_persistent ? config.browser.userDataDir : '',
       getTempProfileDir(task)
     );
-  const effectiveLocale = pickNonEmptyString(
-    profile && profile.locale,
-    config.browser.locale
-  );
-  const effectiveTimezone = pickNonEmptyString(
-    profile && profile.timezone_id,
-    config.browser.timezoneId
-  );
+  const effectiveLocale = resolveEffectiveLocale(task, profile);
+  const effectiveTimezone = resolveEffectiveTimezone(task, profile);
   const runtimeStack = resolveRuntimeStack(task, runtimeSettings);
 
   return {
@@ -549,8 +545,8 @@ function buildEnv(task, screenshotPath) {
       );
     env.USE_TEMP_PROFILE = useTempProfile ? '1' : '0';
     env.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
-    env.BROWSER_LOCALE = pickNonEmptyString(profile && profile.locale, config.browser.locale);
-    env.BROWSER_TIMEZONE = pickNonEmptyString(profile && profile.timezone_id, config.browser.timezoneId);
+    env.BROWSER_LOCALE = resolveEffectiveLocale(task, profile);
+    env.BROWSER_TIMEZONE = resolveEffectiveTimezone(task, profile);
     env.BROWSER_DISPLAY = config.browser.display;
     env.BROWSER_XAUTHORITY = config.browser.xauthority;
     env.BROWSER_USER = config.browser.user;

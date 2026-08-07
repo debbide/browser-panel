@@ -888,6 +888,24 @@ a:hover { text-decoration: underline; }
 .grid.three-col-tight { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid.single-col { grid-template-columns: 1fr; }
 
+.locale-setting-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.locale-setting-control {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.locale-preset-select,
+.locale-custom-input {
+  width: 100%;
+  min-width: 0;
+}
+
 .row { display: flex; gap: 12px; flex-wrap: wrap; }
 .task-actions {
   display: flex;
@@ -1827,7 +1845,8 @@ pre {
 }
 
 @media (max-width: 768px) {
-  .task-metrics, .grid.two-col-tight, .grid.three-col-tight, .run-grid.compact {
+  .task-metrics, .grid.two-col-tight, .grid.three-col-tight, .run-grid.compact,
+  .locale-setting-grid {
     grid-template-columns: 1fr;
   }
   .profile-card-grid,

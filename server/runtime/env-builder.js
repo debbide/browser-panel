@@ -29,6 +29,10 @@ const SYSTEM_PROTECTED_KEYS = new Set([
   'SCREENSHOTS_DIR',
 ]);
 
+const SYSTEM_PROTECTED_KEYS_UPPER = new Set(
+  [...SYSTEM_PROTECTED_KEYS].map((key) => key.toUpperCase())
+);
+
 const HOST_FORWARD_PREFIXES = ['CF_', 'HCAPTCHA_', 'CTF_'];
 
 function toEnvValue(value) {
@@ -136,6 +140,32 @@ function resolveEffectiveProxy(task, profile = null) {
     params.browser_proxy,
     resolvedProfile && resolvedProfile.proxy,
     config.browser.proxy || ''
+  );
+}
+
+function resolveEffectiveLocale(task, profile = null) {
+  const params = parseTaskParams(task) || {};
+  const resolvedProfile = profile
+    || (task && task._profile)
+    || (task && task.browser_profile_id ? db.getBrowserProfile(task.browser_profile_id) : null);
+  return pickNonEmptyString(
+    params.BROWSER_LOCALE,
+    resolvedProfile && resolvedProfile.locale,
+    config.browser.locale,
+    'zh-CN'
+  );
+}
+
+function resolveEffectiveTimezone(task, profile = null) {
+  const params = parseTaskParams(task) || {};
+  const resolvedProfile = profile
+    || (task && task._profile)
+    || (task && task.browser_profile_id ? db.getBrowserProfile(task.browser_profile_id) : null);
+  return pickNonEmptyString(
+    params.BROWSER_TIMEZONE,
+    resolvedProfile && resolvedProfile.timezone_id,
+    config.browser.timezoneId,
+    'Asia/Shanghai'
   );
 }
 
@@ -341,8 +371,8 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
       system.BROWSER_EXTENSIONS = config.browser.extensions || '';
     }
     system.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
-    system.BROWSER_LOCALE = (profile && profile.locale) || config.browser.locale;
-    system.BROWSER_TIMEZONE = (profile && profile.timezone_id) || config.browser.timezoneId;
+    system.BROWSER_LOCALE = resolveEffectiveLocale(task, profile);
+    system.BROWSER_TIMEZONE = resolveEffectiveTimezone(task, profile);
     system.BROWSER_HEADLESS = 'false';
     if (system.BROWSER_EXTENSIONS === undefined) {
       system.BROWSER_EXTENSIONS = config.browser.extensions || '';
@@ -361,10 +391,8 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
  */
 function buildBrowserUserEnvPairs(task) {
   const env = buildUserEnvLayers(task);
-  // Strip keys that must only come from system layer
-  for (const key of SYSTEM_PROTECTED_KEYS) {
-    // still allow user to set non-conflicting; system forced later
-    // do not delete user VISION etc.
+  for (const key of Object.keys(env)) {
+    if (SYSTEM_PROTECTED_KEYS_UPPER.has(String(key).toUpperCase())) delete env[key];
   }
   return Object.entries(env)
     .filter(([k, v]) => k && v !== undefined && v !== null && v !== '')
@@ -390,6 +418,8 @@ module.exports = {
   parseTaskParams,
   resolveUseTempProfile,
   resolveEffectiveProxy,
+  resolveEffectiveLocale,
+  resolveEffectiveTimezone,
   pickNonEmptyString,
   buildUserEnvLayers,
   buildForegroundEnv,
