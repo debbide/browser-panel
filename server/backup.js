@@ -95,6 +95,26 @@ const PROFILE_CONFIG_COLUMNS = Object.freeze([
   'name', 'user_data_dir', 'proxy', 'proxy_mode', 'proxy_value', 'ruyi_fpfile', 'runtime_stack', 'locale', 'timezone_id',
 ]);
 
+const BACKUP_EXCLUDED_ENV_KEYS = new Set([
+  'BROWSER_PROXY',
+  'BROWSER_PROXY_MODE',
+  'BROWSER_PROXY_VALUE',
+  'BROWSER_RUYI_FPFILE',
+  'BROWSER_RUNTIME_STACK',
+  'PROXY',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+]);
+
+function isBackupExcludedEnvKey(name) {
+  return BACKUP_EXCLUDED_ENV_KEYS.has(String(name || '').trim().toUpperCase());
+}
+
+function filterBackupEnvEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).filter((row) => !isBackupExcludedEnvKey(row && row.name));
+}
+
 const CONFLICT_STRATEGIES = Object.freeze(['skip', 'overwrite', 'rename']);
 const SCRIPT_EXTENSIONS = Object.freeze(['.js', '.py']);
 
@@ -249,11 +269,12 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     const profileConfig = pick(profile, PROFILE_CONFIG_COLUMNS);
     // 代理绝不导出；user_data_dir 导出为空（临时目录占位）。
     profileConfig.proxy = null;
+    profileConfig.proxy_mode = '';
     profileConfig.proxy_value = null;
     profileConfig.ruyi_fpfile = '';
     profileConfig.user_data_dir = '';
 
-    const profileEnv = db.listEnvEntriesRaw('profile', Number(profile.id)).map((row) => {
+    const profileEnv = filterBackupEnvEntries(db.listEnvEntriesRaw('profile', Number(profile.id))).map((row) => {
       if (encrypt) {
         return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: row.is_secret ? 1 : 0 };
       }
@@ -267,7 +288,7 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
   const tasks = selected.map((task) => {
     const config_ = pick(task, TASK_CONFIG_COLUMNS);
     const profile = profileById.get(Number(task.browser_profile_id));
-    const env = db.listEnvEntriesRaw('task', Number(task.id)).map((row) => {
+    const env = filterBackupEnvEntries(db.listEnvEntriesRaw('task', Number(task.id))).map((row) => {
       if (encrypt) {
         return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: row.is_secret ? 1 : 0 };
       }
@@ -661,7 +682,7 @@ function buildTaskRow(plan, profileIdByName, existing = null) {
 function normalizeEnvForImport(env) {
   const out = [];
   for (const item of env || []) {
-    if (!item || !item.name) continue;
+    if (!item || !item.name || isBackupExcludedEnvKey(item.name)) continue;
     // omitted 的密钥只有名字没有值,照原样写入 —— 前端会把它们列成"待补填"。
     out.push({
       name: String(item.name),
@@ -686,9 +707,9 @@ function importBackup(input, options = {}) {
       const created = db.createBrowserProfile({
         name: profile.name,
         user_data_dir: profile.config.user_data_dir || '',
-        proxy: profile.config.proxy || '',
-        proxy_mode: profile.config.proxy_mode || (profile.config.proxy ? 'launch' : 'inherit'),
-        proxy_value: profile.config.proxy_value || profile.config.proxy || '',
+        proxy: '',
+        proxy_mode: 'inherit',
+        proxy_value: '',
         ruyi_fpfile: '',
         runtime_stack: profile.config.runtime_stack || '',
         locale: profile.config.locale || '',

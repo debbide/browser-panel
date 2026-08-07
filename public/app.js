@@ -253,6 +253,7 @@ const MANAGED_TASK_ENV_KEYS = new Set([
   'USE_GLOBAL_TELEGRAM',
   'USE_TEMP_PROFILE',
   'BROWSER_PROXY',
+  'BROWSER_RUNTIME_STACK',
   'BROWSER_PROXY_MODE',
   'BROWSER_PROXY_VALUE',
   'BROWSER_RUYI_FPFILE',
@@ -353,7 +354,7 @@ const taskProfileModeSelect = document.getElementById('task-profile-mode');
 const taskProfileModeHint = document.getElementById('task-profile-mode-hint');
 const taskProfilePersistentFields = document.getElementById('task-profile-persistent-fields');
 const taskUsePersistentInput = document.getElementById('task-use-persistent');
-const taskProxyMode = document.getElementById('task-proxy-mode');
+const taskBrowserType = document.getElementById('task-browser-type');
 const taskProxyInput = document.getElementById('task-proxy-input');
 const taskProxyFromProfileBtn = document.getElementById('task-proxy-from-profile');
 const taskProxyHint = document.getElementById('task-proxy-hint');
@@ -2412,7 +2413,7 @@ function resetTaskForm() {
   form.elements.timeout_sec.value = '300';
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = '';
   if (taskUsePersistentInput) taskUsePersistentInput.value = '0';
-  setTaskProxyInput('');
+  setTaskBrowserProxyInput('');
   setManagedLocaleControls('', '');
   setTaskProfileMode('temp');
   if (taskProfileSelect) renderProfileOptions(taskProfileSelect, '');
@@ -3455,9 +3456,7 @@ function setBrowserRuntimeStatus(text, color) {
 
 const brChromePath = document.getElementById('br-chrome-path');
 const brRuyiPath = document.getElementById('br-ruyi-path');
-const brProxyMode = document.getElementById('br-proxy-mode');
 const brProxyValue = document.getElementById('br-proxy-value');
-const brRuyiFpfile = document.getElementById('br-ruyi-fpfile');
 
 function collectBrowserRuntimeFormPayload() {
   return {
@@ -3466,9 +3465,7 @@ function collectBrowserRuntimeFormPayload() {
     pluginPackages: normalizePluginPackagesForUi(brPluginPackages?.value),
     chromePath: String(brChromePath?.value || '').trim(),
     ruyiPath: String(brRuyiPath?.value || '').trim(),
-    proxyMode: brProxyMode?.value || 'direct',
     proxyValue: String(brProxyValue?.value || '').trim(),
-    ruyiFpfile: String(brRuyiFpfile?.value || '').trim(),
     extensionDirs: String(brExtensionDirs?.value || '').trim(),
   };
 }
@@ -3483,9 +3480,7 @@ async function loadBrowserRuntimeSettings() {
     if (brPluginPackages) brPluginPackages.value = normalizePluginPackagesForUi(data.pluginPackages);
     if (brChromePath) brChromePath.value = data.chromePath || '';
     if (brRuyiPath) brRuyiPath.value = data.ruyiPath || '';
-    if (brProxyMode) brProxyMode.value = data.proxyMode || 'direct';
     if (brProxyValue) brProxyValue.value = data.proxyValue || '';
-    if (brRuyiFpfile) brRuyiFpfile.value = data.ruyiFpfile || '';
     if (brExtensionDirs) brExtensionDirs.value = data.extensionDirs || '';
     const packageCount = normalizePluginPackagesForUi(data.pluginPackages).split(',').map(s => s.trim()).filter(Boolean).length;
     const runtimeStack = data.runtimeStack || 'playwright';
@@ -3606,17 +3601,20 @@ function setTaskProfileMode(mode) {
   updateTaskProfileModeUI();
 }
 
-function getTaskProxyFromForm() {
+function getTaskBrowserProxyFromForm() {
   return {
-    mode: taskProxyMode?.value || 'inherit',
+    runtimeStack: taskBrowserType?.value || '',
     value: String(taskProxyInput?.value || '').trim(),
   };
 }
 
-function setTaskProxyInput(value, mode = '') {
+function setTaskBrowserProxyInput(value, runtimeStack = '') {
   const text = String(value || '').trim();
   if (taskProxyInput) taskProxyInput.value = text;
-  if (taskProxyMode) taskProxyMode.value = mode || (text ? 'launch' : 'inherit');
+  if (taskBrowserType) {
+    const stack = String(runtimeStack || '').trim().toLowerCase();
+    taskBrowserType.value = stack === 'ruyipage' ? 'ruyipage' : (stack ? 'playwright' : '');
+  }
 }
 
 function fillTaskProxyFromSelectedProfile() {
@@ -3630,13 +3628,9 @@ function fillTaskProxyFromSelectedProfile() {
     toast('\u672a\u627e\u5230\u8be5\u914d\u7f6e', 'error');
     return;
   }
-  const value = p.proxy_value || p.proxy || p.ruyi_fpfile;
-  if (!value && (p.proxy_mode || 'inherit') !== 'direct') {
-    toast('\u8be5\u914d\u7f6e\u672a\u8bbe\u7f6e\u4ee3\u7406', 'warn');
-    return;
-  }
-  setTaskProxyInput(value, p.proxy_mode || (p.proxy ? 'launch' : 'inherit'));
-  toast('\u5df2\u586b\u5165\u914d\u7f6e\u4ee3\u7406\uff08\u4ecd\u4f7f\u7528\u4e34\u65f6\u6570\u636e\u76ee\u5f55\uff09', 'success');
+  const value = p.proxy_value || p.proxy;
+  setTaskBrowserProxyInput(value, p.runtime_stack || '');
+  toast('\u5df2\u586b\u5165\u914d\u7f6e\u7684\u6d4f\u89c8\u5668\u548c\u4ee3\u7406\uff08\u4ecd\u4f7f\u7528\u4e34\u65f6\u6570\u636e\u76ee\u5f55\uff09', 'success');
 }
 
 function renderProfiles() {
@@ -3661,12 +3655,12 @@ function renderProfiles() {
       </div>
       <div class="profile-kv-grid">
         <div class="profile-kv">
-          <span class="profile-kv-label">\u8fd0\u884c\u6808</span>
-          <span class="profile-kv-value">${escapeHtml((p.runtime_stack || '').trim() ? p.runtime_stack : 'default')}</span>
+          <span class="profile-kv-label">\u6d4f\u89c8\u5668</span>
+          <span class="profile-kv-value">${escapeHtml((p.runtime_stack || '') === 'ruyipage' ? 'Firefox' : ((p.runtime_stack || '') ? 'Chrome' : '\u7ee7\u627f\u5168\u5c40'))}</span>
         </div>
         <div class="profile-kv">
           <span class="profile-kv-label">\u4ee3\u7406</span>
-          <span class="profile-kv-value">${escapeHtml(`${p.proxy_mode || (p.proxy ? 'launch' : 'inherit')}${(p.proxy_value || p.proxy) ? ` \u00b7 ${p.proxy_value || p.proxy}` : ''}`)}</span>
+          <span class="profile-kv-value">${escapeHtml((p.proxy_value || p.proxy) ? '\u5df2\u8bbe\u7f6e' : '\u672a\u8bbe\u7f6e')}</span>
         </div>
         <div class="profile-kv">
           <span class="profile-kv-label">Locale</span>
@@ -3725,31 +3719,17 @@ async function openProfileModal(profile) {
           <input name="user_data_dir" placeholder="/home/browser/browser-work/profiles/account-a" value="${escapeHtml(profile?.user_data_dir || '')}" />
         </div>
         <div>
-          <label class="field-label">\u4ee3\u7406\u6a21\u5f0f</label>
-          <select name="proxy_mode">
-            <option value="inherit" ${(profile?.proxy_mode || (!profile?.proxy ? 'inherit' : 'launch')) === 'inherit' ? 'selected' : ''}>\u8ddf\u968f\u5168\u5c40</option>
-            <option value="direct" ${profile?.proxy_mode === 'direct' ? 'selected' : ''}>\u76f4\u8fde</option>
-            <option value="launch" ${(profile?.proxy_mode || (profile?.proxy ? 'launch' : '')) === 'launch' ? 'selected' : ''}>\u542f\u52a8\u65f6\u4ee3\u7406</option>
-            <option value="ruyi_fpfile" ${profile?.proxy_mode === 'ruyi_fpfile' ? 'selected' : ''}>RuyiPage \u6307\u7eb9\u6587\u4ef6</option>
-            <option value="script" ${profile?.proxy_mode === 'script' ? 'selected' : ''}>\u4ec5\u4f20\u7ed9\u811a\u672c</option>
-          </select>
-        </div>
-        <div>
-          <label class="field-label">\u4ee3\u7406\u503c</label>
-          <input name="proxy_value" placeholder="socks5://127.0.0.1:7891" value="${escapeHtml(profile?.proxy_value || profile?.proxy || '')}" />
-        </div>
-        <div>
-          <label class="field-label">RuyiPage \u6307\u7eb9\u6587\u4ef6\u8def\u5f84</label>
-          <input name="ruyi_fpfile" placeholder="/path/to/fingerprint.json" value="${escapeHtml(profile?.ruyi_fpfile || '')}" />
-        </div>
-        <div>
-          <label class="field-label">\u8fd0\u884c\u6808</label>
+          <label class="field-label">\u6d4f\u89c8\u5668</label>
           <select name="runtime_stack">
-            <option value="" ${(profile?.runtime_stack || '') === '' ? 'selected' : ''}>\u8ddf\u968f\u5168\u5c40\u9ed8\u8ba4</option>
-            <option value="playwright" ${(profile?.runtime_stack || '') === 'playwright' ? 'selected' : ''}>Playwright</option>
-            <option value="seleniumbase" ${(profile?.runtime_stack || '') === 'seleniumbase' ? 'selected' : ''}>SeleniumBase + ChromeDriver</option>
-            <option value="ruyipage" ${(profile?.runtime_stack || '') === 'ruyipage' ? 'selected' : ''}>RuyiPage + Firefox (Python)</option>
+            <option value="" ${(profile?.runtime_stack || '') === '' ? 'selected' : ''}>\u7ee7\u627f\u5168\u5c40</option>
+            <option value="playwright" ${(profile?.runtime_stack || '') !== '' && (profile?.runtime_stack || '') !== 'ruyipage' ? 'selected' : ''}>Chrome</option>
+            <option value="ruyipage" ${(profile?.runtime_stack || '') === 'ruyipage' ? 'selected' : ''}>Firefox</option>
           </select>
+        </div>
+        <div>
+          <label class="field-label">\u4ee3\u7406\u5730\u5740\uff08\u53ef\u9009\uff09</label>
+          <input name="proxy_value" placeholder="socks5://127.0.0.1:7891" value="${escapeHtml(profile?.proxy_value || profile?.proxy || '')}" />
+          <p class="schedule-note" style="margin-top:4px;">\u7559\u7a7a\u65f6\u7ee7\u627f\u5168\u5c40\u4ee3\u7406\u3002</p>
         </div>
         <div class="locale-setting-grid">
           <div class="locale-setting-control">
@@ -3820,9 +3800,7 @@ async function openProfileModal(profile) {
       name: fd.get('name'),
       user_data_dir: fd.get('user_data_dir'),
       proxy: fd.get('proxy_value'),
-      proxy_mode: fd.get('proxy_mode'),
       proxy_value: fd.get('proxy_value'),
-      ruyi_fpfile: fd.get('ruyi_fpfile'),
       runtime_stack: fd.get('runtime_stack'),
       locale: getPresetCustomValue(profileLocaleSelect, profileLocaleCustom),
       timezone_id: getPresetCustomValue(profileTimezoneSelect, profileTimezoneCustom),
@@ -4099,24 +4077,24 @@ function fillTaskForm(task) {
   }
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
   let proxyValue = '';
-  let proxyMode = '';
+  let runtimeStack = '';
   let localeValue = '';
   let timezoneValue = '';
   if (Array.isArray(task.env) && task.env.length) {
     proxyValue = findManagedEnvValue(task.env, 'BROWSER_PROXY_VALUE') || findManagedEnvValue(task.env, 'BROWSER_PROXY');
-    proxyMode = findManagedEnvValue(task.env, 'BROWSER_PROXY_MODE');
+    runtimeStack = findManagedEnvValue(task.env, 'BROWSER_RUNTIME_STACK');
     localeValue = findManagedEnvValue(task.env, 'BROWSER_LOCALE');
     timezoneValue = findManagedEnvValue(task.env, 'BROWSER_TIMEZONE');
     syncTaskParamsUI(task.script_path, filterManagedEnvRows(task.env));
   } else {
     const params = task.params || parseParamsJson(task.params_json);
     proxyValue = findManagedParamValue(params, 'BROWSER_PROXY_VALUE') || findManagedParamValue(params, 'BROWSER_PROXY');
-    proxyMode = findManagedParamValue(params, 'BROWSER_PROXY_MODE');
+    runtimeStack = findManagedParamValue(params, 'BROWSER_RUNTIME_STACK');
     localeValue = findManagedParamValue(params, 'BROWSER_LOCALE');
     timezoneValue = findManagedParamValue(params, 'BROWSER_TIMEZONE');
     syncTaskParamsUI(task.script_path, filterManagedEnvObject(params));
   }
-  setTaskProxyInput(proxyValue, proxyMode);
+  setTaskBrowserProxyInput(proxyValue, runtimeStack);
   setManagedLocaleControls(localeValue, timezoneValue);
   updateTaskProfileModeUI();
 }
@@ -4241,6 +4219,7 @@ form.addEventListener('submit', async (event) => {
   deleteManagedMapKeys(envByName, [
     'USE_TEMP_PROFILE',
     'BROWSER_PROXY',
+    'BROWSER_RUNTIME_STACK',
     'BROWSER_PROXY_MODE',
     'BROWSER_PROXY_VALUE',
     'BROWSER_RUYI_FPFILE',
@@ -4264,13 +4243,12 @@ form.addEventListener('submit', async (event) => {
   }
 
   // Dedicated browser controls are stored as canonical, non-secret env entries.
-  const taskProxy = getTaskProxyFromForm();
+  const taskBrowserProxy = getTaskBrowserProxyFromForm();
   const taskLocale = getTaskLocaleFromForm();
   const taskTimezone = getTaskTimezoneFromForm();
   for (const [name, value] of [
-    ['BROWSER_PROXY_MODE', taskProxy.mode],
-    ['BROWSER_PROXY_VALUE', taskProxy.value],
-    ['BROWSER_RUYI_FPFILE', taskProxy.mode === 'ruyi_fpfile' ? taskProxy.value : ''],
+    ['BROWSER_RUNTIME_STACK', taskBrowserProxy.runtimeStack],
+    ['BROWSER_PROXY_VALUE', taskBrowserProxy.value],
     ['BROWSER_LOCALE', taskLocale],
     ['BROWSER_TIMEZONE', taskTimezone],
   ]) {
@@ -4290,15 +4268,15 @@ form.addEventListener('submit', async (event) => {
   deleteManagedObjectKeys(payload.params, [
     'USE_TEMP_PROFILE',
     'BROWSER_PROXY',
+    'BROWSER_RUNTIME_STACK',
     'BROWSER_PROXY_MODE',
     'BROWSER_PROXY_VALUE',
     'BROWSER_RUYI_FPFILE',
     'BROWSER_LOCALE',
     'BROWSER_TIMEZONE',
   ]);
-  payload.params.BROWSER_PROXY_MODE = taskProxy.mode;
-  if (taskProxy.value) payload.params.BROWSER_PROXY_VALUE = taskProxy.value;
-  if (taskProxy.mode === 'ruyi_fpfile' && taskProxy.value) payload.params.BROWSER_RUYI_FPFILE = taskProxy.value;
+  if (taskBrowserProxy.runtimeStack) payload.params.BROWSER_RUNTIME_STACK = taskBrowserProxy.runtimeStack;
+  if (taskBrowserProxy.value) payload.params.BROWSER_PROXY_VALUE = taskBrowserProxy.value;
   if (taskLocale) payload.params.BROWSER_LOCALE = taskLocale;
   if (taskTimezone) payload.params.BROWSER_TIMEZONE = taskTimezone;
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
@@ -5218,27 +5196,11 @@ if (taskEnvApplyRawBtn) {
       const rows = [...combined.values()];
       const locale = findManagedEnvValue(rows, 'BROWSER_LOCALE');
       const timezone = findManagedEnvValue(rows, 'BROWSER_TIMEZONE');
-      const legacyProxy = findManagedEnvValue(rows, 'BROWSER_PROXY');
-      const proxyMode = findManagedEnvValue(rows, 'BROWSER_PROXY_MODE');
-      const proxyValue = findManagedEnvValue(rows, 'BROWSER_PROXY_VALUE');
-      const ruyiFpfile = findManagedEnvValue(rows, 'BROWSER_RUYI_FPFILE');
       if (rows.some((entry) => String(entry.name || '').toUpperCase() === 'BROWSER_LOCALE')) {
         setupPresetCustomControl(taskLocaleSelect, taskLocaleCustom, locale);
       }
       if (rows.some((entry) => String(entry.name || '').toUpperCase() === 'BROWSER_TIMEZONE')) {
         setupPresetCustomControl(taskTimezoneSelect, taskTimezoneCustom, timezone);
-      }
-      if (rows.some((entry) => [
-        'BROWSER_PROXY',
-        'BROWSER_PROXY_MODE',
-        'BROWSER_PROXY_VALUE',
-        'BROWSER_RUYI_FPFILE',
-      ].includes(String(entry.name || '').toUpperCase()))) {
-        const effectiveMode = proxyMode || (legacyProxy ? 'launch' : 'inherit');
-        const effectiveValue = effectiveMode === 'ruyi_fpfile'
-          ? ruyiFpfile || proxyValue
-          : proxyValue || legacyProxy;
-        setTaskProxyInput(effectiveValue, effectiveMode);
       }
       if (taskUseGlobalTelegram && rows.some((entry) => String(entry.name || '').toUpperCase() === 'USE_GLOBAL_TELEGRAM')) {
         taskUseGlobalTelegram.checked = readUseGlobalTelegramFlag(rows);
@@ -5255,11 +5217,7 @@ if (taskEnvExportRawBtn) {
   taskEnvExportRawBtn.addEventListener('click', () => {
     try {
       const rows = filterManagedEnvRows(collectTaskEnvFromForm());
-      const taskProxy = getTaskProxyFromForm();
       const managed = [
-        ['BROWSER_PROXY_MODE', taskProxy.mode],
-        ['BROWSER_PROXY_VALUE', taskProxy.value],
-        ['BROWSER_RUYI_FPFILE', taskProxy.mode === 'ruyi_fpfile' ? taskProxy.value : ''],
         ['BROWSER_LOCALE', getTaskLocaleFromForm()],
         ['BROWSER_TIMEZONE', getTaskTimezoneFromForm()],
       ];

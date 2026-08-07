@@ -349,21 +349,18 @@
                   <input type="text" id="br-ruyi-path" name="ruyiPath" placeholder="/usr/bin/firefox" autocomplete="off" spellcheck="false" />
                 </div>
                 <div>
-                  <label class="field-label" for="br-proxy-mode">全局代理模式</label>
-                  <select id="br-proxy-mode" name="proxyMode">
-                    <option value="direct">直连</option>
-                    <option value="launch">启动时代理</option>
-                    <option value="ruyi_fpfile">RuyiPage 指纹文件</option>
-                    <option value="script">仅传给脚本</option>
+                  <label class="field-label" for="br-runtime-stack">默认浏览器</label>
+                  <select id="br-runtime-stack" name="runtimeStack">
+                    <option value="playwright">Chrome</option>
+                    <option value="ruyipage">Firefox</option>
                   </select>
                 </div>
                 <div>
-                  <label class="field-label" for="br-proxy-value">全局代理值</label>
+                  <label class="field-label" for="br-proxy-value">代理地址（可选）</label>
                   <input type="text" id="br-proxy-value" name="proxyValue" placeholder="socks5://127.0.0.1:7891" autocomplete="off" />
-                </div>
-                <div>
-                  <label class="field-label" for="br-ruyi-fpfile">RuyiPage 指纹文件路径</label>
-                  <input type="text" id="br-ruyi-fpfile" name="ruyiFpfile" placeholder="/path/to/fingerprint.json" autocomplete="off" spellcheck="false" />
+                  <div class="schedule-note" style="margin-top:4px;">
+                    按所选浏览器应用；留空则不使用全局代理。
+                  </div>
                 </div>
                 <div>
                   <label class="field-label" for="br-extension-dirs">解压扩展目录（<code>|</code> 或 <code>;</code> 分隔）</label>
@@ -379,14 +376,6 @@
                     每次启动都会加载，临时和固定配置均生效；目录内必须直接包含 <code>manifest.json</code>。
                     固定配置中从应用商店安装的扩展也会保留。
                   </div>
-                </div>
-                <div>
-                  <label class="field-label" for="br-runtime-stack">运行栈</label>
-                  <select id="br-runtime-stack" name="runtimeStack">
-                    <option value="playwright">Playwright</option>
-                    <option value="seleniumbase">SeleniumBase + ChromeDriver</option>
-                    <option value="ruyipage">RuyiPage + Firefox (Python)</option>
-                  </select>
                 </div>
                 <label class="inline-check">
                   <input type="checkbox" id="br-use-playwright-extra" name="usePlaywrightExtra" />
@@ -626,21 +615,19 @@
                     留空时继承所选配置；未选配置则使用系统默认。
                   </p>
                   <div id="task-proxy-fields">
-                    <label class="field-label" for="task-proxy-mode">代理模式</label>
-                    <select id="task-proxy-mode">
-                      <option value="inherit">继承配置 / 全局</option>
-                      <option value="direct">直连</option>
-                      <option value="launch">启动时代理</option>
-                      <option value="ruyi_fpfile">RuyiPage 指纹文件</option>
-                      <option value="script">仅传给脚本</option>
+                    <label class="field-label" for="task-browser-type">浏览器</label>
+                    <select id="task-browser-type">
+                      <option value="">继承配置 / 全局</option>
+                      <option value="playwright">Chrome</option>
+                      <option value="ruyipage">Firefox</option>
                     </select>
-                    <label class="field-label" for="task-proxy-input" style="margin-top:8px;">代理值 / 指纹文件路径</label>
+                    <label class="field-label" for="task-proxy-input" style="margin-top:8px;">代理地址（可选）</label>
                     <div class="row" style="gap:8px; align-items:center;">
                       <input
                         id="task-proxy-input"
                         type="text"
                         style="flex:1; width:100%;"
-                        placeholder="socks5://127.0.0.1:20004 或 /path/to/fingerprint.json"
+                        placeholder="socks5://127.0.0.1:20004"
                         autocomplete="off"
                       />
                       <button type="button" id="task-proxy-from-profile" class="alt" style="white-space:nowrap;">
@@ -648,7 +635,7 @@
                       </button>
                     </div>
                     <p class="schedule-note" id="task-proxy-hint" style="margin-top:4px;">
-                      继承时使用配置/系统默认。
+                      浏览器和代理均可单独覆盖；留空时继承配置 / 全局。
                     </p>
                   </div>
                 </div>
@@ -957,7 +944,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260807b"></script>
+  <script src="/app.js?v=20260807c"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();
