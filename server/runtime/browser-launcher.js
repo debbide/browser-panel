@@ -101,7 +101,13 @@ function normalizeRuntimeStack(settings) {
   return ['seleniumbase', 'ruyipage'].includes(stack) ? stack : 'playwright';
 }
 
-function resolveRuntimeStack(profile, settings) {
+function resolveRuntimeStack(task, settings) {
+  const params = parseTaskParams(task);
+  const taskStack = String(
+    params.BROWSER_RUNTIME_STACK ?? params.browser_runtime_stack ?? ''
+  ).trim().toLowerCase();
+  if (['playwright', 'seleniumbase', 'ruyipage'].includes(taskStack)) return taskStack;
+  const profile = task && task._profile;
   const profileStack = String(profile && profile.runtime_stack ? profile.runtime_stack : '').trim().toLowerCase();
   if (['seleniumbase', 'ruyipage'].includes(profileStack)) return profileStack;
   if (profileStack === 'playwright') return 'playwright';
@@ -346,16 +352,19 @@ function buildTerminateCommandsByTask(task) {
   const profile = task && task._profile;
   const params = parseTaskParams(task);
   const useTempProfile = resolveUseTempProfile(task, params);
-  const userDataDir = useTempProfile
-    ? getTempProfileDir(task)
-    : (profile && profile.user_data_dir
-      ? profile.user_data_dir
-      : (task && task.use_persistent
-        ? config.browser.userDataDir
-        : getTempProfileDir(task)));
+  const runId = task && task._runId ? String(task._runId) : '';
+  const userDataDir = task && task._effectiveUserDataDir
+    ? String(task._effectiveUserDataDir)
+    : useTempProfile
+      ? getTempProfileDir(task, runId || null)
+      : (profile && profile.user_data_dir
+        ? profile.user_data_dir
+        : (task && task.use_persistent
+          ? config.browser.userDataDir
+          : getTempProfileDir(task, runId || null)));
   const launcherPid = task && task._launcherPid ? Number(task._launcherPid) : 0;
   const taskId = task && task.id != null ? Number(task.id) : 0;
-  const runId = task && task._runId ? String(task._runId) : '';
+  const runtimeStack = String(task && task._runtimeStack ? task._runtimeStack : '').trim().toLowerCase();
   // Unique token injected as BAP_RUN_ID env on the worker process tree.
   const runMarker = runId
     ? `BAP_RUN_ID=${runId}`
@@ -378,6 +387,34 @@ function buildTerminateCommandsByTask(task) {
     '  done',
     '  kill -KILL "$p" 2>/dev/null || true',
     '}',
+    'owner_ok() {',
+    '  local p="$1" owner',
+    `  local buser=${shellEscape(String((config.browser && config.browser.user) || 'browser').trim())}`,
+    '  owner=$(stat -c %U "/proc/$p" 2>/dev/null || true)',
+    '  [ -z "$owner" ] || [ "$owner" = "$buser" ] || [ "$owner" = "root" ]',
+    '}',
+    'kill_run_marker() {',
+    '  local sig="$1" marker="$2" e p',
+    '  [ -z "$marker" ] && return 0',
+    '  for e in /proc/[0-9]*/environ; do',
+    '    p="${e#/proc/}"; p="${p%/environ}"',
+    '    owner_ok "$p" || continue',
+    '    tr "\\0" "\\n" < "$e" 2>/dev/null | grep -Fxq -- "$marker" || continue',
+    '    kill "-$sig" "$p" 2>/dev/null || true',
+    '  done',
+    '}',
+    'kill_ruyi_profile() {',
+    '  local sig="$1" profile="$2" line p cmd',
+    '  [ -z "$profile" ] && return 0',
+    '  pgrep -af -- "firefox|geckodriver" 2>/dev/null | while IFS= read -r line; do',
+    '    p="${line%% *}"; cmd="${line#* }"',
+    '    case "$p" in ""|*[!0-9]*) continue;; esac',
+    '    owner_ok "$p" || continue',
+    '    printf "%s" "$cmd" | grep -Fq -- "$profile" || continue',
+    '    echo "[terminate] ruyipage pid=$p profile=$profile signal=$sig"',
+    '    kill "-$sig" "$p" 2>/dev/null || true',
+    '  done',
+    '}',
   ];
 
   const commands = [
@@ -390,9 +427,10 @@ function buildTerminateCommandsByTask(task) {
     commands.push(`kill_tree ${launcherPid} || true`);
   }
 
-  // 2) By unique run marker (env visible in /proc/*/environ for most children of the shell)
+  // 2) Match the unique run marker in process environments. pkill -f only
+  //    examines cmdline, so it cannot find inherited BAP_RUN_ID reliably.
   if (runMarker) {
-    commands.push(`pkill -TERM -f -- ${shellEscape(runMarker)} || true`);
+    commands.push(`kill_run_marker TERM ${shellEscape(runMarker)} || true`);
   }
 
   // 3) Always kill Chrome bound to THIS task's user-data-dir.
@@ -403,6 +441,9 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -TERM -f -- ${shellEscape(udMarker)} || true`);
   }
+  if (runtimeStack === 'ruyipage' && userDataDir) {
+    commands.push(`kill_ruyi_profile TERM ${shellEscape(userDataDir)} || true`);
+  }
 
   commands.push('sleep 1');
 
@@ -410,11 +451,14 @@ function buildTerminateCommandsByTask(task) {
     commands.push(`kill_tree_kill ${launcherPid} || true`);
   }
   if (runMarker) {
-    commands.push(`pkill -KILL -f -- ${shellEscape(runMarker)} || true`);
+    commands.push(`kill_run_marker KILL ${shellEscape(runMarker)} || true`);
   }
   if (userDataDir) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
+  }
+  if (runtimeStack === 'ruyipage' && userDataDir) {
+    commands.push(`kill_ruyi_profile KILL ${shellEscape(userDataDir)} || true`);
   }
 
   // 4) SeleniumBase UC orphans: chrome reparented to init after python dies.
@@ -835,7 +879,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const effectiveLocale = resolveEffectiveLocale(task, profile);
   const effectiveTimezone = resolveEffectiveTimezone(task, profile);
   const runtimeSettings = db.getBrowserRuntimeSettings();
-  const runtimeStack = resolveRuntimeStack(task._profile, runtimeSettings);
+  const runtimeStack = resolveRuntimeStack(task, runtimeSettings);
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);
   const userEnvPairs = buildBrowserUserEnvPairs(task);
   if (userEnvPairs.length > 0) {
@@ -1044,6 +1088,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       _launcherPid: child.pid,
       _runGeneration: runGeneration,
       _runId: runId,
+      _runtimeStack: runtimeStack,
+      _effectiveUserDataDir: effectiveUserDataDir,
     };
     activeBrowserRuns.set(Number(task.id), {
       child,
@@ -1086,12 +1132,14 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
 
     const requestKill = (reason) => {
       try {
-        child.kill('SIGTERM');
+        process.kill(-child.pid, 'SIGTERM');
       } catch {
-        // ignore
+        try { child.kill('SIGTERM'); } catch { /* ignore */ }
       }
       hardKillTimer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
           try { child.kill('SIGKILL'); } catch { /* ignore */ }
         }
       }, 2000);
@@ -1251,19 +1299,17 @@ function stopBrowserTask(taskId, fallbackTask = null) {
     }
   }
   setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) {
+    try {
+      if (groupSignalSent && groupPid > 0) {
+        process.kill(-groupPid, 'SIGKILL');
+      } else {
+        child.kill('SIGKILL');
+      }
+    } catch {
       try {
-        if (groupSignalSent && groupPid > 0) {
-          process.kill(-groupPid, 'SIGKILL');
-        } else {
-          child.kill('SIGKILL');
-        }
+        child.kill('SIGKILL');
       } catch {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // ignore
-        }
+        // ignore
       }
     }
   }, 1500);

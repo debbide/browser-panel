@@ -16,9 +16,11 @@ function normalizeProxyMode(value, { allowInherit = true } = {}) {
 function proxyLayer(source, fallbackValue = '') {
   if (!source) return null;
   const legacy = String(source.proxy ?? fallbackValue ?? '').trim();
-  const modeRaw = String(source.proxy_mode ?? source.proxyMode ?? '').trim();
-  const mode = modeRaw ? normalizeProxyMode(modeRaw) : (legacy ? 'launch' : 'inherit');
   const value = String(source.proxy_value ?? source.proxyValue ?? legacy).trim();
+  const modeRaw = String(source.proxy_mode ?? source.proxyMode ?? '').trim();
+  // The simplified UI stores only a browser type and optional proxy URL.
+  // A value without an explicit legacy mode is therefore a launch proxy.
+  const mode = modeRaw ? normalizeProxyMode(modeRaw) : (value ? 'launch' : 'inherit');
   const fpfile = String(source.ruyi_fpfile ?? source.ruyiFpfile ?? '').trim();
   return { mode, value, fpfile };
 }

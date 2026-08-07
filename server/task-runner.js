@@ -462,6 +462,11 @@ function resolveTaskProfile(task) {
 }
 
 function resolveRuntimeStack(task, runtimeSettings) {
+  const params = parseTaskParams(task);
+  const taskStack = safeString(
+    params.BROWSER_RUNTIME_STACK ?? params.browser_runtime_stack
+  ).trim().toLowerCase();
+  if (['playwright', 'seleniumbase', 'ruyipage'].includes(taskStack)) return taskStack;
   const profileStack = safeString(task?._profile?.runtime_stack).trim().toLowerCase();
   if (['seleniumbase', 'ruyipage'].includes(profileStack)) return profileStack;
   if (profileStack === 'playwright') return 'playwright';

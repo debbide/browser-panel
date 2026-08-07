@@ -22,7 +22,7 @@ def launch_browser():
         kwargs["browser_path"] = browser_path
     if user_dir:
         kwargs["user_dir"] = user_dir
-    if proxy_mode == "launch" and proxy_value:
+    if proxy_value and proxy_mode not in {"direct", "ruyi_fpfile"}:
         kwargs["proxy"] = proxy_value
     if proxy_mode == "ruyi_fpfile" and fpfile:
         kwargs["fpfile"] = fpfile
