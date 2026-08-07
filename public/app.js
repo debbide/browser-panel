@@ -309,19 +309,6 @@ function deleteManagedObjectKeys(object, names) {
   }
 }
 
-function setManagedLocaleControls(locale = '', timezone = '') {
-  setupPresetCustomControl(taskLocaleSelect, taskLocaleCustom, locale, updateTaskFormSummary);
-  setupPresetCustomControl(taskTimezoneSelect, taskTimezoneCustom, timezone, updateTaskFormSummary);
-}
-
-function getTaskLocaleFromForm() {
-  return getPresetCustomValue(taskLocaleSelect, taskLocaleCustom);
-}
-
-function getTaskTimezoneFromForm() {
-  return getPresetCustomValue(taskTimezoneSelect, taskTimezoneCustom);
-}
-
 const tasksEl = document.getElementById('tasks');
 const form = document.getElementById('task-form');
 const modalImportForm = document.getElementById('modal-import-form');
@@ -358,11 +345,6 @@ const taskBrowserType = document.getElementById('task-browser-type');
 const taskProxyInput = document.getElementById('task-proxy-input');
 const taskProxyFromProfileBtn = document.getElementById('task-proxy-from-profile');
 const taskProxyHint = document.getElementById('task-proxy-hint');
-const taskLocaleSelect = document.getElementById('task-locale-select');
-const taskLocaleCustom = document.getElementById('task-locale-custom');
-const taskTimezoneSelect = document.getElementById('task-timezone-select');
-const taskTimezoneCustom = document.getElementById('task-timezone-custom');
-const taskLocaleInheritHint = document.getElementById('task-locale-inherit-hint');
 const addProfileBtn = document.getElementById('add-profile-btn');
 const profilesList = document.getElementById('profiles-list');
 let profilesCache = [];
@@ -1300,8 +1282,6 @@ function updateTaskFormSummary() {
     : (mode === 'interval' ? '随机区间' : '固定周期');
   const condOn = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
   const temp = isTaskTempProfileMode();
-  const locale = getTaskLocaleFromForm();
-  const timezone = getTaskTimezoneFromForm();
 
   if (scriptSummaryEl) {
     scriptSummaryEl.textContent = scriptPath
@@ -1313,8 +1293,6 @@ function updateTaskFormSummary() {
       scriptPath ? `脚本 ${scriptLabel}` : '未选脚本',
       `超时 ${timeout}s`,
       temp ? '临时（用完删除）' : '持久配置',
-      `语言 ${locale || '继承'}`,
-      `时区 ${timezone || '继承'}`,
       schedOn ? `定时·${modeLabel}` : '手动运行',
       condOn ? '条件触发' : '无条件',
     ];
@@ -2414,7 +2392,6 @@ function resetTaskForm() {
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = '';
   if (taskUsePersistentInput) taskUsePersistentInput.value = '0';
   setTaskBrowserProxyInput('');
-  setManagedLocaleControls('', '');
   setTaskProfileMode('temp');
   if (taskProfileSelect) renderProfileOptions(taskProfileSelect, '');
   form.elements.enabled.checked = false;
@@ -3552,18 +3529,6 @@ function isTaskTempProfileMode() {
   return String(taskProfileModeSelect.value || 'temp') !== 'persistent';
 }
 
-function updateTaskLocaleInheritHint() {
-  if (!taskLocaleInheritHint) return;
-  const profile = profilesCache.find((item) => String(item.id) === String(taskProfileSelect?.value || ''));
-  if (!profile) {
-    taskLocaleInheritHint.textContent = '留空时使用系统默认语言与时区。';
-    return;
-  }
-  const locale = String(profile.locale || '').trim() || '系统默认';
-  const timezone = String(profile.timezone_id || '').trim() || '系统默认';
-  taskLocaleInheritHint.textContent = `留空时继承「${profile.name}」：Locale ${locale} · Timezone ${timezone}；临时模式不会写入该配置的数据目录。`;
-}
-
 function updateTaskProfileModeUI() {
   const temp = isTaskTempProfileMode();
   if (taskUsePersistentInput) taskUsePersistentInput.value = temp ? '0' : '1';
@@ -3592,7 +3557,6 @@ function updateTaskProfileModeUI() {
   if (taskProfileSelect) {
     renderProfileOptions(taskProfileSelect, taskProfileSelect.value);
   }
-  updateTaskLocaleInheritHint();
 }
 
 function setTaskProfileMode(mode) {
@@ -4078,24 +4042,17 @@ function fillTaskForm(task) {
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
   let proxyValue = '';
   let runtimeStack = '';
-  let localeValue = '';
-  let timezoneValue = '';
   if (Array.isArray(task.env) && task.env.length) {
     proxyValue = findManagedEnvValue(task.env, 'BROWSER_PROXY_VALUE') || findManagedEnvValue(task.env, 'BROWSER_PROXY');
     runtimeStack = findManagedEnvValue(task.env, 'BROWSER_RUNTIME_STACK');
-    localeValue = findManagedEnvValue(task.env, 'BROWSER_LOCALE');
-    timezoneValue = findManagedEnvValue(task.env, 'BROWSER_TIMEZONE');
     syncTaskParamsUI(task.script_path, filterManagedEnvRows(task.env));
   } else {
     const params = task.params || parseParamsJson(task.params_json);
     proxyValue = findManagedParamValue(params, 'BROWSER_PROXY_VALUE') || findManagedParamValue(params, 'BROWSER_PROXY');
     runtimeStack = findManagedParamValue(params, 'BROWSER_RUNTIME_STACK');
-    localeValue = findManagedParamValue(params, 'BROWSER_LOCALE');
-    timezoneValue = findManagedParamValue(params, 'BROWSER_TIMEZONE');
     syncTaskParamsUI(task.script_path, filterManagedEnvObject(params));
   }
   setTaskBrowserProxyInput(proxyValue, runtimeStack);
-  setManagedLocaleControls(localeValue, timezoneValue);
   updateTaskProfileModeUI();
 }
 
@@ -4244,13 +4201,9 @@ form.addEventListener('submit', async (event) => {
 
   // Dedicated browser controls are stored as canonical, non-secret env entries.
   const taskBrowserProxy = getTaskBrowserProxyFromForm();
-  const taskLocale = getTaskLocaleFromForm();
-  const taskTimezone = getTaskTimezoneFromForm();
   for (const [name, value] of [
     ['BROWSER_RUNTIME_STACK', taskBrowserProxy.runtimeStack],
     ['BROWSER_PROXY_VALUE', taskBrowserProxy.value],
-    ['BROWSER_LOCALE', taskLocale],
-    ['BROWSER_TIMEZONE', taskTimezone],
   ]) {
     if (value) {
       envByName.set(name, { name, value, is_secret: 0 });
@@ -4277,8 +4230,6 @@ form.addEventListener('submit', async (event) => {
   ]);
   if (taskBrowserProxy.runtimeStack) payload.params.BROWSER_RUNTIME_STACK = taskBrowserProxy.runtimeStack;
   if (taskBrowserProxy.value) payload.params.BROWSER_PROXY_VALUE = taskBrowserProxy.value;
-  if (taskLocale) payload.params.BROWSER_LOCALE = taskLocale;
-  if (taskTimezone) payload.params.BROWSER_TIMEZONE = taskTimezone;
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
   const method = editingId ? 'PUT' : 'POST';
   await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -5143,22 +5094,6 @@ if (storageCleanupRunBtn) {
   });
 }
 
-if (taskLocaleSelect && taskLocaleCustom) {
-  setupPresetCustomControl(
-    taskLocaleSelect,
-    taskLocaleCustom,
-    getTaskLocaleFromForm(),
-    updateTaskFormSummary
-  );
-}
-if (taskTimezoneSelect && taskTimezoneCustom) {
-  setupPresetCustomControl(
-    taskTimezoneSelect,
-    taskTimezoneCustom,
-    getTaskTimezoneFromForm(),
-    updateTaskFormSummary
-  );
-}
 if (taskProfileModeSelect) {
   taskProfileModeSelect.addEventListener('change', () => {
     updateTaskProfileModeUI();
@@ -5194,14 +5129,6 @@ if (taskEnvApplyRawBtn) {
       );
       for (const entry of parsed) combined.set(String(entry.name || '').toUpperCase(), entry);
       const rows = [...combined.values()];
-      const locale = findManagedEnvValue(rows, 'BROWSER_LOCALE');
-      const timezone = findManagedEnvValue(rows, 'BROWSER_TIMEZONE');
-      if (rows.some((entry) => String(entry.name || '').toUpperCase() === 'BROWSER_LOCALE')) {
-        setupPresetCustomControl(taskLocaleSelect, taskLocaleCustom, locale);
-      }
-      if (rows.some((entry) => String(entry.name || '').toUpperCase() === 'BROWSER_TIMEZONE')) {
-        setupPresetCustomControl(taskTimezoneSelect, taskTimezoneCustom, timezone);
-      }
       if (taskUseGlobalTelegram && rows.some((entry) => String(entry.name || '').toUpperCase() === 'USE_GLOBAL_TELEGRAM')) {
         taskUseGlobalTelegram.checked = readUseGlobalTelegramFlag(rows);
       }
@@ -5217,13 +5144,6 @@ if (taskEnvExportRawBtn) {
   taskEnvExportRawBtn.addEventListener('click', () => {
     try {
       const rows = filterManagedEnvRows(collectTaskEnvFromForm());
-      const managed = [
-        ['BROWSER_LOCALE', getTaskLocaleFromForm()],
-        ['BROWSER_TIMEZONE', getTaskTimezoneFromForm()],
-      ];
-      for (const [name, value] of managed) {
-        if (value) rows.push({ name, value });
-      }
       if (paramJsonRaw) {
         paramJsonRaw.value = rows
           .map((entry) => `${entry.name}=${String(entry.value || '').replace(/\n/g, '\\n')}`)

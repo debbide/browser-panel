@@ -180,12 +180,10 @@ function resolveEffectiveProxy(task, profile = null) {
 }
 
 function resolveEffectiveLocale(task, profile = null) {
-  const params = parseTaskParams(task) || {};
   const resolvedProfile = profile
     || (task && task._profile)
     || (task && task.browser_profile_id ? db.getBrowserProfile(task.browser_profile_id) : null);
   return pickNonEmptyString(
-    params.BROWSER_LOCALE,
     resolvedProfile && resolvedProfile.locale,
     config.browser.locale,
     'zh-CN'
@@ -193,12 +191,10 @@ function resolveEffectiveLocale(task, profile = null) {
 }
 
 function resolveEffectiveTimezone(task, profile = null) {
-  const params = parseTaskParams(task) || {};
   const resolvedProfile = profile
     || (task && task._profile)
     || (task && task.browser_profile_id ? db.getBrowserProfile(task.browser_profile_id) : null);
   return pickNonEmptyString(
-    params.BROWSER_TIMEZONE,
     resolvedProfile && resolvedProfile.timezone_id,
     config.browser.timezoneId,
     'Asia/Shanghai'
