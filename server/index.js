@@ -27,6 +27,7 @@ const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBr
 const { cleanupStorage, normalizeCategories, normalizeRetentionDays } = require('./storage-cleanup');
 const backup = require('./backup');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
+const { PROXY_MODES } = require('./runtime/runtime-contract');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
 fs.mkdirSync(config.paths.publicDir, { recursive: true });
@@ -455,11 +456,18 @@ function normalizeProfileTimezone(value) {
   return timezone;
 }
 
+function normalizeProfileProxyMode(value, legacyProxy = '') {
+  const mode = String(value || '').trim().toLowerCase();
+  if (!mode) return legacyProxy ? 'launch' : 'inherit';
+  if (PROXY_MODES.includes(mode)) return mode;
+  throw new Error(`Invalid proxy mode: ${mode}`);
+}
+
 function normalizeProfileRuntimeStack(value) {
   const stack = String(value || '').trim().toLowerCase();
   if (!stack) return '';
-  if (stack === 'playwright' || stack === 'seleniumbase') return stack;
-  throw new Error('Invalid runtime stack, only playwright or seleniumbase');
+  if (stack === 'playwright' || stack === 'seleniumbase' || stack === 'ruyipage') return stack;
+  throw new Error('Invalid runtime stack, use playwright, seleniumbase, or ruyipage');
 }
 
 function parseBooleanFlag(value, fallback = false) {
@@ -469,7 +477,7 @@ function parseBooleanFlag(value, fallback = false) {
 
 function normalizeRuntimeStack(value) {
   const stack = String(value || '').trim().toLowerCase();
-  if (stack === 'seleniumbase') return 'seleniumbase';
+  if (stack === 'seleniumbase' || stack === 'ruyipage') return stack;
   return 'playwright';
 }
 
@@ -502,6 +510,12 @@ function normalizeBrowserRuntimeSettingsPayload(payload = {}, fallback = null) {
   const extensionDirs = payload.extensionDirs === undefined
     ? (base.extensionDirs || '')
     : String(payload.extensionDirs || '').trim().slice(0, 4096);
+  const ruyiPath = payload.ruyiPath === undefined
+    ? (base.ruyiPath || '')
+    : String(payload.ruyiPath || '').trim().slice(0, 512);
+  const proxyMode = String(payload.proxyMode === undefined ? base.proxyMode : payload.proxyMode).trim().toLowerCase();
+  const proxyValue = String(payload.proxyValue === undefined ? base.proxyValue : payload.proxyValue || '').trim().slice(0, 2048);
+  const ruyiFpfile = String(payload.ruyiFpfile === undefined ? base.ruyiFpfile : payload.ruyiFpfile || '').trim().slice(0, 512);
 
   if (pluginPackages.includes('playwright-stealth')) {
     throw new Error('playwright-stealth 这个包是占位包，请改用 puppeteer-extra-plugin-stealth');
@@ -520,11 +534,23 @@ function normalizeBrowserRuntimeSettingsPayload(payload = {}, fallback = null) {
     throw new Error('扩展目录含非法字符');
   }
 
+  if ([ruyiPath, ruyiFpfile].some(value => /[\r\n\0]/.test(value))) {
+    throw new Error('RuyiPage path contains invalid characters');
+  }
+
+  if (!['direct', 'launch', 'ruyi_fpfile', 'script'].includes(proxyMode)) {
+    throw new Error(`Invalid global proxy mode: ${proxyMode}`);
+  }
+
   return {
     runtimeStack,
     usePlaywrightExtra: runtimeStack === 'playwright' && (usePlaywrightExtra || pluginPackages.length > 0),
     pluginPackages: pluginPackages.join(','),
     chromePath,
+    ruyiPath,
+    proxyMode,
+    proxyValue,
+    ruyiFpfile,
     extensionDirs,
   };
 }
@@ -1062,6 +1088,10 @@ app.get('/api/browser-profiles', (req, res) => {
 app.post('/api/browser-profiles', (req, res) => {
   try {
     const { name, user_data_dir, proxy } = req.body || {};
+    const legacyProxy = normalizeProfileProxy(proxy);
+    const proxy_mode = normalizeProfileProxyMode(req.body?.proxy_mode ?? req.body?.proxyMode, legacyProxy);
+    const proxy_value = normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
+    const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile);
     const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
     const locale = normalizeProfileLocale(req.body?.locale);
     const timezone_id = normalizeProfileTimezone(req.body?.timezone_id ?? req.body?.timezoneId);
@@ -1069,7 +1099,10 @@ app.post('/api/browser-profiles', (req, res) => {
     const profile = db.createBrowserProfile({
       name: String(name),
       user_data_dir: normalizeProfileUserDataDir(user_data_dir),
-      proxy: normalizeProfileProxy(proxy),
+      proxy: legacyProxy,
+      proxy_mode,
+      proxy_value,
+      ruyi_fpfile,
       runtime_stack,
       locale,
       timezone_id,
@@ -1083,6 +1116,10 @@ app.put('/api/browser-profiles/:id', (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, user_data_dir, proxy } = req.body || {};
+    const legacyProxy = normalizeProfileProxy(proxy);
+    const proxy_mode = normalizeProfileProxyMode(req.body?.proxy_mode ?? req.body?.proxyMode, legacyProxy);
+    const proxy_value = normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
+    const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile);
     const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
     const locale = normalizeProfileLocale(req.body?.locale);
     const timezone_id = normalizeProfileTimezone(req.body?.timezone_id ?? req.body?.timezoneId);
@@ -1090,7 +1127,10 @@ app.put('/api/browser-profiles/:id', (req, res) => {
     const profile = db.updateBrowserProfile(id, {
       name: String(name),
       user_data_dir: normalizeProfileUserDataDir(user_data_dir),
-      proxy: normalizeProfileProxy(proxy),
+      proxy: legacyProxy,
+      proxy_mode,
+      proxy_value,
+      ruyi_fpfile,
       runtime_stack,
       locale,
       timezone_id,

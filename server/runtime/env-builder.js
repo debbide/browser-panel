@@ -1,5 +1,6 @@
 const db = require('../db');
 const config = require('../../config');
+const { resolveProxyContract } = require('./runtime-contract');
 
 const SYSTEM_PROTECTED_KEYS = new Set([
   'TASK_RESULT_PATH',
@@ -10,7 +11,21 @@ const SYSTEM_PROTECTED_KEYS = new Set([
   'BROWSER_USER',
   'BROWSER_USER_DATA_DIR',
   'BROWSER_CHROME_PATH',
+  'BROWSER_RUYI_PATH',
+  'BROWSER_RUYI_ADAPTER_MODULE',
+  'BROWSER_RUYI_ADAPTER_PATH',
+  'BROWSER_PROXY_MODE',
+  'BROWSER_PROXY_VALUE',
+  'BROWSER_RUYI_FPFILE',
   'BROWSER_PROXY',
+  'PROXY',
+  'proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'ALL_PROXY',
+  'all_proxy',
   'BROWSER_LOCALE',
   'BROWSER_TIMEZONE',
   'BROWSER_HEADLESS',
@@ -130,17 +145,38 @@ function pickNonEmptyString(...values) {
  *   2) selected browser profile.proxy
  *   3) config.browser.proxy
  */
-function resolveEffectiveProxy(task, profile = null) {
+function resolveEffectiveProxyContract(task, profile = null) {
   const params = parseTaskParams(task) || {};
   const resolvedProfile = profile
     || (task && task._profile)
     || (task && task.browser_profile_id ? db.getBrowserProfile(task.browser_profile_id) : null);
-  return pickNonEmptyString(
-    params.BROWSER_PROXY,
-    params.browser_proxy,
-    resolvedProfile && resolvedProfile.proxy,
-    config.browser.proxy || ''
-  );
+  let globalSettings = null;
+  try {
+    const settings = db.getBrowserRuntimeSettings();
+    globalSettings = {
+      proxy_mode: settings.proxyMode,
+      proxy_value: settings.proxyValue,
+      ruyi_fpfile: settings.ruyiFpfile,
+      proxy: config.browser.proxy || '',
+    };
+  } catch {
+    globalSettings = { proxy: config.browser.proxy || '' };
+  }
+  return resolveProxyContract({
+    task: {
+      proxy_mode: params.BROWSER_PROXY_MODE ?? params.browser_proxy_mode,
+      proxy_value: params.BROWSER_PROXY_VALUE ?? params.browser_proxy_value,
+      ruyi_fpfile: params.BROWSER_RUYI_FPFILE ?? params.browser_ruyi_fpfile,
+      proxy: params.BROWSER_PROXY ?? params.browser_proxy,
+    },
+    profile: resolvedProfile,
+    global: globalSettings,
+    legacyTaskProxy: params.BROWSER_PROXY ?? params.browser_proxy ?? '',
+  });
+}
+
+function resolveEffectiveProxy(task, profile = null) {
+  return resolveEffectiveProxyContract(task, profile).scriptProxy;
 }
 
 function resolveEffectiveLocale(task, profile = null) {
@@ -365,12 +401,21 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
     try {
       const br = db.getBrowserRuntimeSettings();
       system.BROWSER_CHROME_PATH = (br && br.chromePath) || config.browser.chromePath;
+      system.BROWSER_RUYI_PATH = (br && br.ruyiPath) || '';
       system.BROWSER_EXTENSIONS = (br && br.extensionDirs) || '';
     } catch {
       system.BROWSER_CHROME_PATH = config.browser.chromePath;
+      system.BROWSER_RUYI_PATH = (config.browser && config.browser.ruyiPath) || process.env.BROWSER_RUYI_PATH || '';
       system.BROWSER_EXTENSIONS = config.browser.extensions || '';
     }
-    system.BROWSER_PROXY = resolveEffectiveProxy(task, profile);
+    const proxyContract = resolveEffectiveProxyContract(task, profile);
+    system.BROWSER_PROXY_MODE = proxyContract.mode;
+    system.BROWSER_PROXY_VALUE = proxyContract.value;
+    system.BROWSER_RUYI_FPFILE = proxyContract.fpfile;
+    system.BROWSER_PROXY = proxyContract.scriptProxy;
+    for (const key of PROXY_ALIAS_KEYS) {
+      system[key] = proxyContract.scriptProxy;
+    }
     system.BROWSER_LOCALE = resolveEffectiveLocale(task, profile);
     system.BROWSER_TIMEZONE = resolveEffectiveTimezone(task, profile);
     system.BROWSER_HEADLESS = 'false';
@@ -417,6 +462,7 @@ module.exports = {
   redactEnvValue,
   parseTaskParams,
   resolveUseTempProfile,
+  resolveEffectiveProxyContract,
   resolveEffectiveProxy,
   resolveEffectiveLocale,
   resolveEffectiveTimezone,

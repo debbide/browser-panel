@@ -92,7 +92,7 @@ const TASK_CONFIG_COLUMNS = Object.freeze([
 ]);
 
 const PROFILE_CONFIG_COLUMNS = Object.freeze([
-  'name', 'user_data_dir', 'proxy', 'runtime_stack', 'locale', 'timezone_id',
+  'name', 'user_data_dir', 'proxy', 'proxy_mode', 'proxy_value', 'ruyi_fpfile', 'runtime_stack', 'locale', 'timezone_id',
 ]);
 
 const CONFLICT_STRATEGIES = Object.freeze(['skip', 'overwrite', 'rename']);
@@ -249,6 +249,8 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     const profileConfig = pick(profile, PROFILE_CONFIG_COLUMNS);
     // 代理绝不导出；user_data_dir 导出为空（临时目录占位）。
     profileConfig.proxy = null;
+    profileConfig.proxy_value = null;
+    profileConfig.ruyi_fpfile = '';
     profileConfig.user_data_dir = '';
 
     const profileEnv = db.listEnvEntriesRaw('profile', Number(profile.id)).map((row) => {
@@ -685,6 +687,9 @@ function importBackup(input, options = {}) {
         name: profile.name,
         user_data_dir: profile.config.user_data_dir || '',
         proxy: profile.config.proxy || '',
+        proxy_mode: profile.config.proxy_mode || (profile.config.proxy ? 'launch' : 'inherit'),
+        proxy_value: profile.config.proxy_value || profile.config.proxy || '',
+        ruyi_fpfile: '',
         runtime_stack: profile.config.runtime_stack || '',
         locale: profile.config.locale || '',
         timezone_id: profile.config.timezone_id || '',

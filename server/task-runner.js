@@ -12,6 +12,7 @@ const {
   resolveEffectiveTimezone,
   buildForegroundEnv,
 } = require('./runtime/env-builder');
+const { assertRuntimeSupportsTask } = require('./runtime/runtime-contract');
 const { evaluateLogSuccess } = require('./runtime/success-heuristics');
 const { ingestTaskResultCallback } = require('./runtime/callback-report');
 const logStream = require('./log-stream');
@@ -462,10 +463,10 @@ function resolveTaskProfile(task) {
 
 function resolveRuntimeStack(task, runtimeSettings) {
   const profileStack = safeString(task?._profile?.runtime_stack).trim().toLowerCase();
-  if (profileStack === 'seleniumbase') return 'seleniumbase';
+  if (['seleniumbase', 'ruyipage'].includes(profileStack)) return profileStack;
   if (profileStack === 'playwright') return 'playwright';
   const globalStack = safeString(runtimeSettings?.runtimeStack).trim().toLowerCase();
-  return globalStack === 'seleniumbase' ? 'seleniumbase' : 'playwright';
+  return ['seleniumbase', 'ruyipage'].includes(globalStack) ? globalStack : 'playwright';
 }
 
 function resolveBrowserContext(task) {
@@ -923,6 +924,10 @@ async function runBrowserTask(task, logPath = makeLogPath(task)) {
 async function runTask(task, options = {}) {
   const logPath = options.logPath || prepareLogForTask(task);
   if (task.use_browser) {
+    let profile = task._profile || null;
+    if (!profile && task.browser_profile_id) profile = db.getBrowserProfile(task.browser_profile_id) || null;
+    const runtimeStack = resolveRuntimeStack({ ...task, _profile: profile }, db.getBrowserRuntimeSettings());
+    assertRuntimeSupportsTask(runtimeStack, task.type);
     return runBrowserTask(task, logPath);
   }
   return runForegroundTask(task, makeScreenshotPath(task), logPath);

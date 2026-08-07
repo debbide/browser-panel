@@ -6,7 +6,7 @@ const db = require('../db');
 const {
   parseTaskParams,
   resolveUseTempProfile,
-  resolveEffectiveProxy,
+  resolveEffectiveProxyContract,
   resolveEffectiveLocale,
   resolveEffectiveTimezone,
   buildBrowserUserEnvPairs,
@@ -98,12 +98,12 @@ function shouldUsePlaywrightExtra(settings) {
 
 function normalizeRuntimeStack(settings) {
   const stack = String(settings && settings.runtimeStack ? settings.runtimeStack : '').trim().toLowerCase();
-  return stack === 'seleniumbase' ? 'seleniumbase' : 'playwright';
+  return ['seleniumbase', 'ruyipage'].includes(stack) ? stack : 'playwright';
 }
 
 function resolveRuntimeStack(profile, settings) {
   const profileStack = String(profile && profile.runtime_stack ? profile.runtime_stack : '').trim().toLowerCase();
-  if (profileStack === 'seleniumbase') return 'seleniumbase';
+  if (['seleniumbase', 'ruyipage'].includes(profileStack)) return profileStack;
   if (profileStack === 'playwright') return 'playwright';
   return normalizeRuntimeStack(settings);
 }
@@ -240,6 +240,7 @@ function ensureRuntimeFiles(task) {
     ...moduleCopies,
     { from: path.join(config.paths.root, 'server', 'runtime', 'browser-runtime.js'), to: path.join(workerRoot, 'browser-runtime.js') },
     { from: path.join(config.paths.root, 'server', 'runtime', 'js-task-wrapper.js'), to: path.join(workerRoot, 'js-task-wrapper.js') },
+    { from: path.join(config.paths.root, 'server', 'runtime', 'ruyipage_adapter.py'), to: path.join(workerRoot, 'ruyipage_adapter.py') },
     { from: taskSourcePath, to: path.join(workerRoot, taskBaseName) },
   ];
 
@@ -805,6 +806,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const baseName = path.basename(task.script_path);
   const taskFile = path.join(workDir, baseName);
   const wrapperFile = path.join(workDir, 'js-task-wrapper.js');
+  const ruyiAdapterFile = path.join(workDir, 'ruyipage_adapter.py');
   const workerScreenshotPath = path.join(workDir, 'screenshots', `task-${task.id}-${runId}.png`);
   const workerScreenshotDir = path.join(workDir, 'screenshots', 'runs', `task-${task.id}-run-${runId}`);
   const resultPath = path.join(workDir, 'task-results', `run-${runId}.json`);
@@ -825,7 +827,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       // Fallback only if misconfigured persistent without a dir
       getTempProfileDir(task, runId)
     );
-  const effectiveProxy = resolveEffectiveProxy(task, profile);
+  const proxyContract = resolveEffectiveProxyContract(task, profile);
   const effectiveProfileName = pickNonEmptyString(
     profile && profile.name,
     ''
@@ -842,7 +844,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
 
   // System keys first, then user layers (user may set script vars; system keys re-forced after).
   // GitHub-style aliases: BROWSER_PROXY → PROXY / HTTP_PROXY / … (only if panel has a proxy).
-  const proxyAliasEnv = { BROWSER_PROXY: effectiveProxy || '' };
+  const proxyAliasEnv = { BROWSER_PROXY: proxyContract.scriptProxy || '' };
   const chromePathEffective = (() => {
     try {
       const br = db.getBrowserRuntimeSettings();
@@ -866,7 +868,13 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     // Scripts (woiden/hax DP) key off this: 1 => treat as TEMP + cleanup after quit
     ['USE_TEMP_PROFILE', useTempProfile ? '1' : '0'],
     ['BROWSER_CHROME_PATH', chromePathEffective],
-    ['BROWSER_PROXY', effectiveProxy],
+    ['BROWSER_RUYI_PATH', runtimeSettings.ruyiPath || ''],
+    ['BROWSER_RUYI_ADAPTER_MODULE', 'ruyipage_adapter'],
+    ['BROWSER_RUYI_ADAPTER_PATH', ruyiAdapterFile],
+    ['BROWSER_PROXY_MODE', proxyContract.mode],
+    ['BROWSER_PROXY_VALUE', proxyContract.value],
+    ['BROWSER_RUYI_FPFILE', proxyContract.fpfile],
+    ['BROWSER_PROXY', proxyContract.scriptProxy],
     ['BROWSER_PROFILE_NAME', effectiveProfileName],
     ['BROWSER_LOCALE', effectiveLocale],
     ['BROWSER_TIMEZONE', effectiveTimezone],
@@ -886,10 +894,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     ['BAP_TASK_ID', String(task && task.id != null ? task.id : '')],
   ];
   // Expand proxy / chrome / artifact aliases for SeleniumBase & requests-style scripts
-  if (effectiveProxy) {
-    for (const key of PROXY_ALIAS_KEYS) {
-      systemPairs.push([key, effectiveProxy]);
-    }
+  for (const key of PROXY_ALIAS_KEYS) {
+    systemPairs.push([key, proxyContract.scriptProxy]);
   }
   if (proxyAliasEnv.CHROME_PATH) {
     systemPairs.push(['CHROME_PATH', proxyAliasEnv.CHROME_PATH]);
@@ -1052,7 +1058,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     // Always emit one line so logs are never totally empty if the script dies instantly.
     const launchLine =
       `[panel] launching script=${baseName} type=${task.type || '?'} ` +
-      `run=${runId} gen=${runGeneration} proxy=${effectiveProxy ? 'set' : 'none'} ` +
+      `run=${runId} gen=${runGeneration} proxy=${proxyContract.scriptProxy ? 'set' : 'none'} ` +
       `python_unbuffered=1\n`;
     let stdout = launchLine;
     let stderr = '';

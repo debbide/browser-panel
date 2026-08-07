@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260807a" />
+  <link rel="stylesheet" href="/styles.css?v=20260807b" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -345,6 +345,27 @@
                   </div>
                 </div>
                 <div>
+                  <label class="field-label" for="br-ruyi-path">RuyiPage Firefox 可执行文件路径</label>
+                  <input type="text" id="br-ruyi-path" name="ruyiPath" placeholder="/usr/bin/firefox" autocomplete="off" spellcheck="false" />
+                </div>
+                <div>
+                  <label class="field-label" for="br-proxy-mode">全局代理模式</label>
+                  <select id="br-proxy-mode" name="proxyMode">
+                    <option value="direct">直连</option>
+                    <option value="launch">启动时代理</option>
+                    <option value="ruyi_fpfile">RuyiPage 指纹文件</option>
+                    <option value="script">仅传给脚本</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="field-label" for="br-proxy-value">全局代理值</label>
+                  <input type="text" id="br-proxy-value" name="proxyValue" placeholder="socks5://127.0.0.1:7891" autocomplete="off" />
+                </div>
+                <div>
+                  <label class="field-label" for="br-ruyi-fpfile">RuyiPage 指纹文件路径</label>
+                  <input type="text" id="br-ruyi-fpfile" name="ruyiFpfile" placeholder="/path/to/fingerprint.json" autocomplete="off" spellcheck="false" />
+                </div>
+                <div>
                   <label class="field-label" for="br-extension-dirs">解压扩展目录（<code>|</code> 或 <code>;</code> 分隔）</label>
                   <input
                     type="text"
@@ -364,6 +385,7 @@
                   <select id="br-runtime-stack" name="runtimeStack">
                     <option value="playwright">Playwright</option>
                     <option value="seleniumbase">SeleniumBase + ChromeDriver</option>
+                    <option value="ruyipage">RuyiPage + Firefox (Python)</option>
                   </select>
                 </div>
                 <label class="inline-check">
@@ -604,13 +626,21 @@
                     留空时继承所选配置；未选配置则使用系统默认。
                   </p>
                   <div id="task-proxy-fields">
-                    <label class="field-label" for="task-proxy-input">代理（可选）</label>
+                    <label class="field-label" for="task-proxy-mode">代理模式</label>
+                    <select id="task-proxy-mode">
+                      <option value="inherit">继承配置 / 全局</option>
+                      <option value="direct">直连</option>
+                      <option value="launch">启动时代理</option>
+                      <option value="ruyi_fpfile">RuyiPage 指纹文件</option>
+                      <option value="script">仅传给脚本</option>
+                    </select>
+                    <label class="field-label" for="task-proxy-input" style="margin-top:8px;">代理值 / 指纹文件路径</label>
                     <div class="row" style="gap:8px; align-items:center;">
                       <input
                         id="task-proxy-input"
                         type="text"
                         style="flex:1; width:100%;"
-                        placeholder="socks5://127.0.0.1:20004 或 http://127.0.0.1:7890"
+                        placeholder="socks5://127.0.0.1:20004 或 /path/to/fingerprint.json"
                         autocomplete="off"
                       />
                       <button type="button" id="task-proxy-from-profile" class="alt" style="white-space:nowrap;">
@@ -618,7 +648,7 @@
                       </button>
                     </div>
                     <p class="schedule-note" id="task-proxy-hint" style="margin-top:4px;">
-                      留空则用配置/系统默认。
+                      继承时使用配置/系统默认。
                     </p>
                   </div>
                 </div>
@@ -927,7 +957,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260807a"></script>
+  <script src="/app.js?v=20260807b"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

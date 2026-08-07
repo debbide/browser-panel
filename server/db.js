@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS browser_profiles (
   name TEXT NOT NULL,
   user_data_dir TEXT NOT NULL DEFAULT '',
   proxy TEXT NOT NULL DEFAULT '',
+  proxy_mode TEXT NOT NULL DEFAULT '',
+  proxy_value TEXT NOT NULL DEFAULT '',
+  ruyi_fpfile TEXT NOT NULL DEFAULT '',
   runtime_stack TEXT NOT NULL DEFAULT '',
   locale TEXT NOT NULL DEFAULT '',
   timezone_id TEXT NOT NULL DEFAULT '',
@@ -141,6 +144,9 @@ if (!taskTableColumns.includes('callback_action')) db.exec('ALTER TABLE tasks AD
 
 const browserProfileColumns = db.prepare('PRAGMA table_info(browser_profiles)').all().map(row => row.name);
 if (!browserProfileColumns.includes('runtime_stack')) db.exec("ALTER TABLE browser_profiles ADD COLUMN runtime_stack TEXT NOT NULL DEFAULT ''");
+if (!browserProfileColumns.includes('proxy_mode')) db.exec("ALTER TABLE browser_profiles ADD COLUMN proxy_mode TEXT NOT NULL DEFAULT ''");
+if (!browserProfileColumns.includes('proxy_value')) db.exec("ALTER TABLE browser_profiles ADD COLUMN proxy_value TEXT NOT NULL DEFAULT ''");
+if (!browserProfileColumns.includes('ruyi_fpfile')) db.exec("ALTER TABLE browser_profiles ADD COLUMN ruyi_fpfile TEXT NOT NULL DEFAULT ''");
 if (!browserProfileColumns.includes('locale')) db.exec("ALTER TABLE browser_profiles ADD COLUMN locale TEXT NOT NULL DEFAULT ''");
 if (!browserProfileColumns.includes('timezone_id')) db.exec("ALTER TABLE browser_profiles ADD COLUMN timezone_id TEXT NOT NULL DEFAULT ''");
 
@@ -595,19 +601,44 @@ function getBrowserProfile(id) {
 
 function createBrowserProfile(payload) {
   const stmt = db.prepare(`
-    INSERT INTO browser_profiles (name, user_data_dir, proxy, runtime_stack, locale, timezone_id)
-    VALUES (@name, @user_data_dir, @proxy, @runtime_stack, @locale, @timezone_id)
+    INSERT INTO browser_profiles (name, user_data_dir, proxy, proxy_mode, proxy_value, ruyi_fpfile, runtime_stack, locale, timezone_id)
+    VALUES (@name, @user_data_dir, @proxy, @proxy_mode, @proxy_value, @ruyi_fpfile, @runtime_stack, @locale, @timezone_id)
   `);
-  const result = stmt.run(payload);
+  const result = stmt.run({
+    name: '',
+    user_data_dir: '',
+    proxy: '',
+    proxy_mode: '',
+    proxy_value: '',
+    ruyi_fpfile: '',
+    runtime_stack: '',
+    locale: '',
+    timezone_id: '',
+    ...payload,
+  });
   return getBrowserProfile(result.lastInsertRowid);
 }
 
 function updateBrowserProfile(id, payload) {
   db.prepare(`
     UPDATE browser_profiles
-    SET name = @name, user_data_dir = @user_data_dir, proxy = @proxy, runtime_stack = @runtime_stack, locale = @locale, timezone_id = @timezone_id
+    SET name = @name, user_data_dir = @user_data_dir, proxy = @proxy, proxy_mode = @proxy_mode,
+        proxy_value = @proxy_value, ruyi_fpfile = @ruyi_fpfile, runtime_stack = @runtime_stack,
+        locale = @locale, timezone_id = @timezone_id
     WHERE id = @id
-  `).run({ ...payload, id });
+  `).run({
+    name: '',
+    user_data_dir: '',
+    proxy: '',
+    proxy_mode: '',
+    proxy_value: '',
+    ruyi_fpfile: '',
+    runtime_stack: '',
+    locale: '',
+    timezone_id: '',
+    ...payload,
+    id,
+  });
   return getBrowserProfile(id);
 }
 
@@ -638,7 +669,7 @@ function toBool(value) {
 
 function normalizeRuntimeStack(value) {
   const stack = String(value || '').trim().toLowerCase();
-  if (stack === 'seleniumbase') return 'seleniumbase';
+  if (stack === 'seleniumbase' || stack === 'ruyipage') return stack;
   return 'playwright';
 }
 
@@ -681,11 +712,26 @@ function getBrowserRuntimeSettings() {
     getSetting('browser_extension_dirs'),
     (config.browser && config.browser.extensions) || ''
   );
+  const ruyiPath = normalizeChromePath(
+    getSetting('browser_ruyi_path'),
+    (config.browser && config.browser.ruyiPath) || process.env.BROWSER_RUYI_PATH || ''
+  );
+  const proxyModeRaw = String(getSetting('browser_proxy_mode') || '').trim().toLowerCase();
+  const legacyProxy = String((config.browser && config.browser.proxy) || '').trim();
+  const proxyMode = ['direct', 'launch', 'ruyi_fpfile', 'script'].includes(proxyModeRaw)
+    ? proxyModeRaw
+    : (legacyProxy ? 'launch' : 'direct');
+  const proxyValue = String(getSetting('browser_proxy_value') || legacyProxy).trim();
+  const ruyiFpfile = String(getSetting('browser_ruyi_fpfile') || '').trim();
   return {
     runtimeStack,
     usePlaywrightExtra,
     pluginPackages,
     chromePath,
+    ruyiPath,
+    proxyMode,
+    proxyValue,
+    ruyiFpfile,
     extensionDirs,
     extensionDirsSource: String(getSetting('browser_extension_dirs') || '').trim()
       ? 'panel'
@@ -704,6 +750,20 @@ function setBrowserRuntimeSettings(payload = {}) {
   if (payload.chromePath !== undefined) {
     const chromePath = normalizeChromePath(payload.chromePath, '');
     setSetting('browser_chrome_path', chromePath || null);
+  }
+  if (payload.ruyiPath !== undefined) {
+    const ruyiPath = normalizeChromePath(payload.ruyiPath, '');
+    setSetting('browser_ruyi_path', ruyiPath || null);
+  }
+  if (payload.proxyMode !== undefined) {
+    const proxyMode = String(payload.proxyMode || '').trim().toLowerCase();
+    setSetting('browser_proxy_mode', ['direct', 'launch', 'ruyi_fpfile', 'script'].includes(proxyMode) ? proxyMode : 'direct');
+  }
+  if (payload.proxyValue !== undefined) {
+    setSetting('browser_proxy_value', String(payload.proxyValue || '').trim() || null);
+  }
+  if (payload.ruyiFpfile !== undefined) {
+    setSetting('browser_ruyi_fpfile', normalizeChromePath(payload.ruyiFpfile, '') || null);
   }
   if (payload.extensionDirs !== undefined) {
     const extensionDirs = normalizeExtensionDirs(payload.extensionDirs, '');

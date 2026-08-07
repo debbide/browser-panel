@@ -4,6 +4,7 @@ const { spawn, spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
 const events = require('./events');
+const { resolveProxyContract } = require('./runtime/runtime-contract');
 
 const manualBrowserState = {
   pid: null,
@@ -30,12 +31,12 @@ function shouldUsePlaywrightExtra(runtimeSettings) {
 
 function normalizeRuntimeStack(runtimeSettings) {
   const stack = String(runtimeSettings && runtimeSettings.runtimeStack ? runtimeSettings.runtimeStack : '').trim().toLowerCase();
-  return stack === 'seleniumbase' ? 'seleniumbase' : 'playwright';
+  return ['seleniumbase', 'ruyipage'].includes(stack) ? stack : 'playwright';
 }
 
 function resolveRuntimeStack(profile, runtimeSettings) {
   const profileStack = String(profile && profile.runtime_stack ? profile.runtime_stack : '').trim().toLowerCase();
-  if (profileStack === 'seleniumbase') return 'seleniumbase';
+  if (['seleniumbase', 'ruyipage'].includes(profileStack)) return profileStack;
   if (profileStack === 'playwright') return 'playwright';
   return normalizeRuntimeStack(runtimeSettings);
 }
@@ -197,6 +198,8 @@ function ensureManualRuntimeFiles(runtimeSettings) {
     { from: path.join(config.paths.root, 'server', 'runtime', 'browser-runtime.js'), to: path.join(workerRoot, 'browser-runtime.js') },
     { from: path.join(config.paths.root, 'server', 'runtime', 'manual-browser-session.js'), to: path.join(workerRoot, 'manual-browser-session.js') },
     { from: path.join(config.paths.root, 'server', 'runtime', 'manual-browser-session-sb.py'), to: path.join(workerRoot, 'manual-browser-session-sb.py') },
+    { from: path.join(config.paths.root, 'server', 'runtime', 'manual-browser-session-ruyi.py'), to: path.join(workerRoot, 'manual-browser-session-ruyi.py') },
+    { from: path.join(config.paths.root, 'server', 'runtime', 'ruyipage_adapter.py'), to: path.join(workerRoot, 'ruyipage_adapter.py') },
   ];
 
   const missing = [];
@@ -307,6 +310,7 @@ function sweepManualProcesses(userDataDir) {
   const workDir = getBrowserWorkDir();
   const commands = [
     `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session-sb.py'))} || true`,
+    `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session-ruyi.py'))} || true`,
     `pkill -TERM -f ${shellEscape(path.join(workDir, 'manual-browser-session.js'))} || true`,
   ];
 
@@ -323,6 +327,7 @@ function sweepManualProcesses(userDataDir) {
 
   commands.push('sleep 1');
   commands.push(`pkill -KILL -f ${shellEscape(path.join(workDir, 'manual-browser-session-sb.py'))} || true`);
+  commands.push(`pkill -KILL -f ${shellEscape(path.join(workDir, 'manual-browser-session-ruyi.py'))} || true`);
   commands.push(`pkill -KILL -f ${shellEscape(path.join(workDir, 'manual-browser-session.js'))} || true`);
   if (userDataDir) {
     commands.push(`pkill -KILL -f -- ${shellEscape(`--user-data-dir=${userDataDir}`)} || true`);
@@ -467,7 +472,9 @@ async function openManualBrowser(profile) {
   const workDir = getBrowserWorkDir();
   const runtimeScript = runtimeStack === 'seleniumbase'
     ? path.join(workDir, 'manual-browser-session-sb.py')
-    : path.join(workDir, 'manual-browser-session.js');
+    : (runtimeStack === 'ruyipage'
+      ? path.join(workDir, 'manual-browser-session-ruyi.py')
+      : path.join(workDir, 'manual-browser-session.js'));
   ensureManualRuntimeFiles(runtimeSettings);
   if (!fs.existsSync(runtimeScript)) {
     throw new Error(`Manual browser runtime not found: ${runtimeScript}`);
@@ -482,15 +489,22 @@ async function openManualBrowser(profile) {
     profile && profile.user_data_dir,
     config.browser.userDataDir
   );
-  const effectiveProxy = pickNonEmptyString(
-    profile && profile.proxy,
-    config.browser.proxy || ''
-  );
+  const proxyContract = resolveProxyContract({
+    profile,
+    global: {
+      proxy_mode: runtimeSettings.proxyMode,
+      proxy_value: runtimeSettings.proxyValue,
+      ruyi_fpfile: runtimeSettings.ruyiFpfile,
+      proxy: config.browser.proxy || '',
+    },
+  });
   const chromePath = resolveManualChromePath(runtimeSettings);
-  if (!chromePath || !fs.existsSync(chromePath)) {
+  const ruyiPath = String(runtimeSettings.ruyiPath || '').trim();
+  const executablePath = runtimeStack === 'ruyipage' ? ruyiPath : chromePath;
+  if (!executablePath || !fs.existsSync(executablePath)) {
+    const label = runtimeStack === 'ruyipage' ? 'RuyiPage Firefox' : 'Chrome/Chromium';
     throw new Error(
-      `Chrome/Chromium not found (path=${chromePath || '(empty)'}). `
-      + 'Set panel 浏览器路径, e.g. /snap/chromium/current/usr/lib/chromium-browser/chrome on ARM.'
+      `${label} not found (path=${executablePath || '(empty)'}). Set its executable path in browser runtime settings.`
     );
   }
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);
@@ -506,8 +520,12 @@ async function openManualBrowser(profile) {
     XAUTHORITY: String(config.browser.xauthority || ''),
     BROWSER_USER_DATA_DIR: effectiveUserDataDir,
     BROWSER_CHROME_PATH: chromePath,
+    BROWSER_RUYI_PATH: ruyiPath,
     PLAYWRIGHT_CHROME_PATH: chromePath,
-    BROWSER_PROXY: effectiveProxy || '',
+    BROWSER_PROXY_MODE: proxyContract.mode,
+    BROWSER_PROXY_VALUE: proxyContract.value,
+    BROWSER_RUYI_FPFILE: proxyContract.fpfile,
+    BROWSER_PROXY: proxyContract.scriptProxy || '',
     BROWSER_LOCALE: effectiveLocale,
     BROWSER_TIMEZONE: effectiveTimezone,
     BROWSER_RUNTIME_STACK: runtimeStack,
@@ -530,7 +548,7 @@ async function openManualBrowser(profile) {
   }
 
   let child;
-  if (runtimeStack === 'seleniumbase') {
+  if (runtimeStack === 'seleniumbase' || runtimeStack === 'ruyipage') {
     child = spawn('/usr/bin/python3', [runtimeScript], spawnOpts);
   } else {
     child = spawn(workerNodePath, [runtimeScript], spawnOpts);
@@ -538,7 +556,7 @@ async function openManualBrowser(profile) {
 
   console.log(
     `[browser-launch] spawning pid=${child.pid} stack=${runtimeStack} `
-    + `node=${workerNodePath} chrome=${chromePath} as ${runAs.user}`
+    + `node=${workerNodePath} executable=${executablePath} as ${runAs.user}`
   );
 
   try {
@@ -581,7 +599,7 @@ async function openManualBrowser(profile) {
   manualBrowserState.pid = child.pid;
   manualBrowserState.openedAt = new Date().toISOString();
   manualBrowserState.userDataDir = effectiveUserDataDir;
-  console.log(`[browser-launch] READY pid=${child.pid} chrome=${chromePath}`);
+  console.log(`[browser-launch] READY pid=${child.pid} executable=${executablePath}`);
   events.emit('browser', { open: true });
 
   return { open: true, openedAt: manualBrowserState.openedAt, pid: manualBrowserState.pid };
