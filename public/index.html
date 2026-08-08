@@ -241,10 +241,10 @@
           <form id="scheduler-form" class="grid single-col">
             <label class="inline-check">
               <input type="checkbox" id="scheduler-allow-parallel" name="allowParallel" />
-              允许并行运行多个任务
+              允许多个浏览器任务并行运行
             </label>
             <div class="schedule-note" style="margin-top:4px;">
-              默认串行（适合小 VPS）。开启后不同任务可同时跑，同一任务仍不会重复进入。
+              默认只运行一个浏览器任务。纯请求任务不占用浏览器通道且不限制并发，同一任务仍不会重复运行。
             </div>
             <div class="row" style="margin-top:8px;">
               <button type="submit" id="scheduler-save-btn" class="btn-primary btn-with-icon">

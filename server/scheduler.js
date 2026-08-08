@@ -6,7 +6,7 @@ const {
 } = require('./conditions');
 const events = require('./events');
 
-const runningTasks = new Set();
+const runningTasks = new Map();
 let mainLoopHandle = null;
 let tickInFlight = false;
 
@@ -27,8 +27,12 @@ function isAnyTaskRunning() {
   return runningTasks.size > 0;
 }
 
+function isAnyBrowserTaskRunning() {
+  return Array.from(runningTasks.values()).some((run) => run.useBrowser);
+}
+
 function getRunningTaskIds() {
-  return Array.from(runningTasks).map(Number);
+  return Array.from(runningTasks.keys()).map(Number);
 }
 
 function getRunningCount() {
@@ -36,18 +40,21 @@ function getRunningCount() {
 }
 
 /**
- * @returns {{ ok: true } | { ok: false, reason: 'already_running' | 'global_busy' }}
+ * @returns {{ ok: true } | { ok: false, reason: 'already_running' | 'browser_busy' }}
  */
-function canStartTask(taskId, { allowParallel } = {}) {
+function canStartTask(taskId, { allowParallel, task } = {}) {
   const id = Number(taskId);
   if (runningTasks.has(id)) {
     return { ok: false, reason: 'already_running' };
   }
+  const target = task || db.getTask(id);
+  if (!target || !target.use_browser) return { ok: true };
+
   const parallel = allowParallel === undefined
     ? db.isTaskParallelAllowed()
     : Boolean(allowParallel);
-  if (!parallel && runningTasks.size > 0) {
-    return { ok: false, reason: 'global_busy' };
+  if (!parallel && Array.from(runningTasks.values()).some((run) => run.useBrowser)) {
+    return { ok: false, reason: 'browser_busy' };
   }
   return { ok: true };
 }
@@ -57,11 +64,12 @@ async function runTaskSafely(taskId, runTaskById, options = {}) {
   const allowParallel = options.allowParallel === undefined
     ? db.isTaskParallelAllowed()
     : Boolean(options.allowParallel);
-  const gate = canStartTask(id, { allowParallel });
+  const task = options.task || db.getTask(id);
+  const gate = canStartTask(id, { allowParallel, task });
   if (!gate.ok) {
     return { skipped: true, reason: gate.reason };
   }
-  runningTasks.add(id);
+  runningTasks.set(id, { useBrowser: Boolean(task && task.use_browser) });
   // 所有启动路径（HTTP /api/tasks/:id/run、Telegram 回调、定时器 tick）都走这里，
   // 所以推送只挂这一处就够，不用在每个入口重复。
   events.emit('task', { id, running: true });
@@ -237,7 +245,7 @@ function rescheduleTask(taskId) {
 function fireTask(task, runTaskById, options = {}) {
   const taskId = task.id;
   const conditionTriggered = Boolean(options.conditionTriggered);
-  runTaskSafely(taskId, runTaskById)
+  runTaskSafely(taskId, runTaskById, { task })
     .then((result) => {
       if (result?.skipped) {
         if (typeof options.onSkipped === 'function') options.onSkipped(result);
@@ -407,7 +415,6 @@ function startMainLoop(runTaskById) {
     try {
       const tasks = listTasks();
       const now = Date.now();
-      const allowParallel = db.isTaskParallelAllowed();
 
       // Ensure pure-condition tasks have a next check time
       for (const task of tasks) {
@@ -426,26 +433,17 @@ function startMainLoop(runTaskById) {
 
       if (!due.length) return;
 
-      if (allowParallel) {
-        for (const task of due) {
-          fireTask(task, runTaskById, {
-            conditionTriggered: Boolean(task._conditionTriggered),
-          });
-        }
-        return;
-      }
-
-      if (isAnyTaskRunning()) return;
-
       due.sort((a, b) => {
         const ta = new Date(a.next_run_at).getTime();
         const tb = new Date(b.next_run_at).getTime();
         if (ta !== tb) return ta - tb;
         return Number(a.id) - Number(b.id);
       });
-      fireTask(due[0], runTaskById, {
-        conditionTriggered: Boolean(due[0]._conditionTriggered),
-      });
+      for (const task of due) {
+        fireTask(task, runTaskById, {
+          conditionTriggered: Boolean(task._conditionTriggered),
+        });
+      }
     } catch (err) {
       console.error('[scheduler] tick error:', err);
     } finally {
@@ -480,6 +478,7 @@ module.exports = {
   stopAllJobs,
   isTaskRunning,
   isAnyTaskRunning,
+  isAnyBrowserTaskRunning,
   getRunningTaskIds,
   getRunningCount,
   canStartTask,

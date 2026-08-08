@@ -3378,7 +3378,7 @@ async function loadSchedulerSettings() {
     if (schedulerAllowParallel) {
       schedulerAllowParallel.checked = Boolean(data.allowParallel);
     }
-    const mode = data.allowParallel ? '并行' : '串行（默认）';
+    const mode = data.allowParallel ? '浏览器任务并行' : '浏览器任务串行（默认）';
     const running = Array.isArray(data.runningTaskIds) ? data.runningTaskIds : [];
     const runningText = running.length ? `，当前运行：#${running.join(', #')}` : '，当前空闲';
     setSchedulerStatus(`状态：${mode}${runningText}`, '#94a3b8');

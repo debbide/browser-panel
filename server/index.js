@@ -8,8 +8,9 @@ const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
 const {
   reloadJobs,
   isTaskRunning,
-  isAnyTaskRunning,
+  isAnyBrowserTaskRunning,
   getRunningTaskIds,
+  canStartTask,
   runTaskSafely,
   computeNextRun,
   evaluateTaskCondition,
@@ -96,16 +97,17 @@ async function executeTask(id, options = {}) {
 
 function buildSchedulerBusyPayload(taskId) {
   const ids = getRunningTaskIds();
-  const runningId = ids[0];
-  const runningTask = runningId != null ? db.getTask(runningId) : null;
-  const label = runningTask
-    ? `#${runningTask.id} ${runningTask.name || ''}`.trim()
-    : (ids.length ? `#${ids.join(',')}` : '未知任务');
+  const browserTask = ids
+    .map((id) => db.getTask(id))
+    .find((task) => task && task.use_browser);
+  const label = browserTask
+    ? `#${browserTask.id} ${browserTask.name || ''}`.trim()
+    : '未知浏览器任务';
   return {
     ok: false,
     status: 409,
     payload: {
-      message: `当前有任务执行中（${label}），串行模式下请稍后再试`,
+      message: `当前有浏览器任务执行中（${label}），请稍后再试`,
       code: 'scheduler_busy',
       runningTaskIds: ids,
     },
@@ -113,7 +115,12 @@ function buildSchedulerBusyPayload(taskId) {
 }
 
 async function triggerTaskExecution(taskId, options = {}) {
-  if (getManualBrowserStatus().open) {
+  const idNum = Number(taskId);
+  const task = db.getTask(idNum);
+  if (!task) {
+    return { ok: false, status: 404, payload: { message: 'Task not found', code: 'task_not_found' } };
+  }
+  if (task.use_browser && getManualBrowserStatus().open) {
     return { ok: false, status: 409, payload: { message: 'Browser is open manually, close it before running tasks', code: 'browser_already_open' } };
   }
 
@@ -122,14 +129,13 @@ async function triggerTaskExecution(taskId, options = {}) {
     return { ok: false, status: 400, payload: { message: 'Selected browser profile not found', code: 'invalid_browser_profile' } };
   }
 
-  const idNum = Number(taskId);
-  if (!db.isTaskParallelAllowed() && isAnyTaskRunning() && !isTaskRunning(idNum)) {
-    return buildSchedulerBusyPayload(idNum);
-  }
-
-  const result = await runTaskSafely(idNum, (id) => executeTask(id, { refreshScheduleOnSuccess: true, profileId }));
+  const result = await runTaskSafely(
+    idNum,
+    (id) => executeTask(id, { refreshScheduleOnSuccess: true, profileId }),
+    { task }
+  );
   if (result?.skipped) {
-    if (result.reason === 'global_busy') {
+    if (result.reason === 'browser_busy') {
       return buildSchedulerBusyPayload(idNum);
     }
     return { ok: false, status: 409, payload: { message: 'Task is already running', code: result.reason || 'already_running' } };
@@ -150,33 +156,37 @@ function parseRetryCallbackData(value) {
 }
 
 async function triggerTaskExecutionInBackground(taskId) {
-  if (getManualBrowserStatus().open) {
+  const taskIdNum = Number(taskId);
+  const task = db.getTask(taskIdNum);
+  if (!task) {
+    return { ok: false, message: 'Task not found' };
+  }
+  if (task.use_browser && getManualBrowserStatus().open) {
     return { ok: false, message: 'Browser is open manually, close it before running tasks' };
   }
-
-  const taskIdNum = Number(taskId);
-  if (!db.isTaskParallelAllowed() && isAnyTaskRunning() && !isTaskRunning(taskIdNum)) {
-    const busy = buildSchedulerBusyPayload(taskIdNum);
-    return { ok: false, message: busy.payload.message };
-  }
-  if (isTaskRunning(taskIdNum)) {
+  const gate = canStartTask(taskIdNum, { task });
+  if (!gate.ok) {
+    if (gate.reason === 'browser_busy') {
+      return { ok: false, message: 'Another browser task is already running' };
+    }
     return { ok: false, message: 'Task is already running' };
   }
 
-  // Fire-and-forget outside the HTTP/callback path, but keep runTaskSafely
-  // around the full execute so serial/global locks are held until the run ends.
-  // (Previously setImmediate inside runTaskSafely released the lock immediately.)
-  setImmediate(() => {
-    runTaskSafely(taskIdNum, (id) => executeTask(id, { refreshScheduleOnSuccess: true }))
-      .then((result) => {
-        if (result?.skipped) {
-          console.warn('[telegram] retry skipped:', result.reason);
-        }
-      })
-      .catch((error) => {
-        console.warn('[telegram] retry trigger failed:', error.message);
-      });
-  });
+  // Calling runTaskSafely immediately reserves the task/browser channel before
+  // this webhook responds. The promise remains detached from the HTTP request.
+  runTaskSafely(
+    taskIdNum,
+    (id) => executeTask(id, { refreshScheduleOnSuccess: true }),
+    { task }
+  )
+    .then((result) => {
+      if (result?.skipped) {
+        console.warn('[telegram] retry skipped:', result.reason);
+      }
+    })
+    .catch((error) => {
+      console.warn('[telegram] retry trigger failed:', error.message);
+    });
 
   return { ok: true, message: 'Retry started' };
 }
@@ -1072,6 +1082,10 @@ app.post('/api/telegram/webhook/:token', async (req, res) => {
 
 app.post('/api/browser/open', async (req, res) => {
   try {
+    if (isAnyBrowserTaskRunning()) {
+      const busy = buildSchedulerBusyPayload();
+      return res.status(busy.status).json(busy.payload);
+    }
     const profileId = req.body && req.body.profile_id ? Number(req.body.profile_id) : null;
     const profile = profileId ? db.getBrowserProfile(profileId) : null;
     const session = await openManualBrowser(profile);
