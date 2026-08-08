@@ -2128,11 +2128,19 @@ app.post('/api/backup/export', (req, res) => {
       taskIds: backup.normalizeTaskIds(body.task_ids),
       passphrase,
     });
-    const filename = backup.buildExportFilename(new Date(), { encrypted: result.header.encrypted });
+    const exportDate = new Date();
+    const filename = backup.buildExportFilename(exportDate, result.header);
+    const fallbackFilename = backup.buildExportFilename(exportDate, {
+      ...result.header,
+      taskName: result.header.taskName ? 'task' : '',
+    });
     res.setHeader('Content-Type', result.header.encrypted
       ? 'application/octet-stream'
       : 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    );
     res.send(result.data);
   } catch (error) {
     res.status(400).json({ message: error.message || '导出备份失败' });

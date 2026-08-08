@@ -3098,8 +3098,18 @@ async function downloadBackup(taskIds, passphrase) {
     }
     const blob = await res.blob();
     const disposition = res.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename="?([^";\n]+)"?/);
-    const filename = match ? match[1] : (passphrase ? 'backup.bpenc' : 'backup.json');
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;\n]+)/i);
+    const basicMatch = disposition.match(/filename="?([^";\n]+)"?/i);
+    let filename = passphrase ? 'backup.bpenc' : 'backup.json';
+    if (utf8Match) {
+      try {
+        filename = decodeURIComponent(utf8Match[1]);
+      } catch {
+        filename = basicMatch ? basicMatch[1] : filename;
+      }
+    } else if (basicMatch) {
+      filename = basicMatch[1];
+    }
 
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);

@@ -319,13 +319,23 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     const envelope = encryptBackup(plaintext, passphrase);
     return {
       data: envelope,
-      header: { encrypted: true },
+      header: {
+        encrypted: true,
+        allTasks: wanted === null,
+        taskCount: selected.length,
+        taskName: selected.length === 1 ? selected[0].name : '',
+      },
     };
   }
 
   return {
     data: JSON.stringify(payload, null, 2),
-    header: { encrypted: false },
+    header: {
+      encrypted: false,
+      allTasks: wanted === null,
+      taskCount: selected.length,
+      taskName: selected.length === 1 ? selected[0].name : '',
+    },
   };
 }
 
@@ -765,12 +775,29 @@ function importBackup(input, options = {}) {
   };
 }
 
-function buildExportFilename(date = new Date(), { encrypted = false } = {}) {
+function sanitizeExportFilenamePart(value, fallback = 'task') {
+  const sanitized = String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, 80);
+  return sanitized || fallback;
+}
+
+function buildExportFilename(date = new Date(), {
+  encrypted = false,
+  allTasks = false,
+  taskCount = 0,
+  taskName = '',
+} = {}) {
   const stamp = date.toISOString().slice(0, 19).replace(/[:T]/g, '').replace(/-/g, '');
-  // 加密文件用 .bpenc 后缀：它不是 JSON，别让用户拿文本编辑器去改。
-  return encrypted
-    ? `browser-panel-tasks-${stamp}.bpenc`
-    : `browser-panel-tasks-${stamp}.json`;
+  const label = taskName
+    ? sanitizeExportFilenamePart(taskName)
+    : (allTasks ? 'all-tasks' : `${Math.max(1, Number(taskCount) || 1)}-tasks`);
+  const extension = encrypted ? 'bpenc' : 'json';
+  return `browser-panel-${label}-${stamp}.${extension}`;
 }
 
 module.exports = {
