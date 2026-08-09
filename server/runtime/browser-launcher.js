@@ -617,28 +617,47 @@ function runTerminateCommands(commands) {
   fs.writeFileSync(scriptPath, script, { encoding: 'utf8', mode: 0o700 });
   console.log(`[browser-launcher] terminate script=${scriptPath} lines=${commands.length}`);
 
-  const result = spawnSync('/bin/bash', [scriptPath], {
-    encoding: 'utf8',
-    timeout: 20_000,
+  let settled = false;
+  let stdout = '';
+  let stderr = '';
+  const child = spawn('/bin/bash', [scriptPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-
-  try {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {
-    // ignore cleanup failures
-  }
-
-  const out = String(result.stdout || '').trim();
-  const err = String(result.stderr || '').trim();
-  const timeoutOrSpawnError = result.error ? `${result.error.name || 'Error'}: ${result.error.message || String(result.error)}` : '';
-  if (result.status !== 0 || out || err || timeoutOrSpawnError) {
-    console.log(
-      `[browser-launcher] terminate status=${result.status ?? 'null'} signal=${result.signal || ''}\n` +
-      `${timeoutOrSpawnError ? `error:\n${timeoutOrSpawnError}\n` : ''}` +
-      `${out ? `stdout:\n${out}\n` : ''}${err ? `stderr:\n${err}\n` : ''}`.trim()
-    );
-  }
+  const cleanup = () => {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup failures
+    }
+  };
+  const report = (result = {}) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    const out = String(stdout || '').trim();
+    const err = String(stderr || '').trim();
+    const spawnError = result.error
+      ? `${result.error.name || 'Error'}: ${result.error.message || String(result.error)}`
+      : '';
+    if (result.code !== 0 || result.signal || out || err || spawnError) {
+      console.log(
+        `[browser-launcher] terminate status=${result.code ?? 'null'} signal=${result.signal || ''}\n` +
+        `${spawnError ? `error:\n${spawnError}\n` : ''}` +
+        `${out ? `stdout:\n${out}\n` : ''}${err ? `stderr:\n${err}\n` : ''}`.trim()
+      );
+    }
+  };
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.once('error', (error) => report({ error }));
+  child.once('close', (code, signal) => report({ code, signal }));
+  const timeout = setTimeout(() => {
+    if (settled) return;
+    try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    report({ error: new Error('terminate command timed out after 20000ms') });
+  }, 20_000);
+  child.once('close', () => clearTimeout(timeout));
+  return child;
 }
 
 function clearPendingTerminateTimers(taskId) {

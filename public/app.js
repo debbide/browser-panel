@@ -2889,9 +2889,61 @@ async function openRunLog(runId) {
   requestCatchUp(targetSize);
   if (window.lucide) window.lucide.createIcons({ root: drawer });
 }
+function openTaskRunsLoadingModal(id) {
+  const task = tasksCache.find(item => Number(item.id) === Number(id));
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask open';
+  mask.style.zIndex = '9999';
+
+  const dialog = document.createElement('section');
+  dialog.className = 'modal modal-wide open runs-modal';
+  dialog.style.zIndex = '10000';
+  dialog.setAttribute('aria-hidden', 'false');
+  dialog.setAttribute('aria-busy', 'true');
+  dialog.innerHTML = `
+    <div class="modal-header">
+      <div>
+        <h2>运行记录</h2>
+        <p class="muted">任务 #${id}${task?.name ? ` · ${escapeHtml(task.name)}` : ''}</p>
+      </div>
+      <button class="icon-btn" type="button" aria-label="关闭" data-close-runs-modal>
+        <i data-lucide="x" class="icon-md"></i>
+      </button>
+    </div>
+    <div class="modal-body runs-modal-body">
+      <p class="muted">正在加载运行记录…</p>
+    </div>
+  `;
+
+  let closed = false;
+  const controller = new AbortController();
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    controller.abort();
+    mask.remove();
+    dialog.remove();
+  };
+  document.body.appendChild(mask);
+  document.body.appendChild(dialog);
+  mask.addEventListener('click', close);
+  dialog.querySelector('[data-close-runs-modal]').addEventListener('click', close);
+  if (window.lucide) window.lucide.createIcons({ root: dialog });
+  return { controller, isClosed: () => closed, close };
+}
+
 async function showTaskRuns(id) {
-  const data = await fetchJson(`/api/tasks/${id}/runs`);
-  openTaskRunsModal(id, data.data || []);
+  const loadingModal = openTaskRunsLoadingModal(id);
+  try {
+    const data = await fetchJson(`/api/tasks/${id}/runs`, { signal: loadingModal.controller.signal });
+    if (loadingModal.isClosed()) return;
+    loadingModal.close();
+    openTaskRunsModal(id, data.data || []);
+  } catch (error) {
+    if (loadingModal.isClosed() || error.name === 'AbortError') return;
+    loadingModal.close();
+    toast(error.message || '加载运行记录失败', 'error');
+  }
 }
 
 function openTaskRunsModal(id, runs) {
