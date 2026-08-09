@@ -397,7 +397,7 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
     try {
       const br = db.getBrowserRuntimeSettings();
       system.BROWSER_CHROME_PATH = (br && br.chromePath) || config.browser.chromePath;
-      system.BROWSER_RUYI_PATH = (br && br.ruyiPath) || '';
+      system.BROWSER_RUYI_PATH = (br && br.ruyiPath) || config.browser.ruyiPath || process.env.BROWSER_RUYI_PATH || '';
       system.BROWSER_EXTENSIONS = (br && br.extensionDirs) || '';
     } catch {
       system.BROWSER_CHROME_PATH = config.browser.chromePath;

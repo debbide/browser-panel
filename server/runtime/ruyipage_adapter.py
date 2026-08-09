@@ -7,7 +7,7 @@ def launch_browser():
     except Exception as exc:
         raise RuntimeError(f"Failed to import ruyipage: {exc}") from exc
 
-    browser_path = (os.environ.get("BROWSER_RUYI_PATH") or "").strip()
+    browser_path = (os.environ.get("BROWSER_RUYI_PATH") or "/opt/ruyipage-firefox/firefox").strip()
     user_dir = (os.environ.get("BROWSER_USER_DATA_DIR") or "").strip()
     proxy_mode = (os.environ.get("BROWSER_PROXY_MODE") or "launch").strip()
     proxy_value = (os.environ.get("BROWSER_PROXY_VALUE") or os.environ.get("BROWSER_PROXY") or "").strip()

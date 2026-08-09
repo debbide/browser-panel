@@ -20,6 +20,8 @@ module.exports = {
     // Prefer env. Default is a common path; ARM snap hosts should set
     // BROWSER_CHROME_PATH=/snap/chromium/current/usr/lib/chromium-browser/chrome
     chromePath: process.env.BROWSER_CHROME_PATH || '/usr/bin/chromium-browser',
+    // RuyiPage's patched Firefox runtime. Override on hosts that install it elsewhere.
+    ruyiPath: process.env.BROWSER_RUYI_PATH || '/opt/ruyipage-firefox/firefox',
     proxy: process.env.BROWSER_PROXY || '',
     locale: process.env.BROWSER_LOCALE || 'zh-CN',
     timezoneId: process.env.BROWSER_TIMEZONE || 'Asia/Shanghai',

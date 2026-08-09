@@ -912,7 +912,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     // Scripts (woiden/hax DP) key off this: 1 => treat as TEMP + cleanup after quit
     ['USE_TEMP_PROFILE', useTempProfile ? '1' : '0'],
     ['BROWSER_CHROME_PATH', chromePathEffective],
-    ['BROWSER_RUYI_PATH', runtimeSettings.ruyiPath || ''],
+    ['BROWSER_RUYI_PATH', runtimeSettings.ruyiPath || config.browser.ruyiPath || process.env.BROWSER_RUYI_PATH || ''],
     ['BROWSER_RUYI_ADAPTER_MODULE', 'ruyipage_adapter'],
     ['BROWSER_RUYI_ADAPTER_PATH', ruyiAdapterFile],
     ['BROWSER_PROXY_MODE', proxyContract.mode],

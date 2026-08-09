@@ -559,9 +559,11 @@ function buildEnv(task, screenshotPath) {
     try {
       const br = db.getBrowserRuntimeSettings();
       env.BROWSER_CHROME_PATH = (br && br.chromePath) || config.browser.chromePath;
+      env.BROWSER_RUYI_PATH = (br && br.ruyiPath) || config.browser.ruyiPath || process.env.BROWSER_RUYI_PATH || '';
       env.BROWSER_EXTENSIONS = (br && br.extensionDirs) || '';
     } catch {
       env.BROWSER_CHROME_PATH = config.browser.chromePath;
+      env.BROWSER_RUYI_PATH = config.browser.ruyiPath || process.env.BROWSER_RUYI_PATH || '';
       env.BROWSER_EXTENSIONS = config.browser.extensions || '';
     }
     env.BROWSER_HEADLESS = 'false';
