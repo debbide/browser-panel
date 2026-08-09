@@ -2644,14 +2644,56 @@ function logLineClass(line) {
 }
 
 async function openRunLog(runId) {
-  const res = await fetchJson(`/api/runs/${runId}/log?offset=0&limit=${256 * 1024}`);
-  const data = res.data || {};
   const mask = document.createElement('div');
   mask.className = 'log-drawer-mask';
   const drawer = document.createElement('section');
-  drawer.className = 'log-drawer';
+  drawer.className = 'log-drawer open';
   drawer.setAttribute('aria-label', `运行日志 #${runId}`);
+  drawer.setAttribute('aria-busy', 'true');
+  drawer.innerHTML = `
+    <div class="log-drawer-header">
+      <div><h2>运行日志 #${runId}</h2><p class="muted">正在读取日志，任务停止期间仍可能追加收尾日志…</p></div>
+      <button class="icon-btn" type="button" aria-label="关闭" data-close-log><i data-lucide="x" class="icon-md"></i></button>
+    </div>
+    <div class="log-drawer-loading muted">正在加载日志…</div>
+  `;
+  let closed = false;
+  let eventSource = null;
+  const loadController = new AbortController();
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    loadController.abort();
+    if (eventSource) eventSource.close();
+    document.removeEventListener('keydown', onKey);
+    drawer.classList.remove('open'); mask.classList.remove('open');
+    setTimeout(() => { drawer.remove(); mask.remove(); }, 260);
+  };
+  const onKey = (event) => { if (event.key === 'Escape') close(); };
+  document.body.appendChild(mask);
+  document.body.appendChild(drawer);
+  mask.addEventListener('click', close);
+  drawer.querySelector('[data-close-log]').addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+  requestAnimationFrame(() => { mask.classList.add('open'); });
+  if (window.lucide) window.lucide.createIcons({ root: drawer });
 
+  let res;
+  try {
+    res = await fetchJson(
+      `/api/runs/${runId}/log?offset=0&limit=${256 * 1024}`,
+      { signal: loadController.signal }
+    );
+  } catch (error) {
+    if (closed || error.name === 'AbortError') return;
+    drawer.setAttribute('aria-busy', 'false');
+    const loading = drawer.querySelector('.log-drawer-loading');
+    if (loading) loading.textContent = `日志加载失败：${error.message || '未知错误'}`;
+    throw error;
+  }
+  if (closed) return;
+  const data = res.data || {};
+  drawer.setAttribute('aria-busy', 'false');
   drawer.innerHTML = `
     <div class="log-drawer-header">
       <div><h2>运行日志 #${runId}</h2><p class="muted" data-log-meta></p></div>
@@ -2683,8 +2725,6 @@ async function openRunLog(runId) {
   let draining = false;
   let drainPromise = null;
   let finalizing = false;
-  let eventSource = null;
-  let closed = false;
   let currentStatus = data.status || '-';
   let totalLines = 0;
   let unseenOutput = false;
@@ -2807,22 +2847,7 @@ async function openRunLog(runId) {
     }
   }
 
-  const close = () => {
-    closed = true;
-    if (eventSource) eventSource.close();
-    document.removeEventListener('keydown', onKey);
-    drawer.classList.remove('open'); mask.classList.remove('open');
-    setTimeout(() => { drawer.remove(); mask.remove(); }, 260);
-  };
-  const onKey = (event) => { if (event.key === 'Escape') close(); };
-
-  document.body.appendChild(mask);
-  document.body.appendChild(drawer);
-  requestAnimationFrame(() => { mask.classList.add('open'); drawer.classList.add('open'); });
-  mask.addEventListener('click', close);
   drawer.querySelector('[data-close-log]').addEventListener('click', close);
-  document.addEventListener('keydown', onKey);
-
   search.addEventListener('input', () => render());
   drawer.querySelector('[data-copy-log]').addEventListener('click', async () => {
     try { await copyText(logText); toast('日志已复制', 'success'); }
@@ -2920,11 +2945,15 @@ function openTaskRunsModal(id, runs) {
   });
   dialog.querySelectorAll('[data-open-run-log]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
       const runId = Number(btn.getAttribute('data-open-run-log'));
+      btn.disabled = true;
       try {
         await openRunLog(runId);
       } catch (error) {
         toast(error.message || '加载日志失败', 'error');
+      } finally {
+        btn.disabled = false;
       }
     });
   });
