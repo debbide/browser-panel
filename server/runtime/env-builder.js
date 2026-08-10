@@ -162,7 +162,7 @@ function resolveEffectiveProxyContract(task, profile = null) {
   } catch {
     globalSettings = { proxy: config.browser.proxy || '' };
   }
-  return resolveProxyContract({
+  const contract = resolveProxyContract({
     task: {
       proxy_mode: params.BROWSER_PROXY_MODE ?? params.browser_proxy_mode,
       proxy_value: params.BROWSER_PROXY_VALUE ?? params.browser_proxy_value,
@@ -173,6 +173,14 @@ function resolveEffectiveProxyContract(task, profile = null) {
     global: globalSettings,
     legacyTaskProxy: params.BROWSER_PROXY ?? params.browser_proxy ?? '',
   });
+  if (contract.mode !== 'warp') return contract;
+  const managedProxyUrl = String(task && task._managedProxyUrl || '').trim();
+  return {
+    ...contract,
+    value: '',
+    launchProxy: managedProxyUrl,
+    scriptProxy: managedProxyUrl,
+  };
 }
 
 function resolveEffectiveProxy(task, profile = null) {
@@ -417,6 +425,16 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
     system.BROWSER_HEADLESS = 'false';
     if (system.BROWSER_EXTENSIONS === undefined) {
       system.BROWSER_EXTENSIONS = config.browser.extensions || '';
+    }
+  }
+
+  if (task && !task.use_browser && task._managedProxyUrl) {
+    const proxyContract = resolveEffectiveProxyContract(task);
+    system.BROWSER_PROXY_MODE = proxyContract.mode;
+    system.BROWSER_PROXY_VALUE = '';
+    system.BROWSER_PROXY = proxyContract.scriptProxy;
+    for (const key of PROXY_ALIAS_KEYS) {
+      system[key] = proxyContract.scriptProxy;
     }
   }
 

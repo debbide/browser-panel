@@ -76,9 +76,17 @@ function clientCount() {
   return clients.size;
 }
 
+function closeAll() {
+  for (const res of clients) {
+    try { res.end(); } catch { /* ignore disconnected clients */ }
+  }
+  clients.clear();
+}
+
 module.exports = {
   emit,
   addClient,
   clientCount,
+  closeAll,
   bus,
 };

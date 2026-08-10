@@ -6,6 +6,7 @@ const config = require('../config');
 const db = require('./db');
 const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
 const {
+  stopAllJobs,
   reloadJobs,
   isTaskRunning,
   isAnyBrowserTaskRunning,
@@ -29,6 +30,9 @@ const { cleanupStorage, normalizeCategories, normalizeRetentionDays } = require(
 const backup = require('./backup');
 const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
 const { PROXY_MODES } = require('./runtime/runtime-contract');
+const { resolveEffectiveProxyContract } = require('./runtime/env-builder');
+const { manager: warpManager, cleanError: cleanWarpError } = require('./warp/manager');
+const { createWarpRouter } = require('./warp/routes');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
 fs.mkdirSync(config.paths.publicDir, { recursive: true });
@@ -70,29 +74,61 @@ async function executeTask(id, options = {}) {
     screenshots_dir: null,
     error_text: null,
   });
-
-  const result = await runTask(effectiveTask, { logPath: run.log_path });
-  const stoppedByUser = result.errorCode === 'stopped';
-  const completedRun = db.updateRun(run.id, {
-    status: stoppedByUser ? 'stopped' : result.status,
-    ended_at: result.endedAt,
-    exit_code: result.exitCode,
-    log_path: result.logPath,
-    screenshot_path: result.screenshotPath,
-    screenshots_dir: result.screenshotsDir || null,
-    error_text: result.errorText,
-    error_code: result.errorCode || null,
-    retryable: result.retryable ?? null,
-    retry_reason: result.retryReason ?? null,
-  });
-  logStream.end(run.log_path, { status: completedRun.status });
-
-  if (refreshScheduleOnSuccess && completedRun.status === 'success') {
-    refreshNextRunAfterSuccessfulManualRun(task);
+  const sessionId = `task-run:${run.id}`;
+  let lease = null;
+  let completedRun = null;
+  try {
+    const contract = resolveEffectiveProxyContract(effectiveTask, effectiveTask._profile || null);
+    if (contract.mode === 'warp') {
+      lease = warpManager.acquireProxy(sessionId);
+      db.setRunProxySnapshot(run.id, lease.snapshot);
+      effectiveTask = { ...effectiveTask, _managedProxyUrl: lease.proxyUrl };
+    }
+    const result = await runTask(effectiveTask, { logPath: run.log_path });
+    const stoppedByUser = result.errorCode === 'stopped';
+    completedRun = db.updateRun(run.id, {
+      status: stoppedByUser ? 'stopped' : result.status,
+      ended_at: result.endedAt,
+      exit_code: result.exitCode,
+      log_path: result.logPath,
+      screenshot_path: result.screenshotPath,
+      screenshots_dir: result.screenshotsDir || null,
+      error_text: result.errorText,
+      error_code: result.errorCode || null,
+      retryable: result.retryable ?? null,
+      retry_reason: result.retryReason ?? null,
+    });
+    if (refreshScheduleOnSuccess && completedRun.status === 'success') {
+      refreshNextRunAfterSuccessfulManualRun(task);
+    }
+    void notifyTaskRun(task, completedRun);
+    return completedRun;
+  } catch (error) {
+    const isWarpError = Boolean(error && typeof error.code === 'string' && error.code);
+    const safe = isWarpError
+      ? cleanWarpError(error)
+      : {
+        code: 'task_failed',
+        message: String(error && error.message || 'Task failed').replace(/[\r\n]+/g, ' ').slice(0, 1000),
+      };
+    completedRun = db.updateRun(run.id, {
+      status: 'failed',
+      ended_at: new Date().toISOString(),
+      exit_code: null,
+      log_path: run.log_path,
+      screenshot_path: null,
+      screenshots_dir: null,
+      error_text: safe.message,
+      error_code: safe.code,
+      retryable: false,
+      retry_reason: null,
+    });
+    void notifyTaskRun(task, completedRun);
+    throw error;
+  } finally {
+    if (lease) warpManager.releaseProxy(sessionId);
+    logStream.end(run.log_path, { status: completedRun ? completedRun.status : 'failed' });
   }
-
-  void notifyTaskRun(task, completedRun);
-  return completedRun;
 }
 
 function buildSchedulerBusyPayload(taskId) {
@@ -548,9 +584,10 @@ function normalizeBrowserRuntimeSettingsPayload(payload = {}, fallback = null) {
     throw new Error('RuyiPage path contains invalid characters');
   }
 
-  if (!['direct', 'launch', 'ruyi_fpfile', 'script'].includes(proxyMode)) {
+  if (!PROXY_MODES.includes(proxyMode)) {
     throw new Error(`Invalid global proxy mode: ${proxyMode}`);
   }
+  const safeProxyValue = proxyMode === 'warp' ? '' : proxyValue;
 
   return {
     runtimeStack,
@@ -559,7 +596,7 @@ function normalizeBrowserRuntimeSettingsPayload(payload = {}, fallback = null) {
     chromePath,
     ruyiPath,
     proxyMode,
-    proxyValue,
+    proxyValue: safeProxyValue,
     ruyiFpfile,
     extensionDirs,
   };
@@ -639,6 +676,7 @@ app.use(express.json({ limit: '20mb' }));
 // 它们分别暴露任务脚本源码、日志里的 token、以及可能含已登录账号页面的截图。
 app.use('/api/auth', authRouter);
 app.use(requireAuth);
+app.use('/api/warp', createWarpRouter(warpManager));
 // --- 以下全部需要登录 -------------------------------------------------------
 
 // 状态推送（SSE）。放在鉴权之后，所以未登录连不上；放在 express.static 之前，
@@ -1104,7 +1142,7 @@ app.post('/api/browser-profiles', (req, res) => {
     const { name, user_data_dir, proxy } = req.body || {};
     const legacyProxy = normalizeProfileProxy(proxy);
     const proxy_mode = normalizeProfileProxyMode(req.body?.proxy_mode ?? req.body?.proxyMode, legacyProxy);
-    const proxy_value = normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
+    const proxy_value = proxy_mode === 'warp' ? '' : normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
     const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile);
     const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
     const locale = normalizeProfileLocale(req.body?.locale);
@@ -1132,7 +1170,7 @@ app.put('/api/browser-profiles/:id', (req, res) => {
     const { name, user_data_dir, proxy } = req.body || {};
     const legacyProxy = normalizeProfileProxy(proxy);
     const proxy_mode = normalizeProfileProxyMode(req.body?.proxy_mode ?? req.body?.proxyMode, legacyProxy);
-    const proxy_value = normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
+    const proxy_value = proxy_mode === 'warp' ? '' : normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
     const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile);
     const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
     const locale = normalizeProfileLocale(req.body?.locale);
@@ -2212,8 +2250,9 @@ app.use((req, res) => {
   res.sendFile(path.join(config.paths.publicDir, 'index.html'));
 });
 
-app.listen(config.server.port, config.server.host, () => {
+const httpServer = app.listen(config.server.port, config.server.host, () => {
   reloadJobs(executeTask);
+  void warpManager.restore();
   try {
     prepareBrowserWorkspace();
   } catch (err) {
@@ -2235,3 +2274,26 @@ app.listen(config.server.port, config.server.host, () => {
     );
   }
 });
+
+let shutdownPromise = null;
+function shutdown(signal) {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    console.log(`[shutdown] received ${signal}`);
+    stopAllJobs();
+    events.closeAll();
+    await warpManager.shutdown();
+    await new Promise((resolve) => httpServer.close(resolve));
+    db.db.close();
+  })().catch((error) => {
+    console.error('[shutdown] failed:', error);
+    process.exitCode = 1;
+  });
+  return shutdownPromise;
+}
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, () => {
+    void shutdown(signal).finally(() => process.exit());
+  });
+}

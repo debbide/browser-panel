@@ -2337,7 +2337,86 @@ button.linkish:hover {
   text-decoration: underline;
 }
 
+.warp-overview,
+.warp-family-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.warp-overview > div,
+.warp-family-card,
+.warp-job {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.warp-overview > div {
+  display: grid;
+  gap: 4px;
+}
+
+.warp-overview code,
+.warp-family-card dd {
+  overflow-wrap: anywhere;
+}
+
+.warp-family-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.warp-family-head,
+.warp-job-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.warp-family-card dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 12px 0 0;
+}
+
+.warp-family-card dt {
+  color: var(--muted);
+}
+
+.warp-family-card dd {
+  margin: 0;
+  text-align: right;
+}
+
+.warp-family-error {
+  margin: 10px 0 0;
+  color: #fca5a5;
+  overflow-wrap: anywhere;
+}
+
+.warp-job {
+  margin-bottom: 14px;
+}
+
+.warp-job progress {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.warp-actions {
+  align-items: center;
+}
+
 @media (max-width: 900px) {
+  .warp-overview,
+  .warp-family-grid {
+    grid-template-columns: 1fr;
+  }
   .shots-layout {
     grid-template-columns: 1fr;
   }

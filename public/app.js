@@ -342,7 +342,9 @@ const taskProfileModeHint = document.getElementById('task-profile-mode-hint');
 const taskProfilePersistentFields = document.getElementById('task-profile-persistent-fields');
 const taskUsePersistentInput = document.getElementById('task-use-persistent');
 const taskBrowserType = document.getElementById('task-browser-type');
+const taskProxyMode = document.getElementById('task-proxy-mode');
 const taskProxyInput = document.getElementById('task-proxy-input');
+const taskProxyValueField = document.getElementById('task-proxy-value-field');
 const taskProxyFromProfileBtn = document.getElementById('task-proxy-from-profile');
 const taskProxyHint = document.getElementById('task-proxy-hint');
 const addProfileBtn = document.getElementById('add-profile-btn');
@@ -467,6 +469,7 @@ const tabMeta = {
   'tasks-tab': ['Dashboard', '管理任务、运行状态与手动浏览器。'],
   'profiles-tab': ['Browser Profiles', '维护独立的浏览器数据与代理配置。'],
   'scripts-tab': ['Script Management', '管理任务脚本、目录与上传文件。'],
+  'warp-tab': ['Cloudflare WARP', '管理 WARP 连接与双栈出口。'],
   'notifications-tab': ['TG Notifications', '配置 Telegram 通知与测试消息。'],
   'config-tab': ['Global Settings', '查找并调整面板级运行设置。'],
 };
@@ -531,6 +534,7 @@ function activateAppTab(targetId, { focus = false } = {}) {
   if (focus) btn.focus();
 
   if (targetId === 'scripts-tab') loadTasksFs(fsCurrentPath);
+  if (targetId === 'warp-tab') loadWarpStatus();
   if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
     window.__onConfigTabShow();
   }
@@ -3522,18 +3526,183 @@ function setBrowserRuntimeStatus(text, color) {
   if (color) browserRuntimeStatus.style.color = color;
 }
 
+const warpSummaryStatus = document.getElementById('warp-summary-status');
+const warpPhase = document.getElementById('warp-phase');
+const warpSocksAddress = document.getElementById('warp-socks-address');
+const warpActiveSessions = document.getElementById('warp-active-sessions');
+const warpJob = document.getElementById('warp-job');
+const warpJobTitle = document.getElementById('warp-job-title');
+const warpJobProgress = document.getElementById('warp-job-progress');
+const warpJobMeter = document.getElementById('warp-job-meter');
+const warpJobError = document.getElementById('warp-job-error');
+const warpLastError = document.getElementById('warp-last-error');
+const warpEnableBtn = document.getElementById('warp-enable-btn');
+const warpDisableBtn = document.getElementById('warp-disable-btn');
+const warpProbeBtn = document.getElementById('warp-probe-btn');
+const warpReconnectBtn = document.getElementById('warp-reconnect-btn');
+const warpRotateBtn = document.getElementById('warp-rotate-btn');
+const warpButtons = [warpEnableBtn, warpDisableBtn, warpProbeBtn, warpReconnectBtn, warpRotateBtn].filter(Boolean);
+let warpJobTimer = null;
+let warpPollingJobId = null;
+
+const WARP_PHASE_LABELS = {
+  disabled: '未启用',
+  needs_install: '等待安装',
+  installing: '安装组件',
+  registering: '注册身份',
+  starting: '正在启动',
+  healthy: '运行正常',
+  degraded: '单栈可用',
+  reconnecting: '正在重连',
+  rotating: '正在换 IP',
+  rolling_back: '正在回滚',
+  stopping: '正在停用',
+  error: '运行异常',
+};
+
+function renderWarpFamily(family, data) {
+  const stateEl = document.getElementById(`warp-${family}-state`);
+  const addressEl = document.getElementById(`warp-${family}-address`);
+  const traceEl = document.getElementById(`warp-${family}-trace`);
+  const metaEl = document.getElementById(`warp-${family}-meta`);
+  const errorEl = document.getElementById(`warp-${family}-error`);
+  if (!stateEl) return;
+  stateEl.textContent = data ? (data.available ? '可用' : '不可用') : '未检测';
+  addressEl.textContent = data?.address || '—';
+  traceEl.textContent = data ? `${data.warp || '—'} / ${data.colo || '—'}` : '—';
+  const checkedAt = data?.checkedAt ? new Date(data.checkedAt).toLocaleString() : '';
+  metaEl.textContent = data ? `${Number.isFinite(data.latencyMs) ? `${data.latencyMs} ms` : '—'}${checkedAt ? ` / ${checkedAt}` : ''}` : '—';
+  errorEl.textContent = data?.error || '';
+  errorEl.hidden = !data?.error;
+}
+
+function renderWarpJob(job) {
+  if (!warpJob) return;
+  warpJob.hidden = !job;
+  if (!job) return;
+  const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+  warpJobTitle.textContent = `${job.type || 'WARP'}：${job.step || job.status || '处理中'}`;
+  warpJobProgress.textContent = `${progress}%`;
+  warpJobMeter.value = progress;
+  warpJobError.textContent = job.error_text || '';
+  warpJobError.hidden = !job.error_text;
+}
+
+function renderWarpStatus(data = {}) {
+  const phaseLabel = WARP_PHASE_LABELS[data.phase] || data.phase || '未知';
+  if (warpSummaryStatus) warpSummaryStatus.textContent = `状态：${phaseLabel}`;
+  if (warpPhase) warpPhase.textContent = phaseLabel;
+  if (warpSocksAddress) warpSocksAddress.textContent = data.socksAddress || '未运行';
+  if (warpActiveSessions) warpActiveSessions.textContent = String(data.activeSessions || 0);
+  renderWarpFamily('ipv4', data.probe?.ipv4);
+  renderWarpFamily('ipv6', data.probe?.ipv6);
+  renderWarpJob(data.currentJob || null);
+  if (warpLastError) {
+    warpLastError.textContent = data.lastError?.message || '';
+    warpLastError.hidden = !data.lastError?.message;
+  }
+  const busy = Boolean(data.currentJob);
+  warpButtons.forEach((button) => { button.disabled = busy; });
+  if (warpEnableBtn) warpEnableBtn.disabled = busy || Boolean(data.desiredEnabled);
+  if (warpDisableBtn) warpDisableBtn.disabled = busy || !data.desiredEnabled;
+  if (warpProbeBtn) warpProbeBtn.disabled = busy || !data.process?.running;
+  if (warpReconnectBtn) warpReconnectBtn.disabled = busy || !data.desiredEnabled || Number(data.activeSessions || 0) > 0;
+  if (warpRotateBtn) warpRotateBtn.disabled = busy || !data.desiredEnabled || Number(data.activeSessions || 0) > 0;
+}
+
+async function loadWarpStatus() {
+  if (!warpPhase) return null;
+  try {
+    const res = await fetchJson('/api/warp/status');
+    renderWarpStatus(res.data || {});
+    return res.data || {};
+  } catch (error) {
+    if (warpSummaryStatus) warpSummaryStatus.textContent = '状态：加载失败';
+    if (warpLastError) {
+      warpLastError.textContent = error.message || 'WARP 状态加载失败';
+      warpLastError.hidden = false;
+    }
+    return null;
+  }
+}
+
+function stopWarpJobPolling() {
+  if (warpJobTimer) clearTimeout(warpJobTimer);
+  warpJobTimer = null;
+  warpPollingJobId = null;
+}
+
+async function pollWarpJob(jobId) {
+  if (!jobId || warpPollingJobId !== jobId) return;
+  try {
+    const res = await fetchJson(`/api/warp/jobs/${jobId}`);
+    const job = res.data || {};
+    renderWarpJob(job);
+    if (['succeeded', 'failed', 'interrupted'].includes(job.status)) {
+      stopWarpJobPolling();
+      await loadWarpStatus();
+      if (job.status === 'succeeded') {
+        const comparison = job.result?.comparison;
+        const rebuiltWithoutChange = ['reconnect', 'rotate'].includes(job.type) && comparison?.changed === false;
+        toast(rebuiltWithoutChange ? '连接已重建但出口 IP 未变化' : 'WARP 操作已完成', 'success');
+      } else {
+        toast(job.error_text || 'WARP 操作失败', 'error');
+      }
+      return;
+    }
+  } catch (error) {
+    stopWarpJobPolling();
+    toast(error.message || 'WARP 任务状态读取失败', 'error');
+    return;
+  }
+  warpJobTimer = setTimeout(() => pollWarpJob(jobId), 1000);
+}
+
+async function startWarpOperation(action) {
+  warpButtons.forEach((button) => { button.disabled = true; });
+  try {
+    const res = await fetchJson(`/api/warp/${action}`, { method: 'POST' });
+    const job = res.data || {};
+    renderWarpJob(job);
+    warpPollingJobId = Number(res.jobId || job.id);
+    await loadWarpStatus();
+    pollWarpJob(warpPollingJobId);
+  } catch (error) {
+    toast(error.message || 'WARP 操作失败', 'error');
+    await loadWarpStatus();
+  }
+}
+
+warpEnableBtn?.addEventListener('click', () => startWarpOperation('enable'));
+warpDisableBtn?.addEventListener('click', () => startWarpOperation('disable'));
+warpProbeBtn?.addEventListener('click', () => startWarpOperation('probe'));
+warpReconnectBtn?.addEventListener('click', () => startWarpOperation('reconnect'));
+warpRotateBtn?.addEventListener('click', () => startWarpOperation('rotate'));
+
 const brChromePath = document.getElementById('br-chrome-path');
 const brRuyiPath = document.getElementById('br-ruyi-path');
+const brProxyMode = document.getElementById('br-proxy-mode');
 const brProxyValue = document.getElementById('br-proxy-value');
+const brProxyValueField = document.getElementById('br-proxy-value-field');
+
+function updateProxyModeUI(modeEl, valueEl, fieldEl) {
+  const mode = String(modeEl?.value || 'direct');
+  const acceptsValue = mode === 'launch';
+  if (!acceptsValue && valueEl) valueEl.value = '';
+  if (fieldEl) fieldEl.hidden = !acceptsValue;
+  if (valueEl) valueEl.disabled = !acceptsValue;
+}
 
 function collectBrowserRuntimeFormPayload() {
+  const proxyMode = brProxyMode?.value || 'direct';
   return {
     runtimeStack: brRuntimeStack?.value || 'playwright',
     usePlaywrightExtra: Boolean(brUsePlaywrightExtra?.checked),
     pluginPackages: normalizePluginPackagesForUi(brPluginPackages?.value),
     chromePath: String(brChromePath?.value || '').trim(),
     ruyiPath: String(brRuyiPath?.value || '').trim(),
-    proxyValue: String(brProxyValue?.value || '').trim(),
+    proxyMode,
+    proxyValue: proxyMode === 'launch' ? String(brProxyValue?.value || '').trim() : '',
     extensionDirs: String(brExtensionDirs?.value || '').trim(),
   };
 }
@@ -3548,7 +3717,9 @@ async function loadBrowserRuntimeSettings() {
     if (brPluginPackages) brPluginPackages.value = normalizePluginPackagesForUi(data.pluginPackages);
     if (brChromePath) brChromePath.value = data.chromePath || '';
     if (brRuyiPath) brRuyiPath.value = data.ruyiPath || '';
+    if (brProxyMode) brProxyMode.value = data.proxyMode || 'direct';
     if (brProxyValue) brProxyValue.value = data.proxyValue || '';
+    updateProxyModeUI(brProxyMode, brProxyValue, brProxyValueField);
     if (brExtensionDirs) brExtensionDirs.value = data.extensionDirs || '';
     const packageCount = normalizePluginPackagesForUi(data.pluginPackages).split(',').map(s => s.trim()).filter(Boolean).length;
     const runtimeStack = data.runtimeStack || 'playwright';
@@ -3657,15 +3828,19 @@ function setTaskProfileMode(mode) {
 }
 
 function getTaskBrowserProxyFromForm() {
+  const mode = taskProxyMode?.value || 'inherit';
   return {
     runtimeStack: taskBrowserType?.value || '',
-    value: String(taskProxyInput?.value || '').trim(),
+    mode,
+    value: mode === 'launch' ? String(taskProxyInput?.value || '').trim() : '',
   };
 }
 
-function setTaskBrowserProxyInput(value, runtimeStack = '') {
-  const text = String(value || '').trim();
-  if (taskProxyInput) taskProxyInput.value = text;
+function setTaskBrowserProxyInput(value, runtimeStack = '', mode = 'inherit') {
+  const normalizedMode = ['inherit', 'direct', 'launch', 'warp'].includes(mode) ? mode : 'inherit';
+  if (taskProxyMode) taskProxyMode.value = normalizedMode;
+  if (taskProxyInput) taskProxyInput.value = normalizedMode === 'launch' ? String(value || '').trim() : '';
+  updateProxyModeUI(taskProxyMode, taskProxyInput, taskProxyValueField);
   if (taskBrowserType) {
     const stack = String(runtimeStack || '').trim().toLowerCase();
     taskBrowserType.value = stack === 'ruyipage' ? 'ruyipage' : (stack ? 'playwright' : '');
@@ -3684,7 +3859,7 @@ function fillTaskProxyFromSelectedProfile() {
     return;
   }
   const value = p.proxy_value || p.proxy;
-  setTaskBrowserProxyInput(value, p.runtime_stack || '');
+  setTaskBrowserProxyInput(value, p.runtime_stack || '', p.proxy_mode || 'inherit');
   toast('\u5df2\u586b\u5165\u914d\u7f6e\u7684\u6d4f\u89c8\u5668\u548c\u4ee3\u7406\uff08\u4ecd\u4f7f\u7528\u4e34\u65f6\u6570\u636e\u76ee\u5f55\uff09', 'success');
 }
 
@@ -3715,7 +3890,7 @@ function renderProfiles() {
         </div>
         <div class="profile-kv">
           <span class="profile-kv-label">\u4ee3\u7406</span>
-          <span class="profile-kv-value">${escapeHtml((p.proxy_value || p.proxy) ? '\u5df2\u8bbe\u7f6e' : '\u672a\u8bbe\u7f6e')}</span>
+          <span class="profile-kv-value">${escapeHtml(({ inherit: '\u7ee7\u627f\u5168\u5c40', direct: '\u4e0d\u4f7f\u7528\u4ee3\u7406', launch: '\u624b\u52a8\u4ee3\u7406', warp: 'Cloudflare WARP' })[p.proxy_mode || ((p.proxy_value || p.proxy) ? 'launch' : 'inherit')] || '\u7ee7\u627f\u5168\u5c40')}</span>
         </div>
         <div class="profile-kv">
           <span class="profile-kv-label">Locale</span>
@@ -3782,9 +3957,17 @@ async function openProfileModal(profile) {
           </select>
         </div>
         <div>
-          <label class="field-label">\u4ee3\u7406\u5730\u5740\uff08\u53ef\u9009\uff09</label>
+          <label class="field-label">\u4ee3\u7406\u6a21\u5f0f</label>
+          <select name="proxy_mode" id="profile-proxy-mode">
+            <option value="inherit" ${(profile?.proxy_mode || ((profile?.proxy_value || profile?.proxy) ? 'launch' : 'inherit')) === 'inherit' ? 'selected' : ''}>\u7ee7\u627f\u5168\u5c40</option>
+            <option value="direct" ${profile?.proxy_mode === 'direct' ? 'selected' : ''}>\u4e0d\u4f7f\u7528\u4ee3\u7406</option>
+            <option value="launch" ${(profile?.proxy_mode || ((profile?.proxy_value || profile?.proxy) ? 'launch' : 'inherit')) === 'launch' ? 'selected' : ''}>\u624b\u52a8 SOCKS / HTTP \u4ee3\u7406</option>
+            <option value="warp" ${profile?.proxy_mode === 'warp' ? 'selected' : ''}>Cloudflare WARP</option>
+          </select>
+        </div>
+        <div id="profile-proxy-value-field">
+          <label class="field-label">\u4ee3\u7406\u5730\u5740</label>
           <input name="proxy_value" placeholder="socks5://127.0.0.1:7891" value="${escapeHtml(profile?.proxy_value || profile?.proxy || '')}" />
-          <p class="schedule-note" style="margin-top:4px;">\u7559\u7a7a\u65f6\u7ee7\u627f\u5168\u5c40\u4ee3\u7406\u3002</p>
         </div>
         <div class="locale-setting-grid">
           <div class="locale-setting-control">
@@ -3831,6 +4014,12 @@ async function openProfileModal(profile) {
   const profileLocaleCustom = dialog.querySelector('#profile-locale-custom');
   const profileTimezoneSelect = dialog.querySelector('#profile-timezone-select');
   const profileTimezoneCustom = dialog.querySelector('#profile-timezone-custom');
+  const profileProxyMode = dialog.querySelector('#profile-proxy-mode');
+  const profileProxyValue = dialog.querySelector('[name="proxy_value"]');
+  const profileProxyValueField = dialog.querySelector('#profile-proxy-value-field');
+  const updateProfileProxyUI = () => updateProxyModeUI(profileProxyMode, profileProxyValue, profileProxyValueField);
+  profileProxyMode?.addEventListener('change', updateProfileProxyUI);
+  updateProfileProxyUI();
   setupPresetCustomControl(profileLocaleSelect, profileLocaleCustom, profile?.locale || '');
   setupPresetCustomControl(profileTimezoneSelect, profileTimezoneCustom, profile?.timezone_id || '');
   const profileEnvUI = createEnvEditor(dialog.querySelector('#profile-env-editor'));
@@ -3851,11 +4040,14 @@ async function openProfileModal(profile) {
       toast(err.message || '\u53d8\u91cf\u65e0\u6548', 'error');
       return;
     }
+    const proxyMode = fd.get('proxy_mode') || 'inherit';
+    const proxyValue = proxyMode === 'launch' ? String(fd.get('proxy_value') || '').trim() : '';
     const body = {
       name: fd.get('name'),
       user_data_dir: fd.get('user_data_dir'),
-      proxy: fd.get('proxy_value'),
-      proxy_value: fd.get('proxy_value'),
+      proxy_mode: proxyMode,
+      proxy: proxyValue,
+      proxy_value: proxyValue,
       runtime_stack: fd.get('runtime_stack'),
       locale: getPresetCustomValue(profileLocaleSelect, profileLocaleCustom),
       timezone_id: getPresetCustomValue(profileTimezoneSelect, profileTimezoneCustom),
@@ -4018,6 +4210,9 @@ function startStatusStream() {
   eventSource.addEventListener('state', onStateEvent);
   eventSource.addEventListener('task', onStateEvent);
   eventSource.addEventListener('browser', onStateEvent);
+  eventSource.addEventListener('warp', () => {
+    if (!document.getElementById('warp-tab')?.hidden) loadWarpStatus();
+  });
 
   eventSource.onerror = () => {
     // EventSource 自带重连，不用手动重建，这里只负责断开期间兜底轮询，
@@ -4132,18 +4327,21 @@ function fillTaskForm(task) {
   }
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
   let proxyValue = '';
+  let proxyMode = 'inherit';
   let runtimeStack = '';
   if (Array.isArray(task.env) && task.env.length) {
     proxyValue = findManagedEnvValue(task.env, 'BROWSER_PROXY_VALUE') || findManagedEnvValue(task.env, 'BROWSER_PROXY');
+    proxyMode = findManagedEnvValue(task.env, 'BROWSER_PROXY_MODE') || (proxyValue ? 'launch' : 'inherit');
     runtimeStack = findManagedEnvValue(task.env, 'BROWSER_RUNTIME_STACK');
     syncTaskParamsUI(task.script_path, filterManagedEnvRows(task.env));
   } else {
     const params = task.params || parseParamsJson(task.params_json);
     proxyValue = findManagedParamValue(params, 'BROWSER_PROXY_VALUE') || findManagedParamValue(params, 'BROWSER_PROXY');
+    proxyMode = findManagedParamValue(params, 'BROWSER_PROXY_MODE') || (proxyValue ? 'launch' : 'inherit');
     runtimeStack = findManagedParamValue(params, 'BROWSER_RUNTIME_STACK');
     syncTaskParamsUI(task.script_path, filterManagedEnvObject(params));
   }
-  setTaskBrowserProxyInput(proxyValue, runtimeStack);
+  setTaskBrowserProxyInput(proxyValue, runtimeStack, proxyMode);
   updateTaskProfileModeUI();
 }
 
@@ -4294,6 +4492,7 @@ form.addEventListener('submit', async (event) => {
   const taskBrowserProxy = getTaskBrowserProxyFromForm();
   for (const [name, value] of [
     ['BROWSER_RUNTIME_STACK', taskBrowserProxy.runtimeStack],
+    ['BROWSER_PROXY_MODE', taskBrowserProxy.mode],
     ['BROWSER_PROXY_VALUE', taskBrowserProxy.value],
   ]) {
     if (value) {
@@ -4320,6 +4519,7 @@ form.addEventListener('submit', async (event) => {
     'BROWSER_TIMEZONE',
   ]);
   if (taskBrowserProxy.runtimeStack) payload.params.BROWSER_RUNTIME_STACK = taskBrowserProxy.runtimeStack;
+  if (taskBrowserProxy.mode) payload.params.BROWSER_PROXY_MODE = taskBrowserProxy.mode;
   if (taskBrowserProxy.value) payload.params.BROWSER_PROXY_VALUE = taskBrowserProxy.value;
   const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
   const method = editingId ? 'PUT' : 'POST';
@@ -5015,6 +5215,11 @@ if (successHeuristicsForm) {
   });
 }
 
+if (brProxyMode) {
+  brProxyMode.addEventListener('change', () => updateProxyModeUI(brProxyMode, brProxyValue, brProxyValueField));
+  updateProxyModeUI(brProxyMode, brProxyValue, brProxyValueField);
+}
+
 if (browserRuntimeForm) {
   browserRuntimeForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -5200,6 +5405,13 @@ if (taskProfileSelect) {
     updateTaskProfileModeUI();
     updateTaskFormSummary();
   });
+}
+if (taskProxyMode) {
+  taskProxyMode.addEventListener('change', () => {
+    updateProxyModeUI(taskProxyMode, taskProxyInput, taskProxyValueField);
+    updateTaskFormSummary();
+  });
+  updateProxyModeUI(taskProxyMode, taskProxyInput, taskProxyValueField);
 }
 if (taskProxyFromProfileBtn) {
   taskProxyFromProfileBtn.addEventListener('click', () => fillTaskProxyFromSelectedProfile());

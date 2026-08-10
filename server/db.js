@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS task_runs (
   error_code TEXT,
   retryable INTEGER,
   retry_reason TEXT,
+  proxy_snapshot_json TEXT,
   FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -97,6 +98,57 @@ CREATE TABLE IF NOT EXISTS panel_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_panel_sessions_user ON panel_sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS warp_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  desired_enabled INTEGER NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL DEFAULT 'disabled',
+  generation INTEGER NOT NULL DEFAULT 0,
+  policy_json TEXT NOT NULL DEFAULT '{}',
+  component_manifest_json TEXT,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_error_code TEXT,
+  last_error_text TEXT,
+  last_error_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS warp_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  step TEXT NOT NULL DEFAULT 'queued',
+  progress INTEGER NOT NULL DEFAULT 0,
+  result_json TEXT,
+  error_code TEXT,
+  error_text TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at TEXT,
+  ended_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_warp_jobs_created ON warp_jobs(id DESC);
+
+CREATE TABLE IF NOT EXISTS warp_credentials_meta (
+  generation INTEGER PRIMARY KEY,
+  state_dir TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  activated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS warp_probe_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  generation INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  snapshot_json TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_warp_probe_generation ON warp_probe_snapshots(generation, id DESC);
+
+INSERT OR IGNORE INTO warp_state (id) VALUES (1);
 `);
 
 const taskRunColumns = db.prepare('PRAGMA table_info(task_runs)').all().map(row => row.name);
@@ -111,6 +163,9 @@ if (!taskRunColumns.includes('retry_reason')) {
 }
 if (!taskRunColumns.includes('screenshots_dir')) {
   db.exec('ALTER TABLE task_runs ADD COLUMN screenshots_dir TEXT');
+}
+if (!taskRunColumns.includes('proxy_snapshot_json')) {
+  db.exec('ALTER TABLE task_runs ADD COLUMN proxy_snapshot_json TEXT');
 }
 
 const taskTableColumns = db.prepare('PRAGMA table_info(tasks)').all().map(row => row.name);
@@ -526,10 +581,10 @@ function setTaskParallelAllowed(enabled) {
 
 function createRun(taskId, data) {
   const stmt = db.prepare(`
-    INSERT INTO task_runs (task_id, status, started_at, ended_at, exit_code, log_path, screenshot_path, screenshots_dir, error_text, error_code, retryable, retry_reason)
-    VALUES (@task_id, @status, @started_at, @ended_at, @exit_code, @log_path, @screenshot_path, @screenshots_dir, @error_text, @error_code, @retryable, @retry_reason)
+    INSERT INTO task_runs (task_id, status, started_at, ended_at, exit_code, log_path, screenshot_path, screenshots_dir, error_text, error_code, retryable, retry_reason, proxy_snapshot_json)
+    VALUES (@task_id, @status, @started_at, @ended_at, @exit_code, @log_path, @screenshot_path, @screenshots_dir, @error_text, @error_code, @retryable, @retry_reason, @proxy_snapshot_json)
   `);
-  const result = stmt.run({ error_code: null, retryable: null, retry_reason: null, screenshots_dir: null, task_id: taskId, ...data });
+  const result = stmt.run({ error_code: null, retryable: null, retry_reason: null, screenshots_dir: null, proxy_snapshot_json: null, task_id: taskId, ...data });
   return getRun(result.lastInsertRowid);
 }
 
@@ -538,10 +593,17 @@ function updateRun(id, data) {
     UPDATE task_runs
     SET status = @status, ended_at = @ended_at, exit_code = @exit_code,
         log_path = @log_path, screenshot_path = @screenshot_path, screenshots_dir = @screenshots_dir, error_text = @error_text,
-        error_code = @error_code, retryable = @retryable, retry_reason = @retry_reason
+        error_code = @error_code, retryable = @retryable, retry_reason = @retry_reason,
+        proxy_snapshot_json = COALESCE(@proxy_snapshot_json, proxy_snapshot_json)
     WHERE id = @id
   `);
-  stmt.run({ error_code: null, retryable: null, retry_reason: null, screenshots_dir: null, id, ...data });
+  stmt.run({ error_code: null, retryable: null, retry_reason: null, screenshots_dir: null, proxy_snapshot_json: null, id, ...data });
+  return getRun(id);
+}
+
+function setRunProxySnapshot(id, snapshot) {
+  const value = snapshot ? JSON.stringify(snapshot) : null;
+  db.prepare('UPDATE task_runs SET proxy_snapshot_json = ? WHERE id = ?').run(value, id);
   return getRun(id);
 }
 
@@ -571,6 +633,108 @@ function listLatestRunPerTask() {
   `).all();
 }
 
+function getWarpState() {
+  const row = db.prepare('SELECT * FROM warp_state WHERE id = 1').get();
+  if (!row) return null;
+  let policy = {};
+  let manifest = null;
+  try { policy = JSON.parse(row.policy_json || '{}'); } catch { policy = {}; }
+  try { manifest = row.component_manifest_json ? JSON.parse(row.component_manifest_json) : null; } catch { manifest = null; }
+  return { ...row, desired_enabled: Boolean(row.desired_enabled), policy, manifest };
+}
+
+function updateWarpState(patch = {}) {
+  const allowed = new Set([
+    'desired_enabled', 'phase', 'generation', 'policy_json', 'component_manifest_json',
+    'consecutive_failures', 'last_error_code', 'last_error_text', 'last_error_at',
+  ]);
+  const fields = [];
+  const params = { id: 1 };
+  for (const [key, value] of Object.entries(patch)) {
+    if (!allowed.has(key)) continue;
+    fields.push(`${key} = @${key}`);
+    params[key] = key === 'policy_json' && value && typeof value === 'object'
+      ? JSON.stringify(value)
+      : key === 'component_manifest_json' && value && typeof value === 'object'
+        ? JSON.stringify(value)
+        : value;
+  }
+  if (fields.length) {
+    fields.push('updated_at = CURRENT_TIMESTAMP');
+    db.prepare(`UPDATE warp_state SET ${fields.join(', ')} WHERE id = @id`).run(params);
+  }
+  return getWarpState();
+}
+
+function createWarpJob(type) {
+  const result = db.prepare('INSERT INTO warp_jobs (type) VALUES (?)').run(String(type || 'operation'));
+  return getWarpJob(result.lastInsertRowid);
+}
+
+function getWarpJob(id) {
+  return db.prepare('SELECT * FROM warp_jobs WHERE id = ?').get(Number(id)) || null;
+}
+
+function updateWarpJob(id, patch = {}) {
+  const allowed = new Set(['status', 'step', 'progress', 'result_json', 'error_code', 'error_text', 'started_at', 'ended_at']);
+  const fields = [];
+  const params = { id: Number(id) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (!allowed.has(key)) continue;
+    fields.push(`${key} = @${key}`);
+    params[key] = key === 'result_json' && value && typeof value === 'object' ? JSON.stringify(value) : value;
+  }
+  if (fields.length) db.prepare(`UPDATE warp_jobs SET ${fields.join(', ')} WHERE id = @id`).run(params);
+  return getWarpJob(id);
+}
+
+function listWarpJobs(limit = 50) {
+  return db.prepare('SELECT * FROM warp_jobs ORDER BY id DESC LIMIT ?').all(Math.max(1, Math.min(200, Number(limit) || 50)));
+}
+
+function interruptWarpJobs() {
+  db.prepare(`UPDATE warp_jobs SET status = 'interrupted', ended_at = CURRENT_TIMESTAMP, error_code = 'interrupted'
+    WHERE status IN ('queued', 'running')`).run();
+}
+
+function saveWarpCredentialsMeta(meta) {
+  db.prepare(`INSERT INTO warp_credentials_meta (generation, state_dir, fingerprint, created_at, activated_at)
+    VALUES (@generation, @state_dir, @fingerprint, COALESCE(@created_at, CURRENT_TIMESTAMP), @activated_at)
+    ON CONFLICT(generation) DO UPDATE SET state_dir=excluded.state_dir, fingerprint=excluded.fingerprint, activated_at=excluded.activated_at`).run({
+    created_at: null, activated_at: null, ...meta,
+  });
+  return db.prepare('SELECT * FROM warp_credentials_meta WHERE generation = ?').get(Number(meta.generation));
+}
+
+function getWarpCredentialsMeta(generation = null) {
+  if (generation === null || generation === undefined) {
+    return db.prepare('SELECT * FROM warp_credentials_meta ORDER BY generation DESC LIMIT 1').get() || null;
+  }
+  return db.prepare('SELECT * FROM warp_credentials_meta WHERE generation = ?').get(Number(generation)) || null;
+}
+
+function saveWarpProbeSnapshot(generation, source, snapshot) {
+  const checkedAt = snapshot && snapshot.checkedAt ? snapshot.checkedAt : new Date().toISOString();
+  const result = db.prepare(`INSERT INTO warp_probe_snapshots (generation, source, snapshot_json, checked_at)
+    VALUES (?, ?, ?, ?)`).run(Number(generation), String(source || 'manual'), JSON.stringify(snapshot || {}), checkedAt);
+  return db.prepare('SELECT * FROM warp_probe_snapshots WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function getLatestWarpProbeSnapshot(generation = null) {
+  const row = generation === null || generation === undefined
+    ? db.prepare('SELECT * FROM warp_probe_snapshots ORDER BY id DESC LIMIT 1').get()
+    : db.prepare('SELECT * FROM warp_probe_snapshots WHERE generation = ? ORDER BY id DESC LIMIT 1').get(Number(generation));
+  if (!row) return null;
+  let snapshot = {};
+  try { snapshot = JSON.parse(row.snapshot_json || '{}'); } catch { snapshot = {}; }
+  return { ...row, snapshot };
+}
+
+function listWarpProbeSnapshots(generation, limit = 20) {
+  const rows = db.prepare('SELECT * FROM warp_probe_snapshots WHERE generation = ? ORDER BY id DESC LIMIT ?')
+    .all(Number(generation), Math.max(1, Math.min(100, Number(limit) || 20)));
+  return rows.map((row) => { try { return { ...row, snapshot: JSON.parse(row.snapshot_json || '{}') }; } catch { return { ...row, snapshot: {} }; } });
+}
 function getSetting(key) {
   const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
   return row ? row.value : null;
@@ -718,7 +882,7 @@ function getBrowserRuntimeSettings() {
   );
   const proxyModeRaw = String(getSetting('browser_proxy_mode') || '').trim().toLowerCase();
   const legacyProxy = String((config.browser && config.browser.proxy) || '').trim();
-  const proxyMode = ['direct', 'launch', 'ruyi_fpfile', 'script'].includes(proxyModeRaw)
+  const proxyMode = ['direct', 'launch', 'ruyi_fpfile', 'script', 'warp'].includes(proxyModeRaw)
     ? proxyModeRaw
     : (legacyProxy ? 'launch' : 'direct');
   const proxyValue = String(getSetting('browser_proxy_value') || legacyProxy).trim();
@@ -757,9 +921,11 @@ function setBrowserRuntimeSettings(payload = {}) {
   }
   if (payload.proxyMode !== undefined) {
     const proxyMode = String(payload.proxyMode || '').trim().toLowerCase();
-    setSetting('browser_proxy_mode', ['direct', 'launch', 'ruyi_fpfile', 'script'].includes(proxyMode) ? proxyMode : 'direct');
+    const normalizedProxyMode = ['direct', 'launch', 'ruyi_fpfile', 'script', 'warp'].includes(proxyMode) ? proxyMode : 'direct';
+    setSetting('browser_proxy_mode', normalizedProxyMode);
+    if (normalizedProxyMode === 'warp') setSetting('browser_proxy_value', null);
   }
-  if (payload.proxyValue !== undefined) {
+  if (payload.proxyValue !== undefined && String(payload.proxyMode || '').trim().toLowerCase() !== 'warp') {
     setSetting('browser_proxy_value', String(payload.proxyValue || '').trim() || null);
   }
   if (payload.ruyiFpfile !== undefined) {
@@ -1066,10 +1232,23 @@ module.exports = {
   deleteTask,
   createRun,
   updateRun,
+  setRunProxySnapshot,
   getRun,
   listRuns,
   listRunsByTask,
   listLatestRunPerTask,
+  getWarpState,
+  updateWarpState,
+  createWarpJob,
+  getWarpJob,
+  updateWarpJob,
+  listWarpJobs,
+  interruptWarpJobs,
+  saveWarpCredentialsMeta,
+  getWarpCredentialsMeta,
+  saveWarpProbeSnapshot,
+  getLatestWarpProbeSnapshot,
+  listWarpProbeSnapshots,
   getSetting,
   setSetting,
   getTelegramSettings,

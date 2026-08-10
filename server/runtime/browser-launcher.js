@@ -23,6 +23,14 @@ function getRuntimeDataDir() {
   return path.join(config.paths.root, 'runtime-data');
 }
 
+function isRuntimeProfilePath(dir) {
+  const raw = String(dir || '').trim();
+  if (!raw) return false;
+  const resolved = path.resolve(raw);
+  const profilesRoot = path.resolve(path.join(getRuntimeDataDir(), 'profiles'));
+  return resolved === profilesRoot || resolved.startsWith(`${profilesRoot}${path.sep}`);
+}
+
 function getTempProfileDir(task, runId = null) {
   // Per-run dir so "临时" is truly disposable (not a sticky task-N-tmp-profile).
   const id = task && task.id != null ? task.id : 'x';
@@ -995,17 +1003,19 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   }
   spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, workDir], { stdio: 'ignore' });
   spawnSync('chmod', ['-R', 'a+rwX', workDir], { stdio: 'ignore' });
-  // Profile dirs under panel root are often root-owned; browser user needs write for Playwright/Chrome
+  // Only panel profile paths may inherit browser ownership. Other runtime-data
+  // children can contain root-owned executables and credentials.
   if (effectiveUserDataDir) {
-    spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, effectiveUserDataDir], { stdio: 'ignore' });
-    spawnSync('chmod', ['-R', 'a+rwX', effectiveUserDataDir], { stdio: 'ignore' });
-    const parentProfiles = path.dirname(effectiveUserDataDir);
-    spawnSync('chown', [`${browserUser}:${browserUser}`, parentProfiles], { stdio: 'ignore' });
-    spawnSync('chmod', ['a+rwx', parentProfiles], { stdio: 'ignore' });
+    if (isRuntimeProfilePath(effectiveUserDataDir)) {
+      spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, effectiveUserDataDir], { stdio: 'ignore' });
+      spawnSync('chmod', ['-R', 'a+rwX', effectiveUserDataDir], { stdio: 'ignore' });
+      const profilesRoot = path.join(getRuntimeDataDir(), 'profiles');
+      spawnSync('chown', [`${browserUser}:${browserUser}`, profilesRoot], { stdio: 'ignore' });
+      spawnSync('chmod', ['a+rwx', profilesRoot], { stdio: 'ignore' });
+    } else {
+      console.warn(`[browser-launcher] refusing runtime profile permission change outside profiles root: ${effectiveUserDataDir}`);
+    }
   }
-  const runtimeDataDir = getRuntimeDataDir();
-  spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, runtimeDataDir], { stdio: 'ignore' });
-  spawnSync('chmod', ['-R', 'a+rwX', runtimeDataDir], { stdio: 'ignore' });
 
   // SeleniumBase UC downloads chromedriver into site-packages/.../drivers (often root-owned).
   // Make that dir writable for browser user, or fail loudly in logs.

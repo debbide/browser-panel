@@ -29,6 +29,9 @@
         <button id="tab-scripts" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="scripts-tab" aria-controls="scripts-tab" aria-selected="false">
           <i data-lucide="file-code-2" class="icon-sm"></i> 脚本管理
         </button>
+        <button id="tab-warp" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="warp-tab" aria-controls="warp-tab" aria-selected="false">
+          <i data-lucide="shield-check" class="icon-sm"></i> Cloudflare WARP
+        </button>
         <button id="tab-notifications" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="notifications-tab" aria-controls="notifications-tab" aria-selected="false">
           <i data-lucide="send" class="icon-sm"></i> TG 通知
         </button>
@@ -163,6 +166,59 @@
           </div>
           <div id="fs-breadcrumb" class="files-breadcrumb muted" style="margin-bottom:8px; font-size:13px;">tasks/</div>
           <div id="fs-list" class="files-list"></div>
+        </section>
+      </div>
+
+      <div id="warp-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-warp" hidden>
+        <section class="modal-panel config-panel">
+          <div class="section-header compact">
+            <div>
+              <h2>Cloudflare WARP</h2>
+              <p id="warp-summary-status" class="muted">状态：未启用</p>
+            </div>
+          </div>
+          <p class="schedule-note" style="margin-bottom:12px;">
+            首次启用时按需下载并注册。任务选择 WARP 后由面板自动使用内部 SOCKS5，不需要填写地址，也不能叠加其他代理。
+          </p>
+          <div class="warp-overview">
+            <div>
+              <span class="profile-kv-label">运行状态</span>
+              <strong id="warp-phase">未启用</strong>
+            </div>
+            <div>
+              <span class="profile-kv-label">本地 SOCKS5</span>
+              <code id="warp-socks-address">未运行</code>
+            </div>
+            <div>
+              <span class="profile-kv-label">活动会话</span>
+              <strong id="warp-active-sessions">0</strong>
+            </div>
+          </div>
+          <div class="warp-family-grid" id="warp-family-grid">
+            <article class="warp-family-card" data-family="ipv4">
+              <div class="warp-family-head"><strong>IPv4</strong><span id="warp-ipv4-state" class="muted">未检测</span></div>
+              <dl><dt>出口 IP</dt><dd id="warp-ipv4-address">—</dd><dt>WARP / Colo</dt><dd id="warp-ipv4-trace">—</dd><dt>延迟 / 时间</dt><dd id="warp-ipv4-meta">—</dd></dl>
+              <p id="warp-ipv4-error" class="warp-family-error" hidden></p>
+            </article>
+            <article class="warp-family-card" data-family="ipv6">
+              <div class="warp-family-head"><strong>IPv6</strong><span id="warp-ipv6-state" class="muted">未检测</span></div>
+              <dl><dt>出口 IP</dt><dd id="warp-ipv6-address">—</dd><dt>WARP / Colo</dt><dd id="warp-ipv6-trace">—</dd><dt>延迟 / 时间</dt><dd id="warp-ipv6-meta">—</dd></dl>
+              <p id="warp-ipv6-error" class="warp-family-error" hidden></p>
+            </article>
+          </div>
+          <div id="warp-job" class="warp-job" hidden>
+            <div class="warp-job-head"><strong id="warp-job-title">处理中</strong><span id="warp-job-progress">0%</span></div>
+            <progress id="warp-job-meter" max="100" value="0"></progress>
+            <p id="warp-job-error" class="warp-family-error" hidden></p>
+          </div>
+          <p id="warp-last-error" class="warp-family-error" hidden></p>
+          <div class="row warp-actions">
+            <button type="button" id="warp-enable-btn" class="btn-primary">启用 WARP</button>
+            <button type="button" id="warp-disable-btn" class="alt">停用</button>
+            <button type="button" id="warp-probe-btn" class="alt">检测出口</button>
+            <button type="button" id="warp-reconnect-btn" class="alt">重连当前身份</button>
+            <button type="button" id="warp-rotate-btn" class="alt">尝试换 IP</button>
+          </div>
         </section>
       </div>
 
@@ -356,10 +412,18 @@
                   </select>
                 </div>
                 <div>
-                  <label class="field-label" for="br-proxy-value">代理地址（可选）</label>
+                  <label class="field-label" for="br-proxy-mode">默认代理模式</label>
+                  <select id="br-proxy-mode" name="proxyMode">
+                    <option value="direct">不使用代理</option>
+                    <option value="launch">手动 SOCKS / HTTP 代理</option>
+                    <option value="warp">Cloudflare WARP</option>
+                  </select>
+                </div>
+                <div id="br-proxy-value-field">
+                  <label class="field-label" for="br-proxy-value">代理地址</label>
                   <input type="text" id="br-proxy-value" name="proxyValue" placeholder="socks5://127.0.0.1:7891" autocomplete="off" />
-                  <div class="schedule-note" style="margin-top:4px;">
-                    按所选浏览器应用；留空则不使用全局代理。
+                  <div class="schedule-note" id="br-proxy-hint" style="margin-top:4px;">
+                    仅“手动代理”模式使用此地址；WARP 地址由面板管理。
                   </div>
                 </div>
                 <div>
@@ -584,21 +648,30 @@
                       <option value="playwright">Chrome</option>
                       <option value="ruyipage">Firefox</option>
                     </select>
-                    <label class="field-label" for="task-proxy-input" style="margin-top:8px;">代理地址（可选）</label>
-                    <div class="row" style="gap:8px; align-items:center;">
-                      <input
-                        id="task-proxy-input"
-                        type="text"
-                        style="flex:1; width:100%;"
-                        placeholder="socks5://127.0.0.1:20004"
-                        autocomplete="off"
-                      />
-                      <button type="button" id="task-proxy-from-profile" class="alt" style="white-space:nowrap;">
-                        从配置填入
-                      </button>
+                    <label class="field-label" for="task-proxy-mode" style="margin-top:8px;">代理模式</label>
+                    <select id="task-proxy-mode">
+                      <option value="inherit">继承配置 / 全局</option>
+                      <option value="direct">不使用代理</option>
+                      <option value="launch">手动 SOCKS / HTTP 代理</option>
+                      <option value="warp">Cloudflare WARP</option>
+                    </select>
+                    <div id="task-proxy-value-field">
+                      <label class="field-label" for="task-proxy-input" style="margin-top:8px;">代理地址</label>
+                      <div class="row" style="gap:8px; align-items:center;">
+                        <input
+                          id="task-proxy-input"
+                          type="text"
+                          style="flex:1; width:100%;"
+                          placeholder="socks5://127.0.0.1:20004"
+                          autocomplete="off"
+                        />
+                        <button type="button" id="task-proxy-from-profile" class="alt" style="white-space:nowrap;">
+                          从配置填入
+                        </button>
+                      </div>
                     </div>
                     <p class="schedule-note" id="task-proxy-hint" style="margin-top:4px;">
-                      浏览器和代理均可单独覆盖；留空时继承配置 / 全局。
+                      WARP 是独立互斥模式，选择后由面板提供代理，不接受其他代理地址。
                     </p>
                   </div>
                 </div>

@@ -5,12 +5,22 @@ const config = require('../config');
 const db = require('./db');
 const events = require('./events');
 const { resolveProxyContract } = require('./runtime/runtime-contract');
+const { manager: warpManager } = require('./warp/manager');
 
 const manualBrowserState = {
   pid: null,
   openedAt: null,
   userDataDir: null,
+  warpLease: null,
 };
+
+const MANUAL_WARP_SESSION_ID = 'manual-browser';
+
+function releaseManualWarpLease() {
+  if (!manualBrowserState.warpLease) return;
+  warpManager.releaseProxy(MANUAL_WARP_SESSION_ID);
+  manualBrowserState.warpLease = null;
+}
 
 function shellEscape(value) {
   return `'${String(value).replace(/'/g, `"'"'`)}'`;
@@ -284,6 +294,7 @@ function syncManualState() {
     manualBrowserState.pid = null;
     manualBrowserState.openedAt = null;
     manualBrowserState.userDataDir = null;
+    releaseManualWarpLease();
     // 兜底通知：正常情况下 child.on('exit') 会先发，但面板重启后旧进程的 exit
     // 句柄已经没了，只能靠这里的 isPidAlive 兜。只在真的发生了状态翻转时发 ——
     // 状态清空后再调用不会重复发，所以不会和前端的拉取形成来回。
@@ -507,6 +518,17 @@ async function openManualBrowser(profile) {
       `${label} not found (path=${executablePath || '(empty)'}). Set its executable path in browser runtime settings.`
     );
   }
+  let effectiveProxyContract = proxyContract;
+  if (proxyContract.mode === 'warp') {
+    const lease = warpManager.acquireProxy(MANUAL_WARP_SESSION_ID);
+    manualBrowserState.warpLease = lease;
+    effectiveProxyContract = {
+      ...proxyContract,
+      value: '',
+      launchProxy: lease.proxyUrl,
+      scriptProxy: lease.proxyUrl,
+    };
+  }
   const usePlaywrightExtra = shouldUsePlaywrightExtra(runtimeSettings);
   // Avoid `su` (triggers user systemd / pam in many containers → Permission denied).
   // Drop privileges with setuid/setgid when possible; otherwise run as current user.
@@ -522,10 +544,10 @@ async function openManualBrowser(profile) {
     BROWSER_CHROME_PATH: chromePath,
     BROWSER_RUYI_PATH: ruyiPath,
     PLAYWRIGHT_CHROME_PATH: chromePath,
-    BROWSER_PROXY_MODE: proxyContract.mode,
-    BROWSER_PROXY_VALUE: proxyContract.value,
-    BROWSER_RUYI_FPFILE: proxyContract.fpfile,
-    BROWSER_PROXY: proxyContract.scriptProxy || '',
+    BROWSER_PROXY_MODE: effectiveProxyContract.mode,
+    BROWSER_PROXY_VALUE: effectiveProxyContract.value,
+    BROWSER_RUYI_FPFILE: effectiveProxyContract.fpfile,
+    BROWSER_PROXY: effectiveProxyContract.scriptProxy || '',
     BROWSER_LOCALE: effectiveLocale,
     BROWSER_TIMEZONE: effectiveTimezone,
     BROWSER_RUNTIME_STACK: runtimeStack,
@@ -548,10 +570,15 @@ async function openManualBrowser(profile) {
   }
 
   let child;
-  if (runtimeStack === 'seleniumbase' || runtimeStack === 'ruyipage') {
-    child = spawn('/usr/bin/python3', [runtimeScript], spawnOpts);
-  } else {
-    child = spawn(workerNodePath, [runtimeScript], spawnOpts);
+  try {
+    if (runtimeStack === 'seleniumbase' || runtimeStack === 'ruyipage') {
+      child = spawn('/usr/bin/python3', [runtimeScript], spawnOpts);
+    } else {
+      child = spawn(workerNodePath, [runtimeScript], spawnOpts);
+    }
+  } catch (error) {
+    releaseManualWarpLease();
+    throw error;
   }
 
   console.log(
@@ -574,6 +601,7 @@ async function openManualBrowser(profile) {
     manualBrowserState.pid = null;
     manualBrowserState.openedAt = null;
     manualBrowserState.userDataDir = null;
+    releaseManualWarpLease();
     throw err;
   }
 
@@ -588,6 +616,7 @@ async function openManualBrowser(profile) {
       manualBrowserState.pid = null;
       manualBrowserState.openedAt = null;
       manualBrowserState.userDataDir = null;
+      releaseManualWarpLease();
       // 用户手动关掉窗口 / 浏览器崩了，都会走到这里。这是 SSE 相对轮询最有价值的
       // 一处：以前只能等下一次轮询或手动刷页面才知道浏览器没了。
       events.emit('browser', { open: false });
@@ -612,6 +641,7 @@ async function closeManualBrowser() {
 
   if (!pid) {
     sweepManualProcesses(userDataDir);
+    releaseManualWarpLease();
     return { open: false };
   }
 
@@ -625,6 +655,7 @@ async function closeManualBrowser() {
   manualBrowserState.pid = null;
   manualBrowserState.openedAt = null;
   manualBrowserState.userDataDir = null;
+  releaseManualWarpLease();
   events.emit('browser', { open: false });
   return { open: false };
 }
@@ -634,6 +665,15 @@ function getManualBrowserStatus() {
   return {
     open: Boolean(manualBrowserState.pid),
     openedAt: manualBrowserState.openedAt,
+    warp: manualBrowserState.warpLease
+      ? {
+        generation: manualBrowserState.warpLease.snapshot.generation,
+        components: manualBrowserState.warpLease.snapshot.components,
+        checkedAt: manualBrowserState.warpLease.snapshot.checkedAt,
+        ipv4: manualBrowserState.warpLease.snapshot.ipv4,
+        ipv6: manualBrowserState.warpLease.snapshot.ipv6,
+      }
+      : null,
   };
 }
 

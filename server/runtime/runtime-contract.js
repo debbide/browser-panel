@@ -1,5 +1,5 @@
 const RUNTIME_STACKS = Object.freeze(['playwright', 'seleniumbase', 'ruyipage']);
-const PROXY_MODES = Object.freeze(['inherit', 'direct', 'launch', 'ruyi_fpfile', 'script']);
+const PROXY_MODES = Object.freeze(['inherit', 'direct', 'launch', 'ruyi_fpfile', 'script', 'warp']);
 
 function normalizeRuntimeStack(value, { allowInherit = false } = {}) {
   const stack = String(value || '').trim().toLowerCase();
@@ -33,7 +33,7 @@ function resolveProxyContract({ task = null, profile = null, global = null, lega
   const launchProxy = selected.mode === 'launch' ? selected.value : '';
   return {
     mode: selected.mode,
-    value: selected.value,
+    value: selected.mode === 'warp' ? '' : selected.value,
     launchProxy,
     scriptProxy: selected.mode === 'script' ? selected.value : launchProxy,
     fpfile: selected.mode === 'ruyi_fpfile' ? (selected.fpfile || selected.value) : '',
