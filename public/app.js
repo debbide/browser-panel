@@ -2398,6 +2398,9 @@ function resetTaskForm() {
   setTaskBrowserProxyInput('');
   setTaskProfileMode('temp');
   if (taskProfileSelect) renderProfileOptions(taskProfileSelect, '');
+  // form.reset() 会退回带 selected 的那个 option，也就是上次编辑的分组，
+  // 所以这里必须重画一遍，让新任务默认落在"未分组"。
+  renderTaskGroupOptions(document.getElementById('task-group-select'), '');
   form.elements.enabled.checked = false;
   scheduleModeSelect.value = 'fixed';
   fixedDaysEl.value = '0';
@@ -3028,7 +3031,7 @@ function latestRunSummary(taskId, task = null) {
   };
 }
 
-function taskCard(task) {
+function taskCard(task, groupName = '') {
   const isRunning = taskIsRunning(task);
   const latest = latestRunSummary(task.id, task);
   const isPersistent = Boolean(Number(task.use_persistent));
@@ -3086,6 +3089,7 @@ function taskCard(task) {
             <span class="pill ${isPersistent ? 'pill-persistent' : 'pill-temp'} task-profile-pill">
               ${escapeHtml(profileMode)} · ${escapeHtml(profileName)}
             </span>
+            ${groupName ? `<span class="pill pill-group task-group-pill" title="分组：${escapeHtml(groupName)}">${escapeHtml(groupName)}</span>` : ''}
           </div>
         </div>
         <div class="task-overflow" data-task-action-area>
@@ -3329,17 +3333,19 @@ async function loadScripts() {
 }
 
 let taskGroupsCache = [];
-const TASK_GROUP_COLLAPSE_KEY = 'browser-panel.task-group-collapse';
+const TASK_GROUP_FILTER_KEY = 'browser-panel.task-group-filter';
+// 只保存"当前看哪一组"，是纯浏览器偏好，坏了就退回"全部"，不影响任务本身。
+let taskGroupFilter = loadTaskGroupFilter();
 
-function loadTaskGroupCollapseState() {
+function loadTaskGroupFilter() {
   try {
-    const value = JSON.parse(localStorage.getItem(TASK_GROUP_COLLAPSE_KEY) || '{}');
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  } catch { return {}; }
+    const value = localStorage.getItem(TASK_GROUP_FILTER_KEY);
+    return typeof value === 'string' && value ? value : 'all';
+  } catch { return 'all'; }
 }
 
-function saveTaskGroupCollapseState(state) {
-  try { localStorage.setItem(TASK_GROUP_COLLAPSE_KEY, JSON.stringify(state)); } catch {}
+function saveTaskGroupFilter(key) {
+  try { localStorage.setItem(TASK_GROUP_FILTER_KEY, key); } catch {}
 }
 
 function renderTaskGroupOptions(select, selected = '') {
@@ -3359,10 +3365,9 @@ function taskIsRunning(task) {
   return !stoppingTaskIds.has(task.id) && (runningTaskIds.has(task.id) || Boolean(task.is_running));
 }
 
-window.toggleTaskGroup = function toggleTaskGroup(key) {
-  const state = loadTaskGroupCollapseState();
-  state[key] = !state[key];
-  saveTaskGroupCollapseState(state);
+window.selectTaskGroup = function selectTaskGroup(key) {
+  taskGroupFilter = key;
+  saveTaskGroupFilter(key);
   lastTasksHtml = null;
   renderTasks();
 };
@@ -3420,18 +3425,50 @@ document.getElementById('task-groups-list')?.addEventListener('click', async (ev
   } catch (error) { toast(error.message, 'error'); }
 });
 
+// 分组只当作筛选维度，不再每组一块独立网格：
+// 分组多的时候纵向堆叠会把整屏占满，而且每块网格按自己的宽度算列数，
+// 任务少的组会把卡片拉宽变形。这里统一成"一条筛选栏 + 一张网格"。
 function renderTaskGroups() {
-  const collapse = loadTaskGroupCollapseState();
-  const sections = taskGroupsCache.map((group) => {
+  const groupOf = new Map();
+  for (const group of taskGroupsCache) groupOf.set(Number(group.id), group);
+  // 分组被删掉（或分组还没加载完）时旧的筛选键会失效，本次渲染按"全部"处理。
+  // 只算局部值、不回写 taskGroupFilter：加载时序导致的空缓存不应该抹掉用户的选择。
+  let active = taskGroupFilter;
+  if (active !== 'all' && active !== 'ungrouped'
+    && !groupOf.has(Number(String(active).replace('group:', '')))) {
+    active = 'all';
+  }
+  const ungrouped = tasksCache.filter((task) => !task.group_id);
+  const chips = [`<button type="button" class="task-group-chip${active === 'all' ? ' is-active' : ''}" onclick="selectTaskGroup('all')" aria-pressed="${active === 'all'}">全部 <span>${tasksCache.length}</span></button>`];
+  for (const group of taskGroupsCache) {
+    const key = `group:${group.id}`;
     const tasks = tasksCache.filter((task) => Number(task.group_id) === Number(group.id));
     const running = tasks.filter(taskIsRunning).length;
-    const key = `group:${group.id}`; const collapsed = Boolean(collapse[key]);
-    return `<section class="task-group-section"><header class="task-group-heading"><h2>${escapeHtml(group.name)} <span>${tasks.length} · 运行 ${running}</span></h2><button type="button" class="icon-btn" onclick="toggleTaskGroup('${key}')" aria-expanded="${!collapsed}" aria-label="${collapsed ? '展开' : '折叠'} ${escapeHtml(group.name)}">${collapsed ? '▸' : '▾'}</button></header>${collapsed ? '' : `<div class="task-grid">${tasks.map(taskCard).join('') || '<p class="empty">当前分组没有任务。</p>'}</div>`}</section>`;
-  });
-  const ungrouped = tasksCache.filter((task) => !task.group_id);
-  const collapsed = Boolean(collapse.ungrouped);
-  sections.push(`<section class="task-group-section"><header class="task-group-heading"><h2>未分组 <span>${ungrouped.length} · 运行 ${ungrouped.filter(taskIsRunning).length}</span></h2><button type="button" class="icon-btn" onclick="toggleTaskGroup('ungrouped')" aria-expanded="${!collapsed}" aria-label="${collapsed ? '展开' : '折叠'} 未分组">${collapsed ? '▸' : '▾'}</button></header>${collapsed ? '' : `<div class="task-grid">${ungrouped.map(taskCard).join('') || '<p class="empty">当前还没有任务。</p>'}</div>`}</section>`);
-  return sections.join('');
+    chips.push(`<button type="button" class="task-group-chip${active === key ? ' is-active' : ''}" onclick="selectTaskGroup('${key}')" aria-pressed="${active === key}" title="${escapeHtml(group.name)}：${tasks.length} 个任务，运行 ${running}">${escapeHtml(group.name)} <span>${tasks.length}</span>${running ? '<span class="task-group-dot"></span>' : ''}</button>`);
+  }
+  if (ungrouped.length) {
+    chips.push(`<button type="button" class="task-group-chip${active === 'ungrouped' ? ' is-active' : ''}" onclick="selectTaskGroup('ungrouped')" aria-pressed="${active === 'ungrouped'}">未分组 <span>${ungrouped.length}</span></button>`);
+  }
+  let visible = tasksCache;
+  if (active === 'ungrouped') visible = ungrouped;
+  else if (active !== 'all') {
+    const id = Number(String(active).replace('group:', ''));
+    visible = tasksCache.filter((task) => Number(task.group_id) === id);
+  }
+  // 只有存在用户分组时才占用筛选栏那一行高度。
+  const bar = taskGroupsCache.length
+    ? `<div class="task-group-bar" role="group" aria-label="任务分组筛选">${chips.join('')}</div>`
+    : '';
+  // "全部"视图下给卡片补一个所属分组角标，否则混在一起看不出归属。
+  const showBadge = active === 'all' && taskGroupsCache.length > 0;
+  const cards = visible.map((task) => {
+    const group = showBadge ? groupOf.get(Number(task.group_id)) : null;
+    return taskCard(task, group ? group.name : '');
+  }).join('');
+  const empty = active === 'all'
+    ? '<p class="empty">当前还没有任务。</p>'
+    : '<p class="empty">当前分组没有任务。</p>';
+  return `${bar}<div class="task-grid">${cards || empty}</div>`;
 }
 
 let lastTasksHtml = null;

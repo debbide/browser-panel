@@ -437,14 +437,58 @@ a:hover { text-decoration: underline; }
 .task-groups {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
   min-width: 0;
 }
-.task-group-section + .task-group-section { border-top: 1px solid var(--glass-border); padding-top: 18px; }
-.task-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-.task-group-heading h2 { margin: 0; font-size: 16px; }
-.task-group-heading h2 span { margin-left: 8px; color: var(--text-muted); font-size: 12px; font-weight: 400; }
-.task-group-heading .icon-btn { width: 32px; height: 32px; padding: 0; }
+/*
+ * 分组是筛选栏，不是每组一块网格：分组多了纵向堆叠会占满整屏，
+ * 而且每块网格按自身宽度算列数，任务少的组会把卡片拉宽变形。
+ * 这里固定成一行可横向滚动的 chip，卡片始终共用下方同一张网格。
+ */
+.task-group-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+.task-group-bar::-webkit-scrollbar { height: 4px; }
+.task-group-bar::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 4px; }
+.task-group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 200px;
+  padding: 5px 11px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.task-group-chip:hover { color: var(--text-main); }
+.task-group-chip.is-active {
+  border-color: transparent;
+  background: var(--accent-color);
+  color: #fff;
+}
+.task-group-chip span:not(.task-group-dot) { font-size: 12px; opacity: 0.75; }
+.task-group-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex: 0 0 auto;
+}
+.task-group-pill { flex-shrink: 0; }
 .task-groups-modal { width: min(680px, calc(100vw - 32px)); }
 .task-group-create-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 16px; }
 .task-groups-manage-list { display: grid; gap: 8px; }
@@ -456,6 +500,7 @@ a:hover { text-decoration: underline; }
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px;
 }
+.task-grid .empty { grid-column: 1 / -1; margin: 0; }
 
 .run-grid {
   display: grid;
@@ -662,6 +707,7 @@ a:hover { text-decoration: underline; }
 
 @media (max-width: 640px) {
   .task-grid { grid-template-columns: minmax(0, 1fr); }
+  .task-group-bar { margin-right: -16px; margin-left: -16px; padding-right: 16px; padding-left: 16px; }
   .task-group-manage-row { grid-template-columns: minmax(0, 1fr) auto auto auto auto; }
   .config-page-header { gap: 10px; }
   .config-search { width: 100%; }
@@ -737,11 +783,14 @@ a:hover { text-decoration: underline; }
 .task-profile-slot {
   display: flex;
   align-items: center;
+  gap: 6px;
   min-height: 26px;
   min-width: 0;
 }
 
 .task-profile-pill {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -871,6 +920,15 @@ a:hover { text-decoration: underline; }
 }
 
 .pill-id { color: #93c5fd; }
+.pill-group {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.13);
+  border-color: rgba(251, 191, 36, 0.26);
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pill-type {
   color: #c4b5fd;
   background: rgba(139, 92, 246, 0.13);
