@@ -13,6 +13,7 @@ const ALLOWED_INTERFACE_KEYS = new Set(['privatekey', 'address', 'dns', 'mtu']);
 const REQUIRED_PEER_KEYS = new Set(['publickey', 'endpoint', 'allowedips']);
 const ALLOWED_PEER_KEYS = new Set(['publickey', 'endpoint', 'allowedips', 'persistentkeepalive']);
 const WARP_ENDPOINT_HOST = 'engage.cloudflareclient.com';
+const WARP_IPV6_ENDPOINTS = Object.freeze(['2606:4700:d0::a29f:c001']);
 const MAX_ENDPOINTS_PER_FAMILY = 8;
 
 function redactOutput(value) {
@@ -133,14 +134,18 @@ async function resolveEndpoint(port, options = {}) {
   ]);
   const candidates = [];
   const seen = new Set();
+  const addCandidate = (address, family) => {
+    if (net.isIP(address) !== family || seen.has(address)) return;
+    seen.add(address);
+    candidates.push({ address, family });
+  };
+  // Prefer the controlled IPv6 ingress so a dual-stack host does not get
+  // stuck on an IPv4 route that exists locally but cannot reach UDP 2408.
+  for (const address of WARP_IPV6_ENDPOINTS) addCandidate(address, 6);
   for (const [index, result] of lookups.entries()) {
     const family = index === 0 ? 4 : 6;
     if (result.status !== 'fulfilled' || !Array.isArray(result.value)) continue;
-    for (const address of result.value.slice(0, MAX_ENDPOINTS_PER_FAMILY)) {
-      if (net.isIP(address) !== family || seen.has(address)) continue;
-      seen.add(address);
-      candidates.push({ address, family });
-    }
+    for (const address of result.value.slice(0, MAX_ENDPOINTS_PER_FAMILY)) addCandidate(address, family);
   }
   for (const candidate of candidates) {
     let available = false;

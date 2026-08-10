@@ -26,33 +26,30 @@ function resolver(ipv4 = [], ipv6 = []) {
   };
 }
 
-test('selects IPv4 and IPv6 endpoints supported by the host route', async () => {
+test('selects an endpoint supported by the host route', async () => {
   const ipv4 = await resolveEndpoint(2408, {
     resolver: resolver(['162.159.192.1']),
-    canRoute: async () => true,
+    canRoute: async (address, family) => family === 4,
   });
   assert.equal(ipv4, '162.159.192.1:2408');
 
   const ipv6 = await resolveEndpoint(2408, {
-    resolver: resolver([], ['2606:4700:d0::a29f:c001']),
-    canRoute: async () => true,
+    resolver: resolver(),
+    canRoute: async (address, family) => family === 6,
   });
   assert.equal(ipv6, '[2606:4700:d0::a29f:c001]:2408');
 });
 
-test('falls back to IPv6 when the IPv4 candidate has no route', async () => {
+test('prefers the controlled IPv6 ingress on a dual-stack host', async () => {
   const attempts = [];
   const endpoint = await resolveEndpoint(2408, {
-    resolver: resolver(['162.159.192.1'], ['2606:4700:d0::a29f:c001']),
+    resolver: resolver(['162.159.192.1']),
     canRoute: async (address, family) => {
       attempts.push([address, family]);
-      return family === 6;
+      return true;
     },
   });
-  assert.deepEqual(attempts, [
-    ['162.159.192.1', 4],
-    ['2606:4700:d0::a29f:c001', 6],
-  ]);
+  assert.deepEqual(attempts, [['2606:4700:d0::a29f:c001', 6]]);
   assert.equal(endpoint, '[2606:4700:d0::a29f:c001]:2408');
 });
 
