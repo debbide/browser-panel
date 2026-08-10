@@ -5,7 +5,7 @@ const db = require('../db');
 const events = require('../events');
 const paths = require('./paths');
 const { installAll, componentsReady, readInstalledManifest, warpError } = require('./installer');
-const { registerIdentity, renderWireproxyConfig, setSecretPermissions } = require('./registerer');
+const { registerIdentity, rebuildWireproxyConfig } = require('./registerer');
 const { WireproxyRunner } = require('./runner');
 const { probeDualStack, compareProbes } = require('./probe');
 const { WarpPolicy } = require('./policy');
@@ -60,6 +60,7 @@ class WarpManager {
     this.ready = options.componentsReady || componentsReady;
     this.readManifest = options.readInstalledManifest || readInstalledManifest;
     this.register = options.registerIdentity || registerIdentity;
+    this.rebuildConfig = options.rebuildWireproxyConfig || rebuildWireproxyConfig;
     this.probe = options.probeDualStack || probeDualStack;
     this.Runner = options.Runner || WireproxyRunner;
     this.runner = options.runner || new this.Runner();
@@ -208,8 +209,8 @@ class WarpManager {
     const state = this.state();
     if (!state.desired_enabled) return null;
     const configPath = path.join(paths.active, 'wireproxy.conf');
-    await fs.access(configPath);
     if (!this.runner.status().running) {
+      await this.rebuildConfig({ directory: paths.active, bindAddress: `127.0.0.1:${this.port}` });
       await this.runner.start({ configPath, port: this.port, generation: state.generation });
     }
     const snapshot = await this.runProbe(source);
@@ -269,29 +270,19 @@ class WarpManager {
       this.db.updateWarpState({ component_manifest_json: manifest });
 
       let state = this.state();
-      let configPath = path.join(paths.active, 'wireproxy.conf');
-      try { await fs.access(configPath); } catch {
+      try { await fs.access(path.join(paths.active, 'wireproxy.conf')); } catch {
         progress('registering', 65);
         this.setPhase('registering');
         const generation = Math.max(1, Number(state.generation || 0) + 1);
         const identity = await this.register({ directory: paths.active, bindAddress: `127.0.0.1:${this.port}` });
         this.db.saveWarpCredentialsMeta({ generation, state_dir: paths.active, fingerprint: identity.fingerprint, activated_at: new Date().toISOString() });
         this.db.updateWarpState({ generation });
-        configPath = identity.configPath;
       }
 
       progress('starting', 80);
       this.setPhase('starting');
-      if (!this.runner.status().running) {
-        state = this.state();
-        await this.runner.start({ configPath, port: this.port, generation: state.generation });
-      }
       progress('probing', 90);
-      const snapshot = await this.runProbe('enable');
-      if (!snapshot.healthy) {
-        await this.runner.stop();
-        throw warpError('warp_not_ready', 'WARP started but neither address family passed the exit probe');
-      }
+      const snapshot = await this.startCurrentIdentity('enable');
       this.policy.start();
       return { generation: this.state().generation, probe: snapshot };
     });
@@ -317,9 +308,8 @@ class WarpManager {
       progress('reconnecting', 20);
       this.setPhase('reconnecting');
       await this.runner.stop();
-      await this.runner.start({ configPath: path.join(paths.active, 'wireproxy.conf'), port: this.port, generation: state.generation });
       progress('probing', 75);
-      const after = await this.runProbe('reconnect');
+      const after = await this.startCurrentIdentity('reconnect');
       if (!after.healthy) throw warpError('warp_not_ready', 'Reconnected WARP failed the exit probe');
       return { comparison: compareProbes(before, after), probe: after };
     });
@@ -373,6 +363,7 @@ class WarpManager {
         promoted = true;
 
         try {
+          await this.rebuildConfig({ directory: paths.active, bindAddress: `127.0.0.1:${this.port}` });
           await this.runner.start({
             configPath: path.join(paths.active, 'wireproxy.conf'),
             port: this.port,
@@ -414,6 +405,7 @@ class WarpManager {
           await fs.rename(paths.previous, paths.active);
           promoted = false;
           try {
+            await this.rebuildConfig({ directory: paths.active, bindAddress: `127.0.0.1:${this.port}` });
             await this.runner.start({
               configPath: path.join(paths.active, 'wireproxy.conf'),
               port: this.port,
