@@ -23,7 +23,7 @@ function runCurl(family, proxyUrl, options = {}) {
   return new Promise((resolve) => {
     const args = [
       '--silent', '--show-error', '--fail', '--max-time', String(Math.ceil((options.timeoutMs || 12000) / 1000)),
-      '--proxy', proxyUrl, family === 'ipv4' ? '--ipv4' : '--ipv6', target,
+      '--proxy', proxyUrl, target,
     ];
     const started = performance.now();
     const child = (options.spawn || spawn)('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
