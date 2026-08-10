@@ -10,6 +10,14 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS task_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -196,6 +204,8 @@ if (!taskTableColumns.includes('callback_trigger_at')) db.exec('ALTER TABLE task
 if (!taskTableColumns.includes('callback_threshold_sec')) db.exec('ALTER TABLE tasks ADD COLUMN callback_threshold_sec REAL');
 if (!taskTableColumns.includes('callback_valid_until')) db.exec('ALTER TABLE tasks ADD COLUMN callback_valid_until TEXT');
 if (!taskTableColumns.includes('callback_action')) db.exec('ALTER TABLE tasks ADD COLUMN callback_action TEXT');
+if (!taskTableColumns.includes('group_id')) db.exec('ALTER TABLE tasks ADD COLUMN group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id)');
 
 const browserProfileColumns = db.prepare('PRAGMA table_info(browser_profiles)').all().map(row => row.name);
 if (!browserProfileColumns.includes('runtime_stack')) db.exec("ALTER TABLE browser_profiles ADD COLUMN runtime_stack TEXT NOT NULL DEFAULT ''");
@@ -209,12 +219,83 @@ const taskColumns = [
   'name', 'type', 'script_path', 'cron_expr', 'schedule_mode',
   'interval_min', 'interval_max', 'interval_unit', 'daily_time_start', 'daily_time_end',
   'daily_day_min', 'daily_day_max', 'next_run_at',
-  'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id',
+  'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id', 'group_id',
   'condition_enabled', 'condition_json', 'condition_next_check_at',
   'condition_last_status', 'condition_last_detail', 'condition_last_checked_at', 'condition_cooldown_until',
   'callback_remaining_sec', 'callback_reported_at', 'callback_trigger_at',
   'callback_threshold_sec', 'callback_valid_until', 'callback_action',
 ];
+
+function listTaskGroups() {
+  return db.prepare('SELECT * FROM task_groups ORDER BY sort_order ASC, id ASC').all();
+}
+
+function normalizeTaskGroupName(name) {
+  const value = String(name == null ? '' : name).trim();
+  if (!value) throw new Error('分组名称不能为空');
+  if (value.length > 60) throw new Error('分组名称不能超过 60 个字符');
+  if (value === '未分组') throw new Error('分组名称不能使用保留名');
+  return value;
+}
+
+function createTaskGroup(name) {
+  const value = normalizeTaskGroupName(name);
+  const sortOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM task_groups').get().next;
+  try {
+    const result = db.prepare('INSERT INTO task_groups (name, sort_order, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)').run(value, sortOrder);
+    return db.prepare('SELECT * FROM task_groups WHERE id = ?').get(result.lastInsertRowid);
+  } catch (error) {
+    if (String(error.message).includes('UNIQUE')) throw new Error('分组名称已存在');
+    throw error;
+  }
+}
+
+function updateTaskGroup(id, name) {
+  const groupId = Number(id);
+  if (!Number.isInteger(groupId) || groupId <= 0) throw new Error('分组 ID 不合法');
+  if (!db.prepare('SELECT 1 FROM task_groups WHERE id = ?').get(groupId)) return null;
+  const value = normalizeTaskGroupName(name);
+  try {
+    db.prepare('UPDATE task_groups SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(value, groupId);
+  } catch (error) {
+    if (String(error.message).includes('UNIQUE')) throw new Error('分组名称已存在');
+    throw error;
+  }
+  return db.prepare('SELECT * FROM task_groups WHERE id = ?').get(groupId);
+}
+
+function updateTaskGroupOrder(ids) {
+  if (!Array.isArray(ids)) throw new Error('分组顺序格式不正确');
+  const groups = listTaskGroups();
+  const expected = groups.map((group) => Number(group.id));
+  const actual = ids.map(Number);
+  if (actual.length !== expected.length || new Set(actual).size !== actual.length || actual.some((id) => !expected.includes(id))) {
+    throw new Error('分组顺序必须包含全部分组且不能重复');
+  }
+  const txn = db.transaction(() => {
+    const stmt = db.prepare('UPDATE task_groups SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    actual.forEach((id, index) => stmt.run(index, id));
+  });
+  txn();
+  return listTaskGroups();
+}
+
+const deleteTaskGroupTxn = db.transaction((id) => {
+  const groupId = Number(id);
+  const group = db.prepare('SELECT * FROM task_groups WHERE id = ?').get(groupId);
+  if (!group) return null;
+  db.prepare('UPDATE tasks SET group_id = NULL WHERE group_id = ?').run(groupId);
+  db.prepare('DELETE FROM task_groups WHERE id = ?').run(groupId);
+  return group;
+});
+
+function deleteTaskGroup(id) {
+  return deleteTaskGroupTxn(id);
+}
+
+function getTaskGroup(id) {
+  return db.prepare('SELECT * FROM task_groups WHERE id = ?').get(Number(id)) || null;
+}
 
 function listTasks() {
   return db.prepare('SELECT * FROM tasks ORDER BY id DESC').all();
@@ -230,7 +311,7 @@ function createTask(payload) {
       name, type, script_path, cron_expr, schedule_mode,
       interval_min, interval_max, interval_unit, daily_time_start, daily_time_end,
       daily_day_min, daily_day_max, next_run_at,
-      enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id,
+      enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id, group_id,
       condition_enabled, condition_json, condition_next_check_at,
       condition_last_status, condition_last_detail, condition_last_checked_at, condition_cooldown_until,
       callback_remaining_sec, callback_reported_at, callback_trigger_at,
@@ -241,7 +322,7 @@ function createTask(payload) {
       @name, @type, @script_path, @cron_expr, @schedule_mode,
       @interval_min, @interval_max, @interval_unit, @daily_time_start, @daily_time_end,
       @daily_day_min, @daily_day_max, @next_run_at,
-      @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id,
+      @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id, @group_id,
       @condition_enabled, @condition_json, @condition_next_check_at,
       @condition_last_status, @condition_last_detail, @condition_last_checked_at, @condition_cooldown_until,
       @callback_remaining_sec, @callback_reported_at, @callback_trigger_at,
@@ -250,6 +331,7 @@ function createTask(payload) {
     )
   `);
   const result = stmt.run({
+    group_id: null,
     daily_day_min: null,
     daily_day_max: null,
     condition_enabled: 0,
@@ -1224,6 +1306,12 @@ function purgeExpiredSessions() {
 
 module.exports = {
   db,
+  listTaskGroups,
+  getTaskGroup,
+  createTaskGroup,
+  updateTaskGroup,
+  updateTaskGroupOrder,
+  deleteTaskGroup,
   listTasks,
   getTask,
   createTask,

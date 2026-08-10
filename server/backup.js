@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const config = require('../config');
 const db = require('./db');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // --- 加密层（不引入新依赖，与 auth.js 的 scrypt 约定共用参数） ---
 const SCRYPT_N = 16384;
@@ -285,6 +285,15 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     profiles.push({ ...profileConfig, env: profileEnv });
   }
 
+  const taskGroups = db.listTaskGroups();
+  const groupById = new Map(taskGroups.map((group) => [Number(group.id), group]));
+  const selectedGroupIds = new Set(selected
+    .map((task) => Number(task.group_id))
+    .filter((id) => Number.isInteger(id) && groupById.has(id)));
+  const exportedGroups = taskGroups
+    .filter((group) => wanted === null || selectedGroupIds.has(Number(group.id)))
+    .map((group) => ({ name: group.name }));
+
   const tasks = selected.map((task) => {
     const config_ = pick(task, TASK_CONFIG_COLUMNS);
     const profile = profileById.get(Number(task.browser_profile_id));
@@ -299,6 +308,7 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
       ...config_,
       script_path: String(task.script_path || '').replace(/\\/g, '/'),
       browser_profile_name: profile ? profile.name : null,
+      task_group_name: groupById.get(Number(task.group_id))?.name || null,
       env,
     };
   });
@@ -310,6 +320,7 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     names_only: !encrypt,
     scripts,
     browser_profiles: profiles,
+    task_groups: exportedGroups,
     tasks,
     warnings,
   };
@@ -399,6 +410,7 @@ function parseBackup(input, { passphrase = null } = {}) {
     names_only: namesOnly,
     scripts: Array.isArray(data.scripts) ? data.scripts : [],
     browser_profiles: Array.isArray(data.browser_profiles) ? data.browser_profiles : [],
+    task_groups: version >= 3 && Array.isArray(data.task_groups) ? data.task_groups : [],
     tasks: data.tasks,
   };
 }
@@ -506,6 +518,17 @@ function analyze(backup, options = {}) {
     });
   }
 
+  const existingGroups = db.listTaskGroups();
+  const groupByName = new Map(existingGroups.map((row) => [String(row.name), row]));
+  const groupPlans = [];
+  const seenGroupNames = new Set();
+  for (const entry of backup.task_groups) {
+    const name = String((entry && entry.name) || '').trim();
+    if (!name || name === '未分组' || name.length > 60 || seenGroupNames.has(name)) continue;
+    seenGroupNames.add(name);
+    groupPlans.push({ name, action: groupByName.has(name) ? 'reuse' : 'create' });
+  }
+
   const taskPlans = [];
   for (const entry of backup.tasks) {
     const name = String((entry && entry.name) || '').trim() || 'Untitled Task';
@@ -540,6 +563,16 @@ function analyze(backup, options = {}) {
       warnings.push(`任务「${name}」引用的浏览器配置「${profileName}」不存在,将留空`);
     }
 
+    const groupName = backup.schema_version >= 3 && entry.task_group_name
+      ? String(entry.task_group_name).trim()
+      : null;
+    const groupMissing = Boolean(groupName)
+      && !groupByName.has(groupName)
+      && !seenGroupNames.has(groupName);
+    if (groupMissing && action !== 'skip') {
+      warnings.push(`任务「${name}」引用的分组「${groupName}」不在备份文件里,将移至未分组`);
+    }
+
     const env = Array.isArray(entry.env) ? entry.env : [];
     // v2 仅名称模式: 所有变量值都是空的，导入后都需要补填。
     // v1 select-secrets 模式: 只有标记了 omitted 的才缺值。
@@ -562,6 +595,9 @@ function analyze(backup, options = {}) {
       finalScriptPath,
       profileName,
       profileMissing,
+      groupName,
+      groupMissing,
+      preserveExistingGroup: backup.schema_version < 3 && action === 'overwrite',
       secretsPending,
       config: pick(entry, TASK_CONFIG_COLUMNS),
       env,
@@ -584,6 +620,7 @@ function analyze(backup, options = {}) {
     task_strategy: taskStrategy,
     scripts: scriptPlans,
     profiles: profilePlans,
+    groups: groupPlans,
     tasks: taskPlans,
     warnings,
   };
@@ -640,7 +677,7 @@ function restoreScriptFiles(undo) {
   }
 }
 
-function buildTaskRow(plan, profileIdByName, existing = null) {
+function buildTaskRow(plan, profileIdByName, groupIdByName, existing = null) {
   const config_ = plan.config;
   const profileId = plan.profileName && profileIdByName.has(plan.profileName)
     ? profileIdByName.get(plan.profileName)
@@ -671,6 +708,9 @@ function buildTaskRow(plan, profileIdByName, existing = null) {
     timeout_sec: Number(config_.timeout_sec) > 0 ? Number(config_.timeout_sec) : 300,
     params_json: existing ? (existing.params_json || '{}') : '{}',
     browser_profile_id: profileId,
+    group_id: plan.preserveExistingGroup && existing
+      ? (existing.group_id || null)
+      : (plan.groupName && !plan.groupMissing ? (groupIdByName.get(plan.groupName) || null) : null),
     condition_enabled: Number(config_.condition_enabled) === 1 ? 1 : 0,
     condition_json: typeof config_.condition_json === 'string'
       ? (config_.condition_json || '{}')
@@ -730,6 +770,13 @@ function importBackup(input, options = {}) {
       result.profiles_created.push(created.name);
     }
 
+    const groupIdByName = new Map(db.listTaskGroups().map((row) => [String(row.name), Number(row.id)]));
+    for (const group of plan.groups) {
+      if (group.action !== 'create') continue;
+      const created = db.createTaskGroup(group.name);
+      groupIdByName.set(String(created.name), Number(created.id));
+    }
+
     for (const taskPlan of plan.tasks) {
       if (taskPlan.action === 'skip') {
         result.skipped.push(taskPlan.name);
@@ -737,7 +784,7 @@ function importBackup(input, options = {}) {
       }
 
       const existing = taskPlan.existingId ? db.getTask(taskPlan.existingId) : null;
-      const row = buildTaskRow(taskPlan, profileIdByName, existing);
+      const row = buildTaskRow(taskPlan, profileIdByName, groupIdByName, existing);
 
       let task;
       if (taskPlan.action === 'overwrite' && existing) {

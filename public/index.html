@@ -65,6 +65,9 @@
           <p id="workspace-subtitle">管理任务、运行状态与手动浏览器。</p>
         </div>
         <div class="workspace-header-actions" data-header-actions-for="tasks-tab">
+          <button id="manage-groups-btn" type="button" class="alt btn-with-icon">
+            <i data-lucide="folders" class="icon-sm"></i> 分组
+          </button>
           <button id="backup-select-btn" type="button" class="alt btn-with-icon">
             <i data-lucide="archive" class="icon-sm"></i> 备份
           </button>
@@ -115,7 +118,7 @@
             </button>
             <button id="backup-select-cancel-btn" type="button" class="alt">取消</button>
           </div>
-          <div id="tasks" class="task-grid"></div>
+          <div id="tasks" class="task-groups"></div>
         </section>
       </div>
 
@@ -552,6 +555,22 @@
   </div>
 
   <div id="modal-mask" class="modal-mask" hidden></div>
+  <div id="task-groups-mask" class="modal-mask" hidden></div>
+  <section id="task-groups-modal" class="modal task-groups-modal" aria-hidden="true" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div><h2>任务分组</h2><p class="muted">创建、重命名和调整分组顺序。</p></div>
+        <button id="task-groups-close" class="icon-btn" type="button" aria-label="关闭"><i data-lucide="x" class="icon-md"></i></button>
+      </div>
+      <div class="modal-body">
+        <form id="task-group-create-form" class="task-group-create-row">
+          <input name="name" maxlength="60" placeholder="新分组名称" required />
+          <button type="submit" class="btn-with-icon"><i data-lucide="plus" class="icon-sm"></i> 新建</button>
+        </form>
+        <div id="task-groups-list" class="task-groups-manage-list"></div>
+      </div>
+    </div>
+  </section>
   <div id="backup-import-mask" class="modal-mask" hidden></div>
   <section id="backup-import-modal" class="modal" aria-hidden="true" hidden></section>
   <section id="task-modal" class="modal modal-wide task-modal" aria-hidden="true">
@@ -600,6 +619,12 @@
                   <div>
                     <label class="field-label" for="task-name-input">任务名称</label>
                     <input id="task-name-input" name="name" placeholder="例如 hax 续期" required data-testid="task-name-input" />
+                  </div>
+                  <div>
+                    <label class="field-label" for="task-group-select">任务分组</label>
+                    <select id="task-group-select" name="group_id" style="width:100%;">
+                      <option value="">未分组</option>
+                    </select>
                   </div>
                   <div>
                     <label class="field-label" for="task-timeout-sec">任务超时（秒）</label>

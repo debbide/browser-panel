@@ -3029,9 +3029,7 @@ function latestRunSummary(taskId, task = null) {
 }
 
 function taskCard(task) {
-  // stoppingTaskIds 优先：点过停止就立刻按"未运行"渲染，不等服务端确认
-  const isRunning = !stoppingTaskIds.has(task.id)
-    && (runningTaskIds.has(task.id) || Boolean(task.is_running));
+  const isRunning = taskIsRunning(task);
   const latest = latestRunSummary(task.id, task);
   const isPersistent = Boolean(Number(task.use_persistent));
   const profileName = (() => {
@@ -3330,6 +3328,112 @@ async function loadScripts() {
   renderScripts();
 }
 
+let taskGroupsCache = [];
+const TASK_GROUP_COLLAPSE_KEY = 'browser-panel.task-group-collapse';
+
+function loadTaskGroupCollapseState() {
+  try {
+    const value = JSON.parse(localStorage.getItem(TASK_GROUP_COLLAPSE_KEY) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch { return {}; }
+}
+
+function saveTaskGroupCollapseState(state) {
+  try { localStorage.setItem(TASK_GROUP_COLLAPSE_KEY, JSON.stringify(state)); } catch {}
+}
+
+function renderTaskGroupOptions(select, selected = '') {
+  if (!select) return;
+  select.innerHTML = '<option value="">未分组</option>' + taskGroupsCache
+    .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`).join('');
+  select.value = selected == null ? '' : String(selected);
+}
+
+async function loadTaskGroups() {
+  const data = await fetchJson('/api/task-groups');
+  taskGroupsCache = Array.isArray(data.data) ? data.data : [];
+  renderTaskGroupOptions(document.getElementById('task-group-select'), document.getElementById('task-group-select')?.value || '');
+}
+
+function taskIsRunning(task) {
+  return !stoppingTaskIds.has(task.id) && (runningTaskIds.has(task.id) || Boolean(task.is_running));
+}
+
+window.toggleTaskGroup = function toggleTaskGroup(key) {
+  const state = loadTaskGroupCollapseState();
+  state[key] = !state[key];
+  saveTaskGroupCollapseState(state);
+  lastTasksHtml = null;
+  renderTasks();
+};
+
+function openTaskGroupsModal() {
+  const modalEl = document.getElementById('task-groups-modal');
+  const mask = document.getElementById('task-groups-mask');
+  if (!modalEl) return;
+  modalEl.hidden = false; modalEl.classList.add('open'); modalEl.setAttribute('aria-hidden', 'false');
+  if (mask) mask.hidden = false;
+  renderTaskGroupsManager();
+}
+
+function closeTaskGroupsModal() {
+  const modalEl = document.getElementById('task-groups-modal');
+  const mask = document.getElementById('task-groups-mask');
+  if (!modalEl) return;
+  modalEl.classList.remove('open'); modalEl.hidden = true; modalEl.setAttribute('aria-hidden', 'true');
+  if (mask) mask.hidden = true;
+}
+
+function renderTaskGroupsManager() {
+  const list = document.getElementById('task-groups-list');
+  if (!list) return;
+  list.innerHTML = taskGroupsCache.map((group, index) => `<div class="task-group-manage-row">
+    <input value="${escapeHtml(group.name)}" data-group-name="${group.id}" maxlength="60" />
+    <button type="button" class="alt" data-group-save="${group.id}">保存</button>
+    <button type="button" class="icon-btn" data-group-up="${group.id}" aria-label="上移" ${index === 0 ? 'disabled' : ''}>↑</button>
+    <button type="button" class="icon-btn" data-group-down="${group.id}" aria-label="下移" ${index === taskGroupsCache.length - 1 ? 'disabled' : ''}>↓</button>
+    <button type="button" class="icon-btn danger" data-group-delete="${group.id}" aria-label="删除">×</button>
+  </div>`).join('') || '<p class="empty">还没有自定义分组。</p>';
+}
+
+async function saveTaskGroupOrder(ids) {
+  await fetchJson('/api/task-groups/order', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ ids }) });
+  await loadTaskGroups(); renderTaskGroupsManager(); renderTasks();
+}
+
+document.getElementById('manage-groups-btn')?.addEventListener('click', openTaskGroupsModal);
+document.getElementById('task-groups-close')?.addEventListener('click', closeTaskGroupsModal);
+document.getElementById('task-groups-mask')?.addEventListener('click', closeTaskGroupsModal);
+document.getElementById('task-group-create-form')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try { await fetchJson('/api/task-groups', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: event.target.name.value }) }); event.target.reset(); await loadTaskGroups(); renderTaskGroupsManager(); renderTasks(); } catch (error) { toast(error.message, 'error'); }
+});
+document.getElementById('task-groups-list')?.addEventListener('click', async (event) => {
+  const button = event.target.closest('button'); if (!button) return;
+  const id = Number(button.dataset.groupSave || button.dataset.groupUp || button.dataset.groupDown || button.dataset.groupDelete);
+  if (!id) return;
+  try {
+    if (button.dataset.groupSave) await fetchJson(`/api/task-groups/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: document.querySelector(`[data-group-name="${id}"]`).value }) });
+    else if (button.dataset.groupDelete) { if (!window.confirm('删除分组后，其中的任务会移动到“未分组”，不会删除任务。')) return; await fetchJson(`/api/task-groups/${id}`, { method:'DELETE' }); }
+    else { const ids = taskGroupsCache.map((g) => Number(g.id)); const index = ids.indexOf(id); const target = button.dataset.groupUp ? index - 1 : index + 1; [ids[index], ids[target]] = [ids[target], ids[index]]; await saveTaskGroupOrder(ids); return; }
+    await loadTaskGroups(); renderTaskGroupsManager(); renderTasks();
+  } catch (error) { toast(error.message, 'error'); }
+});
+
+function renderTaskGroups() {
+  const collapse = loadTaskGroupCollapseState();
+  const sections = taskGroupsCache.map((group) => {
+    const tasks = tasksCache.filter((task) => Number(task.group_id) === Number(group.id));
+    const running = tasks.filter(taskIsRunning).length;
+    const key = `group:${group.id}`; const collapsed = Boolean(collapse[key]);
+    return `<section class="task-group-section"><header class="task-group-heading"><h2>${escapeHtml(group.name)} <span>${tasks.length} · 运行 ${running}</span></h2><button type="button" class="icon-btn" onclick="toggleTaskGroup('${key}')" aria-expanded="${!collapsed}" aria-label="${collapsed ? '展开' : '折叠'} ${escapeHtml(group.name)}">${collapsed ? '▸' : '▾'}</button></header>${collapsed ? '' : `<div class="task-grid">${tasks.map(taskCard).join('') || '<p class="empty">当前分组没有任务。</p>'}</div>`}</section>`;
+  });
+  const ungrouped = tasksCache.filter((task) => !task.group_id);
+  const collapsed = Boolean(collapse.ungrouped);
+  sections.push(`<section class="task-group-section"><header class="task-group-heading"><h2>未分组 <span>${ungrouped.length} · 运行 ${ungrouped.filter(taskIsRunning).length}</span></h2><button type="button" class="icon-btn" onclick="toggleTaskGroup('ungrouped')" aria-expanded="${!collapsed}" aria-label="${collapsed ? '展开' : '折叠'} 未分组">${collapsed ? '▸' : '▾'}</button></header>${collapsed ? '' : `<div class="task-grid">${ungrouped.map(taskCard).join('') || '<p class="empty">当前还没有任务。</p>'}</div>`}</section>`);
+  return sections.join('');
+}
+
 let lastTasksHtml = null;
 let openTaskOverflowTrigger = null;
 
@@ -3387,7 +3491,7 @@ document.addEventListener('keydown', (event) => {
 // 和 DOM 始终同步，绕过它直接改 DOM 会让缓存对不上，下一轮刷新生成同样的 HTML
 // 就被跳过，本地改动永久卡住。
 function renderTasks() {
-  const html = tasksCache.map(taskCard).join('') || '<p class="empty">当前还没有任务。</p>';
+  const html = renderTaskGroups();
   // 内容没变就不动 DOM。整块 innerHTML 覆盖会把列表上的焦点、悬停和滚动位置一起
   // 冲掉，而状态刷新很频繁，绝大多数轮次内容是完全一样的。
   //
@@ -4100,6 +4204,7 @@ async function refreshAll() {
     loadRuns(),
     loadBrowserStatus(),
     loadProfiles(),
+    loadTaskGroups(),
   ]);
   await loadTasks();
 }
@@ -4326,6 +4431,7 @@ function fillTaskForm(task) {
     renderProfileOptions(taskProfileSelect, task.browser_profile_id || '');
   }
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
+  renderTaskGroupOptions(document.getElementById('task-group-select'), task.group_id || '');
   let proxyValue = '';
   let proxyMode = 'inherit';
   let runtimeStack = '';
@@ -4460,6 +4566,7 @@ form.addEventListener('submit', async (event) => {
     payload.timeout_sec = 900;
   }
   payload.browser_profile_id = taskProfileSelect && taskProfileSelect.value ? Number(taskProfileSelect.value) : null;
+  payload.group_id = payload.group_id ? Number(payload.group_id) : null;
   // 临时/持久只走 use_persistent 字段，不再写入可见 env 列表
   const envByName = new Map(env.map((e) => [e.name, e]));
   deleteManagedMapKeys(envByName, [

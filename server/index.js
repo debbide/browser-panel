@@ -1280,6 +1280,54 @@ app.put('/api/browser-profiles/:id/env', (req, res) => {
   }
 });
 
+function resolveTaskGroupId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('分组 ID 不合法');
+  if (!db.getTaskGroup(id)) throw new Error('分组不存在');
+  return id;
+}
+
+app.get('/api/task-groups', (req, res) => {
+  res.json({ data: db.listTaskGroups() });
+});
+
+app.post('/api/task-groups', (req, res) => {
+  try {
+    res.json({ data: db.createTaskGroup((req.body || {}).name) });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to create task group' });
+  }
+});
+
+app.put('/api/task-groups/order', (req, res) => {
+  try {
+    res.json({ data: db.updateTaskGroupOrder((req.body || {}).ids) });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to reorder task groups' });
+  }
+});
+
+app.put('/api/task-groups/:id', (req, res) => {
+  try {
+    const group = db.updateTaskGroup(Number(req.params.id), (req.body || {}).name);
+    if (!group) return res.status(404).json({ message: 'Task group not found' });
+    res.json({ data: group });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to update task group' });
+  }
+});
+
+app.delete('/api/task-groups/:id', (req, res) => {
+  try {
+    const group = db.deleteTaskGroup(Number(req.params.id));
+    if (!group) return res.status(404).json({ message: 'Task group not found' });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to delete task group' });
+  }
+});
+
 app.get('/api/tasks', (req, res) => {
   // Latest run is looked up per task, not sliced out of the global recent-runs
   // window — otherwise an infrequent task drops off the list and its card
@@ -1321,6 +1369,7 @@ app.post('/api/tasks', (req, res) => {
       timeout_sec: Number(payload.timeout_sec || 300),
       params_json: '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
+      group_id: resolveTaskGroupId(payload.group_id),
       ...conditionFields,
     });
     task = applyTaskEnvPayload(task.id, payload) || task;
@@ -1365,6 +1414,9 @@ app.put('/api/tasks/:id', (req, res) => {
       timeout_sec: Number(payload.timeout_sec || 300),
       params_json: existing.params_json || '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
+      group_id: Object.prototype.hasOwnProperty.call(payload, 'group_id')
+        ? resolveTaskGroupId(payload.group_id)
+        : existing.group_id,
       // preserve script callback state across form saves
       callback_remaining_sec: existing.callback_remaining_sec ?? null,
       callback_reported_at: existing.callback_reported_at || null,
