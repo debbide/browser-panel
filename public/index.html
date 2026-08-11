@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260811c" />
+  <link rel="stylesheet" href="/styles.css?v=20260811d" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -42,7 +42,10 @@
 
       <div class="topbar-user" id="topbar-user" hidden>
         <div class="sidebar-account">
-          <span class="sidebar-account-label">当前账号</span>
+          <span class="sidebar-account-label">
+            当前账号
+            <span class="app-version" id="app-version" hidden></span>
+          </span>
           <span class="topbar-username" id="topbar-username" title="当前登录账号"></span>
         </div>
         <button id="change-password-btn" type="button" class="alt btn-with-icon" title="修改密码">
@@ -51,7 +54,6 @@
         <button id="logout-btn" type="button" class="alt btn-with-icon" title="退出登录">
           <i data-lucide="log-out" class="icon-sm"></i> 退出
         </button>
-        <span class="app-version" id="app-version" hidden></span>
       </div>
     </aside>
     <button id="app-nav-mask" class="app-nav-mask" type="button" aria-label="关闭主导航" hidden></button>
@@ -1008,7 +1010,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260811c"></script>
+  <script src="/app.js?v=20260811d"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();
