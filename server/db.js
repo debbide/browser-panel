@@ -595,10 +595,8 @@ const replaceEnvEntriesTxn = db.transaction((scope, ownerId, entriesInput) => {
       });
       continue;
     }
-    // Skip empty non-secrets (no value to inject)
-    if (!isSecret && value === '' && !(prev && prev.is_secret && value === '')) {
-      continue;
-    }
+    // 空值也是有效配置：未加密备份只携带变量名，导入后需要保留这一行，
+    // 前端才能显示“（空）”并让用户补填；数据库字段本身也允许空字符串。
     upsert.run({
       scope: normalizedScope,
       owner_id: normalizedOwnerId,
