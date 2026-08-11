@@ -4,6 +4,7 @@ const express = require('express');
 const { spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
+const { getVersion, refreshTags } = require('./version');
 const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
 const {
   stopAllJobs,
@@ -677,6 +678,10 @@ app.use(express.json({ limit: '20mb' }));
 // 中间件等于没挂。同理 /tasks /logs /screenshots 三个静态目录必须在线下方——
 // 它们分别暴露任务脚本源码、日志里的 token、以及可能含已登录账号页面的截图。
 app.use('/api/auth', authRouter);
+// 版本号不含任何敏感信息,放鉴权之前 —— 登录页也能显示,排查"哪台机器跑着哪个版本"不用登录
+app.get('/api/version', (req, res) => {
+  res.json({ data: getVersion() });
+});
 app.use(requireAuth);
 app.use('/api/warp', createWarpRouter(warpManager));
 // --- 以下全部需要登录 -------------------------------------------------------
@@ -2402,6 +2407,8 @@ const httpServer = app.listen(config.server.port, config.server.host, () => {
   } catch (err) {
     console.error('[boot] purge sessions failed:', err.message || err);
   }
+  // 异步补一次 tag,不等它 —— 拉到之前面板显示的是旧标签,拉完自动刷新
+  refreshTags();
   console.log(`Panel running on http://${config.server.host}:${config.server.port}`);
   if (!db.hasAnyUser()) {
     console.log('[auth] 尚未设置管理员账号 — 首次打开面板会进入引导页');

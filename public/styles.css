@@ -229,6 +229,18 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 
+/* 版本号：brand 右侧的小标签，信息密度低，不该跟标题抢视觉 */
+.app-version {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font: 500 11px/1.6 var(--font-mono);
+  white-space: nowrap;
+}
+
 .app-nav {
   display: flex;
   flex: 1 1 auto;

@@ -6233,6 +6233,21 @@ function wireAuthUi(username) {
   if (nameEl) nameEl.textContent = username || '';
   if (box) box.hidden = false;
 
+  // 版本号显示在侧边栏 brand 旁边。走独立小接口，失败就藏起来 ——
+  // 一个装饰性的标签不值得报错打断启动。
+  fetch('/api/version')
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      const el = document.getElementById('app-version');
+      const label = data && data.data && data.data.label;
+      if (el && label) {
+        el.textContent = label;
+        el.title = `版本 ${label}${data.data.describe ? `（${data.data.describe}）` : ''}`;
+        el.hidden = false;
+      }
+    })
+    .catch(() => {});
+
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {

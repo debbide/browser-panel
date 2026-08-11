@@ -109,6 +109,16 @@ download_and_merge() {
   mkdir -p "$ROOT/tasks" "$ROOT/data" "$ROOT/logs" "$ROOT/screenshots" "$ROOT/runtime-data"
   # Fresh install already has tasks/lib if present in package; ensure dir exists either way.
   mkdir -p "$ROOT/tasks/lib"
+
+  # Stamp the installed version. Tarball installs have no .git, so the panel cannot
+  # derive a version from tags — but we already resolved the authoritative release
+  # tag above. Write it down so the panel reads it locally, with no network call.
+  # Empty tag = master snapshot; record that instead of pretending it is a release.
+  if [[ -n "$tag" ]]; then
+    printf '{"tag":"%s","ref":"%s","source":"release"}\n' "$tag" "$tag" > "$ROOT/data/version.json"
+  else
+    printf '{"tag":null,"ref":"master","source":"master"}\n' > "$ROOT/data/version.json"
+  fi
 }
 
 install_deps() {

@@ -4,6 +4,8 @@ logs/
 screenshots/
 runtime-data/
 data/*.db*
+# 装机脚本写的版本戳,跟着机器不跟着仓库
+data/version.json
 *.log
 .sisyphus/
 .claude/
