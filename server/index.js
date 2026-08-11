@@ -1349,6 +1349,28 @@ app.post('/api/backup/scan-assets', (req, res) => {
   }
 });
 
+/**
+ * 只写 extra_paths 一列。不能复用 PUT /api/tasks/:id —— 那条是整行替换语义,
+ * 只发一个字段会把任务名写成 Untitled Task、清掉定时和浏览器配置。
+ */
+app.post('/api/backup/save-assets', (req, res) => {
+  try {
+    const list = Array.isArray((req.body || {}).tasks) ? req.body.tasks : [];
+    const saved = [];
+    for (const item of list) {
+      const id = Number((item || {}).id);
+      if (!Number.isInteger(id) || id <= 0) continue;
+      if (!db.getTask(id)) continue;
+      const json = normalizeExtraPathsPayload((item || {}).paths) || '[]';
+      db.updateTaskExtraPaths(id, json);
+      saved.push(id);
+    }
+    res.json({ data: { saved } });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to save assets' });
+  }
+});
+
 app.get('/api/task-groups', (req, res) => {
   res.json({ data: db.listTaskGroups() });
 });

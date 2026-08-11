@@ -3249,20 +3249,21 @@ function showBackupAssetsModal(rows, onConfirm) {
 }
 
 // 把确认后的勾选写回任务，下次导出就是默认值，不用重复勾。
+// 走独立接口而不是 PUT /api/tasks/:id —— 后者是整行替换，只发一个字段会把
+// 任务名、定时、浏览器配置全写成默认值。
 async function persistExtraPaths(selection) {
-  for (const row of selection || []) {
-    const task = tasksCache.find((item) => Number(item.id) === Number(row.id));
-    const current = Array.isArray(task?.extra_paths) ? [...task.extra_paths].sort() : [];
-    if (JSON.stringify(current) === JSON.stringify(row.paths)) continue;
-    try {
-      await fetchJson(`/api/tasks/${row.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ extra_paths: row.paths }),
-      });
-    } catch (error) {
-      toast(`保存「${task?.name || row.id}」的附加模块失败：${error.message || ''}`, 'warn');
-    }
+  const tasks = (selection || [])
+    .map((row) => ({ id: Number(row.id), paths: row.paths }))
+    .filter((row) => Number.isInteger(row.id) && row.id > 0);
+  if (!tasks.length) return;
+  try {
+    await fetchJson('/api/backup/save-assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tasks }),
+    });
+  } catch (error) {
+    toast(`附加模块保存失败：${error.message || ''}（本次导出仍会带上勾选内容）`, 'warn');
   }
 }
 

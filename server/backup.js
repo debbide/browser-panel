@@ -497,36 +497,9 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     warnings.push(`附加文件超出上限(${ASSET_MAX_FILES} 个 / ${Math.round(ASSET_MAX_TOTAL_BYTES / 1024 / 1024)}MB),超出部分未写入备份`);
   }
 
-  const profileById = new Map(db.listBrowserProfiles().map((row) => [Number(row.id), row]));
+  // 浏览器配置整个不导出:它承载的就是固定数据目录和代理凭据这两样本机资产,
+  // 换机或分享给别人都必须重配。任务统一以临时模式落地(见下面的 use_persistent)。
   const profiles = [];
-  const seenProfiles = new Set();
-  for (const task of selected) {
-    const profileId = Number(task.browser_profile_id);
-    if (!Number.isInteger(profileId) || profileId <= 0 || seenProfiles.has(profileId)) continue;
-    seenProfiles.add(profileId);
-    const profile = profileById.get(profileId);
-    if (!profile) {
-      warnings.push(`任务「${task.name}」引用的浏览器配置已不存在(id=${profileId})`);
-      continue;
-    }
-    const profileConfig = pick(profile, PROFILE_CONFIG_COLUMNS);
-    // 代理绝不导出；user_data_dir 导出为空（临时目录占位）。
-    profileConfig.proxy = null;
-    profileConfig.proxy_mode = '';
-    profileConfig.proxy_value = null;
-    profileConfig.ruyi_fpfile = '';
-    profileConfig.user_data_dir = '';
-
-    const profileEnv = filterBackupEnvEntries(db.listEnvEntriesRaw('profile', Number(profile.id))).map((row) => {
-      if (encrypt) {
-        return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: row.is_secret ? 1 : 0 };
-      }
-      // 仅名称模式：所有环境变量只保留变量名
-      return { name: row.name, value: '', is_secret: row.is_secret ? 1 : 0 };
-    });
-
-    profiles.push({ ...profileConfig, env: profileEnv });
-  }
 
   const taskGroups = db.listTaskGroups();
   const groupById = new Map(taskGroups.map((group) => [Number(group.id), group]));
@@ -539,7 +512,6 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
 
   const tasks = selected.map((task) => {
     const config_ = pick(task, TASK_CONFIG_COLUMNS);
-    const profile = profileById.get(Number(task.browser_profile_id));
     const env = filterBackupEnvEntries(db.listEnvEntriesRaw('task', Number(task.id))).map((row) => {
       if (encrypt) {
         return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: row.is_secret ? 1 : 0 };
@@ -547,11 +519,17 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
       // 仅名称模式：所有环境变量只保留变量名
       return { name: row.name, value: '', is_secret: row.is_secret ? 1 : 0 };
     });
+    if (Number(task.use_persistent) === 1) {
+      warnings.push(`任务「${task.name}」原为持久模式,导出后按临时模式落地,固定目录和代理需在目标机重配`);
+    }
     return {
       ...config_,
+      // 固定目录和代理不进备份,所以绑定关系也不能进 —— 否则导入端会拿到一个
+      // 指向空目录、没有代理的持久配置,跑起来行为和源机不一致。
+      use_persistent: 0,
+      browser_profile_name: null,
       script_path: String(task.script_path || '').replace(/\\/g, '/'),
       extra_paths: normalizeExtraPaths(task.extra_paths),
-      browser_profile_name: profile ? profile.name : null,
       task_group_name: groupById.get(Number(task.group_id))?.name || null,
       env,
     };
@@ -1014,7 +992,9 @@ function buildTaskRow(plan, profileIdByName, groupIdByName, existing = null) {
     // 而代理 / Chrome 路径 / Xvfb 可能都还没配好。
     enabled: 0,
     use_browser: Number(config_.use_browser) === 0 ? 0 : 1,
-    use_persistent: Number(config_.use_persistent) === 1 ? 1 : 0,
+    // 固定数据目录和代理都不进备份,所以导入后一律临时模式 —— 旧版备份里可能
+    // 还带着 use_persistent=1,照搬会指向一个目标机上并不存在的目录。
+    use_persistent: 0,
     timeout_sec: Number(config_.timeout_sec) > 0 ? Number(config_.timeout_sec) : 300,
     params_json: existing ? (existing.params_json || '{}') : '{}',
     extra_paths: plan.preserveExistingExtraPaths && existing

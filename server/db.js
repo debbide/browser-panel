@@ -397,6 +397,17 @@ function updateTask(id, payload) {
   return getTask(id);
 }
 
+/**
+ * 只改 extra_paths 这一列。updateTask 拼的是全列 SET,调用方漏字段就会把整行
+ * 写成默认值(任务名变 Untitled Task、定时清空、浏览器配置丢失),所以这种
+ * 单字段更新必须走独立语句,不能借道 updateTask。
+ */
+function updateTaskExtraPaths(id, extraPathsJson) {
+  db.prepare('UPDATE tasks SET extra_paths = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(String(extraPathsJson || '[]'), Number(id));
+  return getTask(id);
+}
+
 const deleteTaskTxn = db.transaction((id) => {
   db.prepare('DELETE FROM task_runs WHERE task_id = ?').run(id);
   db.prepare("DELETE FROM env_entries WHERE scope = 'task' AND owner_id = ?").run(id);
@@ -1320,6 +1331,7 @@ module.exports = {
   getTask,
   createTask,
   updateTask,
+  updateTaskExtraPaths,
   applyTaskCallbackReport,
   deleteTask,
   createRun,
