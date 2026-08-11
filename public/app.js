@@ -2401,6 +2401,8 @@ function resetTaskForm() {
   // form.reset() 会退回带 selected 的那个 option，也就是上次编辑的分组，
   // 所以这里必须重画一遍，让新任务默认落在"未分组"。
   renderTaskGroupOptions(document.getElementById('task-group-select'), '');
+  taskExtraPaths = [];
+  renderTaskExtraPaths();
   form.elements.enabled.checked = false;
   scheduleModeSelect.value = 'fixed';
   fixedDaysEl.value = '0';
@@ -3363,6 +3365,60 @@ async function loadTaskGroups() {
 
 function taskIsRunning(task) {
   return !stoppingTaskIds.has(task.id) && (runningTaskIds.has(task.id) || Boolean(task.is_running));
+}
+
+// 「附加模块」只影响备份打包范围，不参与运行，所以单独存在表单外的一个数组里。
+let taskExtraPaths = [];
+
+function renderTaskExtraPaths() {
+  const box = document.getElementById('task-extra-paths');
+  if (!box) return;
+  if (!taskExtraPaths.length) {
+    box.innerHTML = '<p class="muted" style="margin:0;font-size:12px;">未声明。备份只带主脚本。</p>';
+    return;
+  }
+  box.innerHTML = taskExtraPaths.map((item, index) => `
+    <div class="task-extra-item">
+      <code>${escapeHtml(item)}</code>
+      <button type="button" class="icon-btn" title="移除" onclick="removeTaskExtraPath(${index})">
+        <i data-lucide="x"></i>
+      </button>
+    </div>`).join('');
+  if (window.lucide?.createIcons) window.lucide.createIcons();
+}
+
+window.removeTaskExtraPath = function removeTaskExtraPath(index) {
+  taskExtraPaths.splice(index, 1);
+  renderTaskExtraPaths();
+};
+
+async function scanTaskDeps() {
+  const scriptPath = form.elements.script_path?.value || selectedScriptPath;
+  if (!scriptPath) {
+    toast('先选一个脚本再扫描', 'warn');
+    return;
+  }
+  try {
+    const data = await fetchJson('/api/tasks/scan-deps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script_path: scriptPath }),
+    });
+    const found = (Array.isArray(data.data) ? data.data : []).map((item) => item.path);
+    if (!found.length) {
+      toast('没扫到 tasks/ 下的本地模块，可手动确认脚本是否有附加模块', 'warn');
+      return;
+    }
+    // 合并而不是覆盖：动态导入扫不出来，用户手工留下的条目不能被冲掉。
+    const merged = new Set(taskExtraPaths);
+    for (const item of found) merged.add(item);
+    const added = merged.size - taskExtraPaths.length;
+    taskExtraPaths = [...merged].sort();
+    renderTaskExtraPaths();
+    toast(added ? `扫到 ${found.length} 项，新增 ${added} 项` : `扫到 ${found.length} 项，都已在列表里`, 'success');
+  } catch (error) {
+    toast(error.message || '扫描失败', 'error');
+  }
 }
 
 window.selectTaskGroup = function selectTaskGroup(key) {
@@ -4469,6 +4525,8 @@ function fillTaskForm(task) {
   }
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
   renderTaskGroupOptions(document.getElementById('task-group-select'), task.group_id || '');
+  taskExtraPaths = Array.isArray(task.extra_paths) ? [...task.extra_paths] : [];
+  renderTaskExtraPaths();
   let proxyValue = '';
   let proxyMode = 'inherit';
   let runtimeStack = '';
@@ -4604,6 +4662,7 @@ form.addEventListener('submit', async (event) => {
   }
   payload.browser_profile_id = taskProfileSelect && taskProfileSelect.value ? Number(taskProfileSelect.value) : null;
   payload.group_id = payload.group_id ? Number(payload.group_id) : null;
+  payload.extra_paths = taskExtraPaths;
   // 临时/持久只走 use_persistent 字段，不再写入可见 env 列表
   const envByName = new Map(env.map((e) => [e.name, e]));
   deleteManagedMapKeys(envByName, [
@@ -6113,6 +6172,9 @@ function wireAuthUi(username) {
 
   const cpBtn = document.getElementById('change-password-btn');
   if (cpBtn) cpBtn.addEventListener('click', openChangePasswordDialog);
+
+  const scanDepsBtn = document.getElementById('task-scan-deps-btn');
+  if (scanDepsBtn) scanDepsBtn.addEventListener('click', scanTaskDeps);
 }
 
 // 先确认登录再启动面板。不先问一句的话，未登录时十几个接口会并发打出去，

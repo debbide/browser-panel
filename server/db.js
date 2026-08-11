@@ -205,6 +205,9 @@ if (!taskTableColumns.includes('callback_threshold_sec')) db.exec('ALTER TABLE t
 if (!taskTableColumns.includes('callback_valid_until')) db.exec('ALTER TABLE tasks ADD COLUMN callback_valid_until TEXT');
 if (!taskTableColumns.includes('callback_action')) db.exec('ALTER TABLE tasks ADD COLUMN callback_action TEXT');
 if (!taskTableColumns.includes('group_id')) db.exec('ALTER TABLE tasks ADD COLUMN group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL');
+// 任务声明的附加文件/目录(相对 tasks/ 的 JSON 数组)。只在备份导出时用来决定
+// 主脚本之外还要带哪些文件,不参与执行 —— 运行时的 import 由 Python 自己解析。
+if (!taskTableColumns.includes('extra_paths')) db.exec("ALTER TABLE tasks ADD COLUMN extra_paths TEXT NOT NULL DEFAULT '[]'");
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id)');
 
 const browserProfileColumns = db.prepare('PRAGMA table_info(browser_profiles)').all().map(row => row.name);
@@ -219,7 +222,7 @@ const taskColumns = [
   'name', 'type', 'script_path', 'cron_expr', 'schedule_mode',
   'interval_min', 'interval_max', 'interval_unit', 'daily_time_start', 'daily_time_end',
   'daily_day_min', 'daily_day_max', 'next_run_at',
-  'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id', 'group_id',
+  'enabled', 'use_browser', 'use_persistent', 'timeout_sec', 'params_json', 'browser_profile_id', 'group_id', 'extra_paths',
   'condition_enabled', 'condition_json', 'condition_next_check_at',
   'condition_last_status', 'condition_last_detail', 'condition_last_checked_at', 'condition_cooldown_until',
   'callback_remaining_sec', 'callback_reported_at', 'callback_trigger_at',
@@ -311,7 +314,7 @@ function createTask(payload) {
       name, type, script_path, cron_expr, schedule_mode,
       interval_min, interval_max, interval_unit, daily_time_start, daily_time_end,
       daily_day_min, daily_day_max, next_run_at,
-      enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id, group_id,
+      enabled, use_browser, use_persistent, timeout_sec, params_json, browser_profile_id, group_id, extra_paths,
       condition_enabled, condition_json, condition_next_check_at,
       condition_last_status, condition_last_detail, condition_last_checked_at, condition_cooldown_until,
       callback_remaining_sec, callback_reported_at, callback_trigger_at,
@@ -322,7 +325,7 @@ function createTask(payload) {
       @name, @type, @script_path, @cron_expr, @schedule_mode,
       @interval_min, @interval_max, @interval_unit, @daily_time_start, @daily_time_end,
       @daily_day_min, @daily_day_max, @next_run_at,
-      @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id, @group_id,
+      @enabled, @use_browser, @use_persistent, @timeout_sec, @params_json, @browser_profile_id, @group_id, @extra_paths,
       @condition_enabled, @condition_json, @condition_next_check_at,
       @condition_last_status, @condition_last_detail, @condition_last_checked_at, @condition_cooldown_until,
       @callback_remaining_sec, @callback_reported_at, @callback_trigger_at,
@@ -332,6 +335,7 @@ function createTask(payload) {
   `);
   const result = stmt.run({
     group_id: null,
+    extra_paths: '[]',
     daily_day_min: null,
     daily_day_max: null,
     condition_enabled: 0,

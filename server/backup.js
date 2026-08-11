@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const config = require('../config');
 const db = require('./db');
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // --- 加密层（不引入新依赖，与 auth.js 的 scrypt 约定共用参数） ---
 const SCRYPT_N = 16384;
@@ -118,42 +118,233 @@ function filterBackupEnvEntries(entries) {
 const CONFLICT_STRATEGIES = Object.freeze(['skip', 'overwrite', 'rename']);
 const SCRIPT_EXTENSIONS = Object.freeze(['.js', '.py']);
 
+// 附加文件的排除项与上限。上限是防呆:随手把一个装满数据的目录声明成附加模块,
+// 备份文件会大到没法用,这里宁可截断并明确告警,也不静默打包。
+const ASSET_EXCLUDED_NAMES = new Set(['__pycache__', 'node_modules', '.git', '.venv', 'venv']);
+const ASSET_MAX_FILES = 400;
+const ASSET_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
 function sha256(text) {
   return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
 }
 
 /**
- * 备份文件里的脚本路径来自上传内容,不可信,而面板是 root 跑的、这里要写盘。
+ * 备份文件里的路径来自上传内容,不可信,而面板是 root 跑的、这里要写盘。
  * 用 path.resolve 做包含性校验(与 storage-cleanup.js 的 isInside 同思路),
  * 而不是靠字符串前缀判断 —— 后者挡不住 tasks/../../etc/cron.d/x 这类构造。
  */
-function sanitizeScriptPath(raw) {
-  const normalized = String(raw || '').replace(/\\/g, '/').trim();
-  if (!normalized) throw new Error('脚本路径不能为空');
+function resolveUnderTasks(raw, label = '路径') {
+  const normalized = String(raw || '').replace(/\\/g, '/').trim().replace(/\/+$/, '');
+  if (!normalized) throw new Error(`${label}不能为空`);
   if (!normalized.startsWith('tasks/')) {
-    throw new Error(`脚本路径必须位于 tasks/ 下: ${normalized}`);
+    throw new Error(`${label}必须位于 tasks/ 下: ${normalized}`);
   }
   const relative = normalized.slice('tasks/'.length);
-  if (!relative || relative.startsWith('/')) {
-    throw new Error(`脚本路径不合法: ${normalized}`);
-  }
-  const ext = path.extname(relative).toLowerCase();
-  if (!SCRIPT_EXTENSIONS.includes(ext)) {
-    throw new Error(`只支持 .js / .py 脚本: ${normalized}`);
+  if (!relative || relative.split('/').some((seg) => !seg || seg === '.' || seg === '..')) {
+    throw new Error(`${label}不合法: ${normalized}`);
   }
 
   const base = path.resolve(config.paths.tasksDir);
   const target = path.resolve(base, relative);
   if (target !== base && !target.startsWith(`${base}${path.sep}`)) {
-    throw new Error(`脚本路径越界: ${normalized}`);
+    throw new Error(`${label}越界: ${normalized}`);
   }
 
-  return {
-    relPath: `tasks/${relative}`,
-    absPath: target,
-    ext,
-  };
+  return { relPath: `tasks/${relative}`, absPath: target, relative };
 }
+
+function sanitizeScriptPath(raw) {
+  const resolved = resolveUnderTasks(raw, '脚本路径');
+  const ext = path.extname(resolved.relative).toLowerCase();
+  if (!SCRIPT_EXTENSIONS.includes(ext)) {
+    throw new Error(`只支持 .js / .py 脚本: ${resolved.relPath}`);
+  }
+  return { relPath: resolved.relPath, absPath: resolved.absPath, ext };
+}
+
+/**
+ * 附加文件不限扩展名 —— 模块目录里常有 README、json 配置这类非脚本文件,
+ * 卡 .js/.py 会把它们漏掉。安全边界仍然只有一条:必须落在 tasks/ 内。
+ */
+function sanitizeAssetPath(raw) {
+  const resolved = resolveUnderTasks(raw, '附加路径');
+  for (const seg of resolved.relative.split('/')) {
+    if (seg.startsWith('.')) throw new Error(`附加路径不能包含隐藏文件或目录: ${resolved.relPath}`);
+    if (ASSET_EXCLUDED_NAMES.has(seg)) throw new Error(`附加路径不能包含 ${seg}: ${resolved.relPath}`);
+  }
+  return resolved;
+}
+
+/**
+ * 任务声明的附加路径。数据库里存 JSON 字符串,前端传数组,这里都接受。
+ * 统一规整成 "tasks/xxx" 形式;整个 tasks 目录不允许声明 —— 备份也用来把
+ * 单个任务分享给别人,打包全部脚本等于把无关任务一起送出去。
+ */
+function normalizeExtraPaths(value) {
+  let list = value;
+  if (typeof list === 'string') {
+    const text = list.trim();
+    if (!text) return [];
+    try {
+      list = JSON.parse(text);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    const raw = String(item == null ? '' : item)
+      .replace(/\\/g, '/').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    if (!raw || raw === 'tasks') continue;
+    const rel = raw.startsWith('tasks/') ? raw : `tasks/${raw}`;
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    out.push(rel);
+  }
+  return out;
+}
+
+/** 展开一个附加路径:文件返回自身,目录递归展开。 */
+function collectAssetFiles(absPath, relPath) {
+  const out = [];
+  const stat = fs.statSync(absPath);
+  if (stat.isFile()) return [{ absPath, relPath }];
+  if (!stat.isDirectory()) return out;
+  const walk = (dirAbs, dirRel) => {
+    for (const entry of fs.readdirSync(dirAbs, { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.name.endsWith('.pyc')) continue;
+      if (ASSET_EXCLUDED_NAMES.has(entry.name)) continue;
+      const childAbs = path.join(dirAbs, entry.name);
+      const childRel = `${dirRel}/${entry.name}`;
+      if (entry.isDirectory()) walk(childAbs, childRel);
+      else if (entry.isFile()) out.push({ absPath: childAbs, relPath: childRel });
+    }
+  };
+  walk(absPath, relPath);
+  return out;
+}
+
+/**
+ * 附加文件不保证是文本(模块目录里可能有图片、字体之类的测试素材),
+ * 按 utf8 读会损坏内容。能无损往返的存文本,其余转 base64。
+ */
+function readAssetContent(absPath) {
+  const buf = fs.readFileSync(absPath);
+  const text = buf.toString('utf8');
+  if (!buf.includes(0) && Buffer.from(text, 'utf8').equals(buf)) {
+    return { content: text, encoding: 'utf8', bytes: buf.length };
+  }
+  return { content: buf.toString('base64'), encoding: 'base64', bytes: buf.length };
+}
+
+function assetToBuffer(entry) {
+  return entry.encoding === 'base64'
+    ? Buffer.from(String(entry.content || ''), 'base64')
+    : Buffer.from(String(entry.content == null ? '' : entry.content), 'utf8');
+}
+
+// import 语句里的顶层名字。缩进的 import 也要匹配(函数内部导入很常见),
+// 所以用 multiline 而不是锚在行首非空白。
+const PY_IMPORT_RE = /^[ \t]*(?:from[ \t]+([.\w]+)[ \t]+import|import[ \t]+([\w.,\s]+))/gm;
+const JS_REQUIRE_RE = /(?:require\(|from)\s*['"]([^'"]+)['"]/g;
+
+function pyImportRoots(source) {
+  const roots = new Set();
+  let match;
+  PY_IMPORT_RE.lastIndex = 0;
+  while ((match = PY_IMPORT_RE.exec(source)) !== null) {
+    const targets = match[1]
+      ? [match[1]]
+      : String(match[2] || '').split(',');
+    for (const target of targets) {
+      // 相对导入(from .x import y)指向同包内部,由包目录整体带走,不用单独解析。
+      const name = String(target).trim().split(/\s+as\s+/)[0].trim();
+      if (!name || name.startsWith('.')) continue;
+      const root = name.split('.')[0].trim();
+      if (root) roots.add(root);
+    }
+  }
+  return roots;
+}
+
+function jsRequireRoots(source) {
+  const roots = new Set();
+  let match;
+  JS_REQUIRE_RE.lastIndex = 0;
+  while ((match = JS_REQUIRE_RE.exec(source)) !== null) {
+    const spec = String(match[1] || '').trim();
+    // 只关心项目内的相对引用,npm 包由 node_modules 提供,不进备份。
+    if (!spec.startsWith('.')) continue;
+    const cleaned = spec.replace(/^\.+\//, '').replace(/^\.+$/, '');
+    const root = cleaned.split('/')[0];
+    if (root) roots.add(root);
+  }
+  return roots;
+}
+
+/**
+ * 扫描主脚本引用到的本地模块,只作为前端的预填建议 —— 最终以用户勾选为准。
+ *
+ * 静态分析看不见动态导入(比如脚本自己改 sys.path 再 import),所以这里不追求
+ * 完备,漏掉的由用户手工补;反过来也不会把 npm / pip 上的第三方包算进来。
+ */
+function scanTaskDependencies(scriptPath) {
+  const entry = sanitizeScriptPath(scriptPath);
+  if (!fs.existsSync(entry.absPath)) throw new Error(`脚本文件不存在: ${entry.relPath}`);
+
+  const tasksRoot = path.resolve(config.paths.tasksDir);
+  const found = new Map();        // relPath -> {path, type}
+  const visited = new Set([entry.absPath]);
+  const queue = [entry.absPath];
+
+  const resolveRoot = (root) => {
+    for (const candidate of [root, `${root}.py`, `${root}.js`]) {
+      const abs = path.resolve(tasksRoot, candidate);
+      if (abs !== tasksRoot && !abs.startsWith(`${tasksRoot}${path.sep}`)) continue;
+      if (!fs.existsSync(abs)) continue;
+      const stat = fs.statSync(abs);
+      if (stat.isDirectory()) return { relPath: `tasks/${candidate}`, absPath: abs, type: 'dir' };
+      if (stat.isFile() && abs !== entry.absPath) {
+        return { relPath: `tasks/${candidate}`, absPath: abs, type: 'file' };
+      }
+    }
+    return null;
+  };
+
+  while (queue.length) {
+    const current = queue.shift();
+    let source = '';
+    try {
+      source = fs.readFileSync(current, 'utf8');
+    } catch {
+      continue;
+    }
+    const ext = path.extname(current).toLowerCase();
+    const roots = ext === '.js' ? jsRequireRoots(source) : pyImportRoots(source);
+    for (const root of roots) {
+      if (ASSET_EXCLUDED_NAMES.has(root) || root.startsWith('.')) continue;
+      const hit = resolveRoot(root);
+      if (!hit || found.has(hit.relPath)) continue;
+      found.set(hit.relPath, { path: hit.relPath, type: hit.type });
+      // 顺着新发现的模块继续往下找:模块自己也可能 import 别的本地模块。
+      const files = hit.type === 'dir'
+        ? collectAssetFiles(hit.absPath, hit.relPath)
+        : [{ absPath: hit.absPath, relPath: hit.relPath }];
+      for (const file of files) {
+        const fileExt = path.extname(file.absPath).toLowerCase();
+        if (fileExt !== '.py' && fileExt !== '.js') continue;
+        if (visited.has(file.absPath)) continue;
+        visited.add(file.absPath);
+        queue.push(file.absPath);
+      }
+    }
+  }
+
+  return [...found.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
 
 function normalizeTaskIds(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -254,6 +445,58 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     }
   }
 
+  // 附加模块:只带选中任务自己声明的路径。备份也用来把单个任务发给别人,
+  // 所以这里绝不能整包 tasks/ —— 那等于把无关脚本一起送出去。
+  const assets = [];
+  const seenAssets = new Set();
+  let assetBytes = 0;
+  let assetTruncated = false;
+  for (const task of selected) {
+    for (const rawPath of normalizeExtraPaths(task.extra_paths)) {
+      let resolved;
+      try {
+        resolved = sanitizeAssetPath(rawPath);
+      } catch (error) {
+        warnings.push(`任务「${task.name}」的附加路径无法导出(${error.message}),已跳过`);
+        continue;
+      }
+      if (!fs.existsSync(resolved.absPath)) {
+        warnings.push(`附加路径不存在,未写入备份: ${resolved.relPath}`);
+        continue;
+      }
+      let files;
+      try {
+        files = collectAssetFiles(resolved.absPath, resolved.relPath);
+      } catch (error) {
+        warnings.push(`附加路径读取失败(${error.message}): ${resolved.relPath}`);
+        continue;
+      }
+      if (!files.length) {
+        warnings.push(`附加路径是空目录,未写入备份: ${resolved.relPath}`);
+        continue;
+      }
+      for (const file of files) {
+        if (seenAssets.has(file.relPath)) continue;
+        if (assets.length >= ASSET_MAX_FILES || assetBytes >= ASSET_MAX_TOTAL_BYTES) {
+          assetTruncated = true;
+          continue;
+        }
+        seenAssets.add(file.relPath);
+        const read = readAssetContent(file.absPath);
+        assetBytes += read.bytes;
+        assets.push({
+          path: file.relPath,
+          content: read.content,
+          encoding: read.encoding,
+          sha256: sha256(read.content),
+        });
+      }
+    }
+  }
+  if (assetTruncated) {
+    warnings.push(`附加文件超出上限(${ASSET_MAX_FILES} 个 / ${Math.round(ASSET_MAX_TOTAL_BYTES / 1024 / 1024)}MB),超出部分未写入备份`);
+  }
+
   const profileById = new Map(db.listBrowserProfiles().map((row) => [Number(row.id), row]));
   const profiles = [];
   const seenProfiles = new Set();
@@ -307,6 +550,7 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     return {
       ...config_,
       script_path: String(task.script_path || '').replace(/\\/g, '/'),
+      extra_paths: normalizeExtraPaths(task.extra_paths),
       browser_profile_name: profile ? profile.name : null,
       task_group_name: groupById.get(Number(task.group_id))?.name || null,
       env,
@@ -319,6 +563,7 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     encrypted: encrypt,
     names_only: !encrypt,
     scripts,
+    assets,
     browser_profiles: profiles,
     task_groups: exportedGroups,
     tasks,
@@ -409,6 +654,7 @@ function parseBackup(input, { passphrase = null } = {}) {
     encrypted,
     names_only: namesOnly,
     scripts: Array.isArray(data.scripts) ? data.scripts : [],
+    assets: version >= 4 && Array.isArray(data.assets) ? data.assets : [],
     browser_profiles: Array.isArray(data.browser_profiles) ? data.browser_profiles : [],
     task_groups: version >= 3 && Array.isArray(data.task_groups) ? data.task_groups : [],
     tasks: data.tasks,
@@ -504,6 +750,48 @@ function analyze(backup, options = {}) {
     }
   }
 
+  // 附加文件不跟着 rename 走:模块目录一旦改名,脚本里的 import 就断了。
+  // 所以只有覆盖和跳过两种结果 —— 覆盖时沿用脚本策略,其余一律保留本地版本。
+  const assetPlans = [];
+  const seenAssetPaths = new Set();
+  for (const entry of backup.assets) {
+    const resolved = sanitizeAssetPath(entry && entry.path);
+    if (seenAssetPaths.has(resolved.relPath)) continue;
+    seenAssetPaths.add(resolved.relPath);
+    const encoding = entry && entry.encoding === 'base64' ? 'base64' : 'utf8';
+    const content = String(entry && entry.content == null ? '' : entry.content);
+    const buffer = assetToBuffer({ content, encoding });
+    const exists = fs.existsSync(resolved.absPath);
+    let identical = false;
+    if (exists) {
+      try {
+        identical = fs.readFileSync(resolved.absPath).equals(buffer);
+      } catch {
+        identical = false;
+      }
+    }
+
+    let action;
+    if (!exists) action = 'create';
+    else if (identical) action = 'identical';
+    else if (scriptStrategy === 'overwrite') action = 'overwrite';
+    else action = 'skip';
+
+    assetPlans.push({
+      path: resolved.relPath,
+      action,
+      content,
+      encoding,
+      bytes: buffer.length,
+      exists,
+      identical,
+    });
+  }
+  const assetConflicts = assetPlans.filter((plan) => plan.action === 'skip');
+  if (assetConflicts.length) {
+    warnings.push(`有 ${assetConflicts.length} 个附加文件与本地已有版本不一致,已保留本地版本(脚本策略选"覆盖"才会用备份里的版本)`);
+  }
+
   const profilePlans = [];
   const seenProfileNames = new Set();
   for (const entry of backup.browser_profiles) {
@@ -573,6 +861,13 @@ function analyze(backup, options = {}) {
       warnings.push(`任务「${name}」引用的分组「${groupName}」不在备份文件里,将移至未分组`);
     }
 
+    const extraPaths = backup.schema_version >= 4 ? normalizeExtraPaths(entry.extra_paths) : [];
+    const missingExtras = extraPaths.filter((rel) => !seenAssetPaths.has(rel)
+      && ![...seenAssetPaths].some((asset) => asset.startsWith(`${rel}/`)));
+    if (missingExtras.length && action !== 'skip') {
+      warnings.push(`任务「${name}」声明的附加路径不在备份文件里: ${missingExtras.join('、')}`);
+    }
+
     const env = Array.isArray(entry.env) ? entry.env : [];
     // v2 仅名称模式: 所有变量值都是空的，导入后都需要补填。
     // v1 select-secrets 模式: 只有标记了 omitted 的才缺值。
@@ -593,11 +888,15 @@ function analyze(backup, options = {}) {
       existingId: existing ? Number(existing.id) : null,
       scriptPath: rawScriptPath,
       finalScriptPath,
+      extraPaths,
       profileName,
       profileMissing,
       groupName,
       groupMissing,
       preserveExistingGroup: backup.schema_version < 3 && action === 'overwrite',
+      // v3 及更早的备份里没有附加路径这个概念,覆盖时保留本地已有的声明,
+      // 否则用旧备份覆盖一次就把用户配好的附加模块清空了。
+      preserveExistingExtraPaths: backup.schema_version < 4 && action === 'overwrite',
       secretsPending,
       config: pick(entry, TASK_CONFIG_COLUMNS),
       env,
@@ -619,6 +918,7 @@ function analyze(backup, options = {}) {
     script_strategy: scriptStrategy,
     task_strategy: taskStrategy,
     scripts: scriptPlans,
+    assets: assetPlans,
     profiles: profilePlans,
     groups: groupPlans,
     tasks: taskPlans,
@@ -631,6 +931,7 @@ function toPreview(plan) {
   return {
     ...plan,
     scripts: plan.scripts.map(({ content, ...rest }) => ({ ...rest, bytes: Buffer.byteLength(content, 'utf8') })),
+    assets: plan.assets.map(({ content, encoding, ...rest }) => rest),
     tasks: plan.tasks.map(({ config, env, ...rest }) => ({ ...rest, env_count: env.length })),
   };
 }
@@ -642,35 +943,44 @@ function writeScriptFiles(plan) {
   // better-sqlite3 的事务保不了文件系统,顺序和 undo 都得自己安排。
   const undo = [];
   const written = [];
+  const assetsWritten = [];
+  const writeOne = (relPath, absPath, buffer) => {
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    if (fs.existsSync(absPath)) {
+      undo.push({ absPath, content: fs.readFileSync(absPath) });
+    } else {
+      undo.push({ absPath, content: null });
+    }
+    const tmpPath = `${absPath}.bp-import.tmp`;
+    fs.writeFileSync(tmpPath, buffer);
+    fs.renameSync(tmpPath, absPath);
+  };
   try {
     for (const script of plan.scripts) {
       if (script.action === 'skip' || script.action === 'identical') continue;
       const resolved = sanitizeScriptPath(script.finalPath);
-      fs.mkdirSync(path.dirname(resolved.absPath), { recursive: true });
-
-      if (fs.existsSync(resolved.absPath)) {
-        undo.push({ absPath: resolved.absPath, content: fs.readFileSync(resolved.absPath, 'utf8') });
-      } else {
-        undo.push({ absPath: resolved.absPath, content: null });
-      }
-
-      const tmpPath = `${resolved.absPath}.bp-import.tmp`;
-      fs.writeFileSync(tmpPath, script.content, 'utf8');
-      fs.renameSync(tmpPath, resolved.absPath);
+      writeOne(script.finalPath, resolved.absPath, Buffer.from(script.content, 'utf8'));
       written.push(script.finalPath);
+    }
+    for (const asset of plan.assets || []) {
+      if (asset.action === 'skip' || asset.action === 'identical') continue;
+      const resolved = sanitizeAssetPath(asset.path);
+      writeOne(asset.path, resolved.absPath, assetToBuffer(asset));
+      assetsWritten.push(asset.path);
     }
   } catch (error) {
     restoreScriptFiles(undo);
     throw error;
   }
-  return { undo, written };
+  return { undo, written, assetsWritten };
 }
 
 function restoreScriptFiles(undo) {
   for (const item of undo.slice().reverse()) {
     try {
       if (item.content === null) fs.rmSync(item.absPath, { force: true });
-      else fs.writeFileSync(item.absPath, item.content, 'utf8');
+      // content 是 Buffer(附加文件可能是二进制),不能按 utf8 写回。
+      else fs.writeFileSync(item.absPath, item.content);
     } catch {
       // 还原已尽力,不再抛,避免掩盖原始错误
     }
@@ -707,6 +1017,9 @@ function buildTaskRow(plan, profileIdByName, groupIdByName, existing = null) {
     use_persistent: Number(config_.use_persistent) === 1 ? 1 : 0,
     timeout_sec: Number(config_.timeout_sec) > 0 ? Number(config_.timeout_sec) : 300,
     params_json: existing ? (existing.params_json || '{}') : '{}',
+    extra_paths: plan.preserveExistingExtraPaths && existing
+      ? (existing.extra_paths || '[]')
+      : JSON.stringify(plan.extraPaths || []),
     browser_profile_id: profileId,
     group_id: plan.preserveExistingGroup && existing
       ? (existing.group_id || null)
@@ -818,6 +1131,7 @@ function importBackup(input, options = {}) {
   return {
     ...result,
     scripts_written: fileState.written,
+    assets_written: fileState.assetsWritten || [],
     warnings: plan.warnings,
   };
 }
@@ -853,6 +1167,8 @@ module.exports = {
   TASK_CONFIG_COLUMNS,
   normalizeTaskIds,
   normalizeStrategy,
+  normalizeExtraPaths,
+  scanTaskDependencies,
   exportBackup,
   parseBackup,
   isEncryptedEnvelope,

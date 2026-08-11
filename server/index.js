@@ -368,6 +368,8 @@ function decorateTaskForApi(task) {
     env,
     params,
     params_json: JSON.stringify(params),
+    // 库里存 JSON 字符串,前端直接当数组用。
+    extra_paths: backup.normalizeExtraPaths(task.extra_paths),
     condition_enabled: Number(task.condition_enabled) ? 1 : 0,
     condition,
     condition_last_status: task.condition_last_status || null,
@@ -1288,6 +1290,23 @@ function resolveTaskGroupId(value) {
   return id;
 }
 
+function normalizeExtraPathsPayload(value) {
+  if (value === undefined || value === null) return null;
+  const list = backup.normalizeExtraPaths(value);
+  return JSON.stringify(list);
+}
+
+// 扫描主脚本依赖的本地模块,预填任务的附加模块勾选。
+app.post('/api/tasks/scan-deps', (req, res) => {
+  try {
+    const scriptPath = String((req.body || {}).script_path || '');
+    if (!scriptPath) throw new Error('请先选择脚本');
+    res.json({ data: backup.scanTaskDependencies(scriptPath) });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to scan dependencies' });
+  }
+});
+
 app.get('/api/task-groups', (req, res) => {
   res.json({ data: db.listTaskGroups() });
 });
@@ -1370,6 +1389,7 @@ app.post('/api/tasks', (req, res) => {
       params_json: '{}',
       browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
       group_id: resolveTaskGroupId(payload.group_id),
+      extra_paths: normalizeExtraPathsPayload(payload.extra_paths) || '[]',
       ...conditionFields,
     });
     task = applyTaskEnvPayload(task.id, payload) || task;
@@ -1417,6 +1437,9 @@ app.put('/api/tasks/:id', (req, res) => {
       group_id: Object.prototype.hasOwnProperty.call(payload, 'group_id')
         ? resolveTaskGroupId(payload.group_id)
         : existing.group_id,
+      extra_paths: Object.prototype.hasOwnProperty.call(payload, 'extra_paths')
+        ? (normalizeExtraPathsPayload(payload.extra_paths) || '[]')
+        : existing.extra_paths,
       // preserve script callback state across form saves
       callback_remaining_sec: existing.callback_remaining_sec ?? null,
       callback_reported_at: existing.callback_reported_at || null,
