@@ -229,15 +229,14 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 
-/* 版本号：brand 右侧的小标签，信息密度低，不该跟标题抢视觉 */
+/* 版本号:放侧边栏最底部,跨满两列。之前挂在 brand 右侧,它是定宽的,
+   把唯一可压缩的标题挤成了 "Browser ..." —— 装饰性信息不该吃掉产品名。 */
 .app-version {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding: 1px 6px;
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  grid-column: 1 / -1;
+  padding: 2px 8px 0;
   color: var(--text-muted);
   font: 500 11px/1.6 var(--font-mono);
+  text-align: right;
   white-space: nowrap;
 }
 
