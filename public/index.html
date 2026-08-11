@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260811a" />
+  <link rel="stylesheet" href="/styles.css?v=20260811b" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -573,6 +573,8 @@
   </section>
   <div id="backup-import-mask" class="modal-mask" hidden></div>
   <section id="backup-import-modal" class="modal" aria-hidden="true" hidden></section>
+  <div id="backup-assets-mask" class="modal-mask" hidden></div>
+  <section id="backup-assets-modal" class="modal" aria-hidden="true" hidden></section>
   <section id="task-modal" class="modal modal-wide task-modal" aria-hidden="true">
     <div class="modal-header task-modal-header">
       <div class="task-modal-header-main">
@@ -643,18 +645,6 @@
                   </div>
                   <div class="task-script-summary muted" id="task-script-summary">
                     脚本：未选择（右侧导入或选中）
-                  </div>
-                  <div>
-                    <div class="task-extra-head">
-                      <label class="field-label" style="margin:0;">附加模块</label>
-                      <button type="button" id="task-scan-deps-btn">扫描依赖</button>
-                    </div>
-                    <div id="task-extra-paths" class="task-extra-list">
-                      <p class="muted" style="margin:0;font-size:12px;">未声明。备份只带主脚本。</p>
-                    </div>
-                    <p class="schedule-note" style="margin-top:4px;">
-                      备份/分享这个任务时一起打包的模块目录，只影响备份，不影响运行。
-                    </p>
                   </div>
                 </div>
               </section>
@@ -1017,7 +1007,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260811a"></script>
+  <script src="/app.js?v=20260811b"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

@@ -1835,26 +1835,33 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
 }
 
-/* 附加模块：备份打包范围的声明列表，不参与运行 */
-.task-extra-head {
+/* 附加模块：导出前确认要跟主脚本一起打包的模块目录 */
+.backup-assets-panel {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+}
+.backup-assets-task {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+.backup-assets-task:last-of-type { border-bottom: none; }
+.backup-assets-task-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: baseline;
   gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 6px;
 }
-.task-extra-list { display: flex; flex-direction: column; gap: 4px; }
-.task-extra-item {
+.backup-assets-task-head code { font-size: 12px; }
+.backup-assets-list {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 8px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 4px;
 }
-.task-extra-item code {
+.backup-assets-list .inline-check { gap: 8px; }
+.backup-assets-list code {
   font-size: 12px;
   color: var(--text-main);
   overflow: hidden;

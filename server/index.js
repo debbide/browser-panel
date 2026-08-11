@@ -1307,6 +1307,48 @@ app.post('/api/tasks/scan-deps', (req, res) => {
   }
 });
 
+/**
+ * 导出前批量扫描:附加模块只在打包这一刻才有意义,所以入口放在导出流程里,
+ * 而不是让用户逐个任务去配。已声明过的合并进来,用户手工补的条目不会被扫描冲掉。
+ */
+app.post('/api/backup/scan-assets', (req, res) => {
+  try {
+    const raw = (req.body || {}).task_ids;
+    const ids = (Array.isArray(raw) ? raw : String(raw || '').split(','))
+      .map((item) => Number(String(item).trim()))
+      .filter((item) => Number.isInteger(item) && item > 0);
+    if (!ids.length) throw new Error('请先选择任务');
+
+    const data = [];
+    for (const id of ids) {
+      const task = db.getTask(id);
+      if (!task) continue;
+      const declared = backup.normalizeExtraPaths(task.extra_paths);
+      let found = [];
+      let error = null;
+      try {
+        found = backup.scanTaskDependencies(task.script_path).map((item) => item.path);
+      } catch (err) {
+        error = err.message || '扫描失败';
+      }
+      // 扫到的和已声明的合并:静态分析看不见动态 import,之前手工补的必须留着。
+      const paths = [...new Set([...declared, ...found])].sort();
+      data.push({
+        id: task.id,
+        name: task.name,
+        script_path: task.script_path,
+        declared,
+        found,
+        paths,
+        error,
+      });
+    }
+    res.json({ data });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to scan assets' });
+  }
+});
+
 app.get('/api/task-groups', (req, res) => {
   res.json({ data: db.listTaskGroups() });
 });

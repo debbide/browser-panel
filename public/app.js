@@ -2401,8 +2401,6 @@ function resetTaskForm() {
   // form.reset() 会退回带 selected 的那个 option，也就是上次编辑的分组，
   // 所以这里必须重画一遍，让新任务默认落在"未分组"。
   renderTaskGroupOptions(document.getElementById('task-group-select'), '');
-  taskExtraPaths = [];
-  renderTaskExtraPaths();
   form.elements.enabled.checked = false;
   scheduleModeSelect.value = 'fixed';
   fixedDaysEl.value = '0';
@@ -3165,6 +3163,139 @@ window.toggleBackupTask = function toggleBackupTask(id, event) {
   renderTasks();
 }
 
+function closeBackupAssetsModal() {
+  const modal = document.getElementById('backup-assets-modal');
+  const mask = document.getElementById('backup-assets-mask');
+  if (modal) { modal.classList.remove('open'); modal.hidden = true; modal.innerHTML = ''; }
+  if (mask) mask.hidden = true;
+}
+
+/**
+ * 导出前的附加模块确认。扫描是预填，勾选才算数 —— 脚本自己改 sys.path 再 import
+ * 的写法静态分析看不见，得让用户有机会看一眼再决定带什么。
+ */
+function showBackupAssetsModal(rows, onConfirm) {
+  const modal = document.getElementById('backup-assets-modal');
+  const mask = document.getElementById('backup-assets-mask');
+  if (!modal) { onConfirm(null); return; }
+
+  const state = rows.map((row) => ({
+    ...row,
+    checked: new Set(row.paths),
+  }));
+
+  const render = () => {
+    const total = state.reduce((sum, row) => sum + row.checked.size, 0);
+    modal.innerHTML = `
+      <div class="modal-panel backup-assets-panel">
+        <div class="modal-header" style="padding:18px 22px;">
+          <div>
+            <h2 style="margin:0;">附加模块</h2>
+            <p class="muted" style="margin:3px 0 0;">勾选的目录会跟主脚本一起打包。只影响这次备份，不影响运行。</p>
+          </div>
+          <button type="button" class="icon-btn" data-assets-close aria-label="关闭">关闭</button>
+        </div>
+        <div class="modal-body" style="padding:22px;">
+          ${state.map((row, ri) => `
+            <div class="backup-assets-task">
+              <div class="backup-assets-task-head">
+                <strong>${escapeHtml(row.name)}</strong>
+                <code class="muted">${escapeHtml(row.script_path || '')}</code>
+              </div>
+              ${row.error ? `<p class="muted" style="margin:4px 0 0;font-size:12px;">扫描失败：${escapeHtml(row.error)}</p>` : ''}
+              ${row.paths.length ? `
+                <div class="backup-assets-list">
+                  ${row.paths.map((p, pi) => `
+                    <label class="inline-check">
+                      <input type="checkbox" data-assets-row="${ri}" data-assets-path="${pi}" ${row.checked.has(p) ? 'checked' : ''} />
+                      <code>${escapeHtml(p)}</code>
+                      ${row.declared.includes(p) ? '<span class="muted" style="font-size:11px;">已声明</span>' : '<span class="muted" style="font-size:11px;">扫描发现</span>'}
+                    </label>`).join('')}
+                </div>` : '<p class="muted" style="margin:4px 0 0;font-size:12px;">没扫到 tasks/ 下的本地模块，只带主脚本。</p>'}
+            </div>`).join('')}
+          <div class="backup-import-actions">
+            <span class="muted" style="margin-right:auto;">共选中 ${total} 项</span>
+            <button type="button" class="alt" data-assets-close>取消</button>
+            <button type="button" data-assets-confirm><i data-lucide="download" class="icon-sm"></i>确认并导出</button>
+          </div>
+        </div>
+      </div>`;
+
+    modal.querySelectorAll('[data-assets-row]').forEach((box) => {
+      box.addEventListener('change', () => {
+        const row = state[Number(box.dataset.assetsRow)];
+        const p = row.paths[Number(box.dataset.assetsPath)];
+        if (box.checked) row.checked.add(p);
+        else row.checked.delete(p);
+        render();
+      });
+    });
+    modal.querySelectorAll('[data-assets-close]').forEach((btn) => {
+      btn.addEventListener('click', () => closeBackupAssetsModal());
+    });
+    const confirmBtn = modal.querySelector('[data-assets-confirm]');
+    if (confirmBtn) confirmBtn.addEventListener('click', () => {
+      const selection = state.map((row) => ({ id: row.id, paths: [...row.checked].sort() }));
+      closeBackupAssetsModal();
+      onConfirm(selection);
+    });
+    if (window.lucide) window.lucide.createIcons({ root: modal });
+  };
+
+  render();
+  modal.hidden = false;
+  modal.classList.add('open');
+  if (mask) mask.hidden = false;
+}
+
+// 把确认后的勾选写回任务，下次导出就是默认值，不用重复勾。
+async function persistExtraPaths(selection) {
+  for (const row of selection || []) {
+    const task = tasksCache.find((item) => Number(item.id) === Number(row.id));
+    const current = Array.isArray(task?.extra_paths) ? [...task.extra_paths].sort() : [];
+    if (JSON.stringify(current) === JSON.stringify(row.paths)) continue;
+    try {
+      await fetchJson(`/api/tasks/${row.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extra_paths: row.paths }),
+      });
+    } catch (error) {
+      toast(`保存「${task?.name || row.id}」的附加模块失败：${error.message || ''}`, 'warn');
+    }
+  }
+}
+
+async function startBackupExport(ids, passphrase) {
+  let rows = null;
+  try {
+    const data = await fetchJson('/api/backup/scan-assets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_ids: ids }),
+    });
+    rows = Array.isArray(data.data) ? data.data : [];
+  } catch (error) {
+    // 扫描挂了不该挡住导出 —— 退回到按已声明内容打包。
+    toast(`依赖扫描失败：${error.message || ''}，按已声明的模块导出`, 'warn');
+    await downloadBackup(ids, passphrase);
+    return;
+  }
+
+  // 没有任何模块可选就别弹窗打扰，直接导。
+  if (!rows.some((row) => row.paths.length)) {
+    await downloadBackup(ids, passphrase);
+    return;
+  }
+
+  showBackupAssetsModal(rows, async (selection) => {
+    if (!selection) return;
+    await persistExtraPaths(selection);
+    await loadTasks();
+    await downloadBackup(ids, passphrase);
+  });
+}
+
 async function downloadBackup(taskIds, passphrase) {
   try {
     const body = {};
@@ -3365,60 +3496,6 @@ async function loadTaskGroups() {
 
 function taskIsRunning(task) {
   return !stoppingTaskIds.has(task.id) && (runningTaskIds.has(task.id) || Boolean(task.is_running));
-}
-
-// 「附加模块」只影响备份打包范围，不参与运行，所以单独存在表单外的一个数组里。
-let taskExtraPaths = [];
-
-function renderTaskExtraPaths() {
-  const box = document.getElementById('task-extra-paths');
-  if (!box) return;
-  if (!taskExtraPaths.length) {
-    box.innerHTML = '<p class="muted" style="margin:0;font-size:12px;">未声明。备份只带主脚本。</p>';
-    return;
-  }
-  box.innerHTML = taskExtraPaths.map((item, index) => `
-    <div class="task-extra-item">
-      <code>${escapeHtml(item)}</code>
-      <button type="button" class="icon-btn" title="移除" onclick="removeTaskExtraPath(${index})">
-        <i data-lucide="x"></i>
-      </button>
-    </div>`).join('');
-  if (window.lucide?.createIcons) window.lucide.createIcons();
-}
-
-window.removeTaskExtraPath = function removeTaskExtraPath(index) {
-  taskExtraPaths.splice(index, 1);
-  renderTaskExtraPaths();
-};
-
-async function scanTaskDeps() {
-  const scriptPath = form.elements.script_path?.value || selectedScriptPath;
-  if (!scriptPath) {
-    toast('先选一个脚本再扫描', 'warn');
-    return;
-  }
-  try {
-    const data = await fetchJson('/api/tasks/scan-deps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ script_path: scriptPath }),
-    });
-    const found = (Array.isArray(data.data) ? data.data : []).map((item) => item.path);
-    if (!found.length) {
-      toast('没扫到 tasks/ 下的本地模块，可手动确认脚本是否有附加模块', 'warn');
-      return;
-    }
-    // 合并而不是覆盖：动态导入扫不出来，用户手工留下的条目不能被冲掉。
-    const merged = new Set(taskExtraPaths);
-    for (const item of found) merged.add(item);
-    const added = merged.size - taskExtraPaths.length;
-    taskExtraPaths = [...merged].sort();
-    renderTaskExtraPaths();
-    toast(added ? `扫到 ${found.length} 项，新增 ${added} 项` : `扫到 ${found.length} 项，都已在列表里`, 'success');
-  } catch (error) {
-    toast(error.message || '扫描失败', 'error');
-  }
 }
 
 window.selectTaskGroup = function selectTaskGroup(key) {
@@ -4525,8 +4602,6 @@ function fillTaskForm(task) {
   }
   if (form.elements.browser_profile_id) form.elements.browser_profile_id.value = task.browser_profile_id || '';
   renderTaskGroupOptions(document.getElementById('task-group-select'), task.group_id || '');
-  taskExtraPaths = Array.isArray(task.extra_paths) ? [...task.extra_paths] : [];
-  renderTaskExtraPaths();
   let proxyValue = '';
   let proxyMode = 'inherit';
   let runtimeStack = '';
@@ -4662,7 +4737,6 @@ form.addEventListener('submit', async (event) => {
   }
   payload.browser_profile_id = taskProfileSelect && taskProfileSelect.value ? Number(taskProfileSelect.value) : null;
   payload.group_id = payload.group_id ? Number(payload.group_id) : null;
-  payload.extra_paths = taskExtraPaths;
   // 临时/持久只走 use_persistent 字段，不再写入可见 env 列表
   const envByName = new Map(env.map((e) => [e.name, e]));
   deleteManagedMapKeys(envByName, [
@@ -5308,12 +5382,12 @@ if (backupExportBtn) {
       // 带配置 ⇒ 必须加密。密码只在这一刻存在于内存里，不落库、不进 URL。
       dialogPassphrase(
         '导出文件将包含所有环境变量的值，整体加密后保存。密码不会被保存，忘记就无法恢复。',
-        (passphrase) => downloadBackup(ids, passphrase),
+        (passphrase) => startBackupExport(ids, passphrase),
       );
       return;
     }
     // 不带配置 ⇒ 只有变量名，可以放心分享，不需要密码。
-    downloadBackup(ids, null);
+    startBackupExport(ids, null);
   });
 }
 if (backupImportBtn && backupFileInput) {
@@ -6172,9 +6246,6 @@ function wireAuthUi(username) {
 
   const cpBtn = document.getElementById('change-password-btn');
   if (cpBtn) cpBtn.addEventListener('click', openChangePasswordDialog);
-
-  const scanDepsBtn = document.getElementById('task-scan-deps-btn');
-  if (scanDepsBtn) scanDepsBtn.addEventListener('click', scanTaskDeps);
 }
 
 // 先确认登录再启动面板。不先问一句的话，未登录时十几个接口会并发打出去，
