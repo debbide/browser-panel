@@ -63,7 +63,7 @@ class HttpSocksBridge {
       });
 
       this.server.on('error', reject);
-      this.server.listen(0, '127.0.0.1', () => {
+      this.server.listen(15666, '127.0.0.1', () => {
         this.httpPort = this.server.address().port;
         resolve(this.httpPort);
       });
