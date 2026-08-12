@@ -13,6 +13,29 @@ class HttpSocksBridge {
     
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
+        try {
+          const url = new URL(req.url);
+          if (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '::1' || url.hostname === '0.0.0.0') {
+            const proxyReq = http.request({
+              hostname: url.hostname,
+              port: url.port || 80,
+              path: url.pathname + url.search,
+              method: req.method,
+              headers: req.headers
+            }, (proxyRes) => {
+              res.writeHead(proxyRes.statusCode, proxyRes.headers);
+              proxyRes.pipe(res);
+            });
+            proxyReq.on('error', () => {
+              res.writeHead(502);
+              res.end('Bad Gateway');
+            });
+            req.pipe(proxyReq);
+            return;
+          }
+        } catch (e) {
+          // invalid url
+        }
         res.writeHead(405);
         res.end('Proxy bridge only supports CONNECT');
       });
