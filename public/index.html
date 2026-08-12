@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260812a" />
+  <link rel="stylesheet" href="/styles.css?v=20260812b" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -386,35 +386,37 @@
               启用云端备份（支持定时自动备份）
             </label>
             <div>
-              <label class="field-label" for="cloud-backup-endpoint">Endpoint</label>
-              <input type="text" id="cloud-backup-endpoint" name="endpoint" placeholder="https://s3.example.com" autocomplete="off" spellcheck="false" />
+              <label class="field-label" for="cloud-backup-endpoint">服务地址（Endpoint）</label>
+              <input type="text" id="cloud-backup-endpoint" name="endpoint" placeholder="https://&lt;account-id&gt;.r2.cloudflarestorage.com" autocomplete="off" spellcheck="false" />
               <div class="schedule-note" style="margin-top:4px;">
-                S3 兼容服务地址。MinIO / 自建填 <code>http://host:9000</code>（会强制升级 HTTPS 则改用代理），R2 填 <code>https://&lt;account&gt;.r2.cloudflarestorage.com</code>。仅支持 HTTPS，走代理时用 http。
+                <strong>Cloudflare R2</strong>：地址填 <code>https://&lt;Account ID&gt;.r2.cloudflarestorage.com</code>（Account ID 在 R2 概览页），
+                访问凭据用 R2 的 API 令牌（Access Key / Secret Key）。仅支持 HTTPS；走代理时用 http。
+                MinIO / 自建填 <code>http://host:9000</code>（会被强制升级 HTTPS 则改用代理）。
               </div>
             </div>
             <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
               <div>
-                <label class="field-label" for="cloud-backup-region">Region</label>
+                <label class="field-label" for="cloud-backup-region">区域（Region）</label>
                 <input type="text" id="cloud-backup-region" name="region" placeholder="us-east-1" autocomplete="off" spellcheck="false" />
               </div>
               <div>
-                <label class="field-label" for="cloud-backup-bucket">Bucket</label>
+                <label class="field-label" for="cloud-backup-bucket">存储桶（Bucket）</label>
                 <input type="text" id="cloud-backup-bucket" name="bucket" placeholder="my-panel-backup" autocomplete="off" spellcheck="false" />
               </div>
             </div>
             <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
               <div>
-                <label class="field-label" for="cloud-backup-access-key">Access Key</label>
+                <label class="field-label" for="cloud-backup-access-key">访问密钥（Access Key）</label>
                 <input type="text" id="cloud-backup-access-key" name="accessKey" placeholder="AKIA..." autocomplete="off" spellcheck="false" />
               </div>
               <div>
-                <label class="field-label" for="cloud-backup-secret-key">Secret Key</label>
+                <label class="field-label" for="cloud-backup-secret-key">私密密钥（Secret Key）</label>
                 <input type="password" id="cloud-backup-secret-key" name="secretKey" autocomplete="new-password" placeholder="已设置则留空不修改" />
               </div>
             </div>
             <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
               <div>
-                <label class="field-label" for="cloud-backup-token">Session Token（可选）</label>
+                <label class="field-label" for="cloud-backup-token">会话 Token（可选）</label>
                 <input type="password" id="cloud-backup-token" name="token" autocomplete="new-password" placeholder="临时凭据专用，留空不修改" />
               </div>
               <div>
@@ -426,12 +428,12 @@
               <div>
                 <label class="inline-check">
                   <input type="checkbox" id="cloud-backup-path-style" name="pathStyle" checked />
-                  Path-style 寻址（MinIO / 自建需要）
+                  路径式寻址（Path-style，MinIO / 自建需要）
                 </label>
-                <div class="schedule-note" style="margin-top:4px;">R2 等虚拟主机式服务可关掉。</div>
+                <div class="schedule-note" style="margin-top:4px;">R2 等虚拟主机式服务可关掉（改用 &lt;bucket&gt;.&lt;endpoint&gt;）。</div>
               </div>
               <div>
-                <label class="field-label" for="cloud-backup-prefix">Object 前缀</label>
+                <label class="field-label" for="cloud-backup-prefix">对象前缀（Object 前缀）</label>
                 <input type="text" id="cloud-backup-prefix" name="prefix" placeholder="panel-snapshot" autocomplete="off" spellcheck="false" />
               </div>
             </div>
@@ -507,6 +509,22 @@
               </button>
             </div>
             <div id="cloud-backup-list" class="backup-import-summary" style="flex-direction:column; align-items:stretch; gap:8px;"></div>
+          </div>
+
+          <div class="cloud-backup-block">
+            <div>
+              <h4 style="margin:0;">上传快照恢复</h4>
+              <p class="muted" style="margin:2px 0 8px;">本地已有一份 <code>.bpsnap</code> 快照时，可直接选择文件还原，无需经过 S3。需要这份快照当时的备份密码。</p>
+            </div>
+            <div class="row" style="gap:8px; flex-wrap:wrap;">
+              <input type="file" id="cloud-backup-upload-input" accept=".bpsnap,.bin" style="flex:1 1 240px;" />
+              <button type="button" id="cloud-backup-upload-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="upload" class="icon-sm"></i> 上传并还原
+              </button>
+            </div>
+            <p class="schedule-note" style="margin-top:8px;">
+              还原同样会把当前数据挪到 <code>data/pre-restore-&lt;时间戳&gt;/</code> 留作回滚，不会删除；面板随后自动重启。
+            </p>
           </div>
         </section>
 
@@ -1150,7 +1168,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260812a"></script>
+  <script src="/app.js?v=20260812b"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

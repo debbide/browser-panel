@@ -51,14 +51,13 @@ function encodeKey(key) {
   return String(key || '').split('/').map((seg) => encodeURIComponent(seg)).join('/');
 }
 
-/** path-style 默认开（MinIO / 自建都吃这套），带 virtual-host 开关。 */
+/** path-style 默认开（MinIO / 自建都吃这套）；pathStyle 关掉时走 virtual-host（R2 等）。 */
 function buildTarget({ endpoint, bucket, key, pathStyle, virtualHost }) {
   const host = normalizeHost(endpoint);
-  if (virtualHost) {
+  if (virtualHost || pathStyle === false) {
+    // virtual-host：<bucket>.<host>，URL 里不再出现 bucket 段。R2 的证书是 *.r2.cloudflarestorage.com
+    // 通配，子域桶名可用；MinIO 走 path-style，勾选关掉 pathStyle 时才会进到这里。
     return { host: `${bucket}.${host}`, url: `https://${bucket}.${host}/${encodeKey(key)}` };
-  }
-  if (pathStyle === false) {
-    return { host, url: `https://${host}/${bucket}/${encodeKey(key)}` };
   }
   return { host, url: `https://${host}/${bucket}/${encodeKey(key)}` };
 }

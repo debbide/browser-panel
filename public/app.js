@@ -443,6 +443,8 @@ const cloudBackupNextText = document.getElementById('cloud-backup-next-text');
 const cloudBackupList = document.getElementById('cloud-backup-list');
 const cloudRestoreModal = document.getElementById('cloud-restore-modal');
 const cloudRestoreMask = document.getElementById('cloud-restore-mask');
+const cloudBackupUploadBtn = document.getElementById('cloud-backup-upload-btn');
+const cloudBackupUploadInput = document.getElementById('cloud-backup-upload-input');
 const taskParamsBlock = document.getElementById('task-params-block');
 const taskParamsHint = document.getElementById('task-params-hint');
 const taskEnvEditor = document.getElementById('task-env-editor');
@@ -4067,6 +4069,44 @@ async function confirmCloudRestore() {
   }
 }
 
+/**
+ * 手动上传 .bpsnap 快照还原（不经 S3）。选文件 → 现场输入该快照的备份密码 →
+ * 以 octet-stream 上传，密码走请求头。成功后面板重启，网络错误按「已触发重启」处理。
+ */
+async function uploadCloudBackupRestore() {
+  if (!cloudBackupUploadBtn || !cloudBackupUploadInput) return;
+  const file = cloudBackupUploadInput.files && cloudBackupUploadInput.files[0];
+  if (!file) { toast('请先选择 .bpsnap 快照文件', 'warn'); return; }
+  cloudBackupUploadInput.value = '';
+
+  dialogPassphraseOnce('请输入这份快照的备份密码（备份时设置的口令，不是云端设置里的那个）。', async (passphrase) => {
+    cloudBackupUploadBtn.disabled = true;
+    cloudBackupUploadBtn.textContent = '上传中...';
+    try {
+      await fetchJson('/api/cloud-backup/restore-upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'x-backup-passphrase': passphrase,
+        },
+        body: file,
+      });
+      toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
+    } catch (error) {
+      const msg = String(error && error.message || '');
+      if (/fetch failed|failed to fetch|networkerror|ecoonreset|sock/i.test(msg)) {
+        toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
+        return;
+      }
+      toast(error.message || '上传还原失败', 'error');
+    } finally {
+      cloudBackupUploadBtn.disabled = false;
+      cloudBackupUploadBtn.innerHTML = '<i data-lucide="upload" class="icon-sm"></i> 上传并还原';
+      if (window.lucide) window.lucide.createIcons();
+    }
+  });
+}
+
 function setSuccessHeuristicsStatus(text, color) {
   if (!successHeuristicsStatus) return;
   successHeuristicsStatus.textContent = text;
@@ -5821,6 +5861,12 @@ if (cloudBackupList) {
   });
 }
 if (cloudRestoreMask) cloudRestoreMask.addEventListener('click', closeCloudRestoreModal);
+if (cloudBackupUploadBtn && cloudBackupUploadInput) {
+  cloudBackupUploadBtn.addEventListener('click', () => {
+    cloudBackupUploadInput.click();
+  });
+  cloudBackupUploadInput.addEventListener('change', uploadCloudBackupRestore);
+}
 
 if (successHeuristicsForm) {
   successHeuristicsForm.addEventListener('submit', async (e) => {

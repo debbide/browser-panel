@@ -206,12 +206,6 @@ async function previewRemoteBackup(key) {
  * 返回后进程即将退出（systemd 重启或 exit），pre-restore 目录留作回滚路径。
  */
 async function restoreFromRemote(key) {
-  if (busyOp) throw opInProgress();
-  if (scheduler.isAnyTaskRunning()) {
-    const error = new Error('有任务正在运行，无法恢复。请先停止所有任务');
-    error.code = 'operation_in_progress';
-    throw error;
-  }
   const settings = db.getS3BackupSettings();
   requireFields(settings, ['endpoint', 'bucket', 'accessKey', 'secretKey'], '恢复');
   const passphrase = getPassphrase(settings);
@@ -219,11 +213,38 @@ async function restoreFromRemote(key) {
 
   const client = buildClient(settings);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bpsnap-restore-in-'));
-  busyOp = 'restore';
   try {
     const filePath = path.join(dir, path.basename(key) || 'snapshot.bpsnap');
     await client.getObject({ key, destPath: filePath });
+    return await performRestoreCore({ filePath, passphrase });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
+/**
+ * 手动上传快照恢复：本地已有一份 .bpsnap 时，不上传 S3、不读设置密码，
+ * 用用户现场提供的密码直接还原。其余流程与 restoreFromRemote 完全一致。
+ */
+async function restoreFromUpload(filePath, passphrase) {
+  return performRestoreCore({ filePath, passphrase });
+}
+
+/**
+ * 还原的核心不可逆段（远端下载与上传恢复共用）：
+ * 并发锁 + 停任务门控 → 解密校验到 staging → 关库换文件 → 触发重启。
+ */
+async function performRestoreCore({ filePath, passphrase }) {
+  if (busyOp) throw opInProgress();
+  if (scheduler.isAnyTaskRunning()) {
+    const error = new Error('有任务正在运行，无法恢复。请先停止所有任务');
+    error.code = 'operation_in_progress';
+    throw error;
+  }
+  if (!passphrase) throw new Error('缺少备份密码');
+
+  busyOp = 'restore';
+  try {
     // 解密 + 校验到 staging（此时库还没动，失败可安全回退）
     const restored = await restoreSnapshot({ filePath, passphrase });
 
@@ -239,7 +260,6 @@ async function restoreFromRemote(key) {
     const restartMode = triggerRestart();
     return {
       ok: true,
-      key,
       manifest: restored.manifest,
       preRestoreDir,
       restartMode,
@@ -248,7 +268,6 @@ async function restoreFromRemote(key) {
         : '还原完成，请手动重启面板生效',
     };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
     busyOp = null;
   }
 }
@@ -423,6 +442,7 @@ module.exports = {
   listRemoteBackups,
   previewRemoteBackup,
   restoreFromRemote,
+  restoreFromUpload,
   testConnection,
   computeNextAutoRun,
   scheduleNextAuto,

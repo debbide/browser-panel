@@ -9,6 +9,9 @@
  *   其余 → 400
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const express = require('express');
 
 const db = require('../db');
@@ -85,7 +88,7 @@ function createCloudBackupRouter(service = backupService) {
       const FIELDS = [
         'enabled', 'endpoint', 'region', 'bucket', 'accessKey', 'secretKey',
         'token', 'proxy', 'pathStyle', 'prefix', 'retention', 'schedule',
-        'hour', 'minute',
+        'hour', 'minute', 'passphrase',
       ];
       for (const field of FIELDS) {
         if (body[field] === undefined) continue;
@@ -175,6 +178,40 @@ function createCloudBackupRouter(service = backupService) {
       res.status(statusForError(error)).json({ message: error.message || '恢复失败' });
     }
   });
+
+  // 手动上传 .bpsnap 快照恢复（不经 S3，适用于本地已有文件 / 换机还原）。
+  // body 是原始文件字节（application/octet-stream），密码走请求头 —— 快照是加密的，
+  // 不用设置页里存的那个密码，必须由用户现场提供。
+  router.post('/restore-upload',
+    express.raw({ type: 'application/octet-stream', limit: '256mb' }),
+    async (req, res) => {
+      try {
+        const passphrase = String(req.get('x-backup-passphrase') || '').trim();
+        if (!passphrase) {
+          res.status(400).json({ message: '缺少备份密码（请求头 x-backup-passphrase）' });
+          return;
+        }
+        const buffer = req.body;
+        if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+          res.status(400).json({ message: '上传内容为空' });
+          return;
+        }
+        const tmpPath = path.join(
+          os.tmpdir(),
+          `bpsnap-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.bpsnap`,
+        );
+        try {
+          fs.writeFileSync(tmpPath, buffer);
+          const result = await service.restoreFromUpload(tmpPath, passphrase);
+          res.json({ data: result });
+        } finally {
+          // 上传的明文临时文件立刻清掉
+          try { fs.rmSync(tmpPath, { force: true }); } catch { /* 清理失败不阻塞 */ }
+        }
+      } catch (error) {
+        res.status(statusForError(error)).json({ message: error.message || '恢复失败' });
+      }
+    });
 
   return router;
 }
