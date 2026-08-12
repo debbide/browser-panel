@@ -415,6 +415,34 @@ const visionChannelsList = document.getElementById('vision-channels-list');
 const visionAddChannelBtn = document.getElementById('vision-add-channel');
 const visionTestBtn = document.getElementById('vision-test-btn');
 const visionSaveBtn = document.getElementById('vision-save-btn');
+const cloudBackupForm = document.getElementById('cloud-backup-form');
+const cloudBackupStatusText = document.getElementById('cloud-backup-status-text');
+const cloudBackupEnabled = document.getElementById('cloud-backup-enabled');
+const cloudBackupEndpoint = document.getElementById('cloud-backup-endpoint');
+const cloudBackupRegion = document.getElementById('cloud-backup-region');
+const cloudBackupBucket = document.getElementById('cloud-backup-bucket');
+const cloudBackupAccessKey = document.getElementById('cloud-backup-access-key');
+const cloudBackupSecretKey = document.getElementById('cloud-backup-secret-key');
+const cloudBackupToken = document.getElementById('cloud-backup-token');
+const cloudBackupProxy = document.getElementById('cloud-backup-proxy');
+const cloudBackupPathStyle = document.getElementById('cloud-backup-path-style');
+const cloudBackupPrefix = document.getElementById('cloud-backup-prefix');
+const cloudBackupRetention = document.getElementById('cloud-backup-retention');
+const cloudBackupSchedule = document.getElementById('cloud-backup-schedule');
+const cloudBackupTimeFields = document.getElementById('cloud-backup-time-fields');
+const cloudBackupHour = document.getElementById('cloud-backup-hour');
+const cloudBackupMinute = document.getElementById('cloud-backup-minute');
+const cloudBackupPassphrase = document.getElementById('cloud-backup-passphrase');
+const cloudBackupPassphraseConfirm = document.getElementById('cloud-backup-passphrase-confirm');
+const cloudBackupTestBtn = document.getElementById('cloud-backup-test-btn');
+const cloudBackupSaveBtn = document.getElementById('cloud-backup-save-btn');
+const cloudBackupLabel = document.getElementById('cloud-backup-label');
+const cloudBackupRunBtn = document.getElementById('cloud-backup-run-btn');
+const cloudBackupRefreshBtn = document.getElementById('cloud-backup-refresh-btn');
+const cloudBackupNextText = document.getElementById('cloud-backup-next-text');
+const cloudBackupList = document.getElementById('cloud-backup-list');
+const cloudRestoreModal = document.getElementById('cloud-restore-modal');
+const cloudRestoreMask = document.getElementById('cloud-restore-mask');
 const taskParamsBlock = document.getElementById('task-params-block');
 const taskParamsHint = document.getElementById('task-params-hint');
 const taskEnvEditor = document.getElementById('task-env-editor');
@@ -3758,6 +3786,287 @@ async function saveSchedulerSettings() {
   await loadSchedulerSettings();
 }
 
+/* ---------- 云端备份 ---------- */
+
+let pendingCloudRestoreKey = null;
+
+function setCloudBackupStatus(text, color) {
+  if (!cloudBackupStatusText) return;
+  cloudBackupStatusText.textContent = text;
+  if (color) cloudBackupStatusText.style.color = color;
+}
+
+function updateCloudBackupTimeFields() {
+  if (!cloudBackupTimeFields) return;
+  const show = cloudBackupSchedule && cloudBackupSchedule.value !== 'off';
+  cloudBackupTimeFields.style.display = show ? 'grid' : 'none';
+}
+
+function formatCloudBackupTime(iso) {
+  if (!iso) return '-';
+  try {
+    return new Date(iso).toLocaleString();
+  } catch { return String(iso); }
+}
+
+async function loadCloudBackupSettings() {
+  if (!cloudBackupForm) return;
+  setCloudBackupStatus('状态：加载中...', '#94a3b8');
+  try {
+    const res = await fetchJson('/api/cloud-backup/settings');
+    const data = res.data || {};
+    if (cloudBackupEnabled) cloudBackupEnabled.checked = Boolean(data.enabled);
+    if (cloudBackupEndpoint) cloudBackupEndpoint.value = data.endpoint || '';
+    if (cloudBackupRegion) cloudBackupRegion.value = data.region || '';
+    if (cloudBackupBucket) cloudBackupBucket.value = data.bucket || '';
+    if (cloudBackupAccessKey) {
+      cloudBackupAccessKey.value = '';
+      cloudBackupAccessKey.placeholder = data.hasAccessKey ? `已设置 ${data.accessKeyMasked}（留空不修改）` : 'AKIA...';
+    }
+    if (cloudBackupSecretKey) {
+      cloudBackupSecretKey.value = '';
+      cloudBackupSecretKey.placeholder = data.hasSecretKey ? `已设置 ${data.secretKeyMasked}（留空不修改）` : '未设置';
+    }
+    if (cloudBackupToken) {
+      cloudBackupToken.value = '';
+      cloudBackupToken.placeholder = data.hasToken ? `已设置 ${data.tokenMasked}（留空不修改）` : '临时凭据专用，留空不修改';
+    }
+    if (cloudBackupProxy) cloudBackupProxy.value = data.proxy || '';
+    if (cloudBackupPathStyle) cloudBackupPathStyle.checked = Boolean(data.pathStyle);
+    if (cloudBackupPrefix) cloudBackupPrefix.value = data.prefix || '';
+    if (cloudBackupRetention) cloudBackupRetention.value = data.retention ?? 7;
+    if (cloudBackupSchedule) cloudBackupSchedule.value = data.schedule || 'off';
+    if (cloudBackupHour) cloudBackupHour.value = data.hour ?? 3;
+    if (cloudBackupMinute) cloudBackupMinute.value = data.minute ?? 0;
+    if (cloudBackupPassphrase) {
+      cloudBackupPassphrase.value = '';
+      cloudBackupPassphrase.placeholder = data.hasPassphrase ? '已设置备份密码（留空不修改）' : '未设置，请填写并离线保存';
+    }
+    if (cloudBackupPassphraseConfirm) cloudBackupPassphraseConfirm.checked = false;
+    updateCloudBackupTimeFields();
+    const enabledText = data.enabled ? '已启用' : '未启用';
+    const scheduleText = { off: '仅手动', hourly: '每小时', daily: '每天' }[data.schedule] || '仅手动';
+    setCloudBackupStatus(`状态：${enabledText} · ${scheduleText}`, '#94a3b8');
+    if (cloudBackupNextText) {
+      if (data.nextAt) {
+        try {
+          cloudBackupNextText.textContent = `下一次自动备份：${new Date(data.nextAt).toLocaleString()}`;
+        } catch {
+          cloudBackupNextText.textContent = '下一次自动备份：未排期';
+        }
+      } else {
+        cloudBackupNextText.textContent = '下一次自动备份：未排期';
+      }
+    }
+  } catch (error) {
+    setCloudBackupStatus('状态：加载失败', '#ef4444');
+    console.error('Failed to load cloud backup settings:', error);
+  }
+}
+
+async function saveCloudBackupSettings() {
+  if (!cloudBackupForm) return;
+  const passphrase = cloudBackupPassphrase ? cloudBackupPassphrase.value : '';
+  if (passphrase && (!cloudBackupPassphraseConfirm || !cloudBackupPassphraseConfirm.checked)) {
+    toast('设置新密码前请先勾选「我已把备份密码离线保存」', 'warn');
+    return;
+  }
+  if (cloudBackupSaveBtn) cloudBackupSaveBtn.disabled = true;
+  try {
+    await fetchJson('/api/cloud-backup/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled: Boolean(cloudBackupEnabled && cloudBackupEnabled.checked),
+        endpoint: cloudBackupEndpoint?.value || '',
+        region: cloudBackupRegion?.value || '',
+        bucket: cloudBackupBucket?.value || '',
+        accessKey: cloudBackupAccessKey?.value || '',
+        secretKey: cloudBackupSecretKey?.value || '',
+        token: cloudBackupToken?.value || '',
+        proxy: cloudBackupProxy?.value || '',
+        pathStyle: Boolean(cloudBackupPathStyle && cloudBackupPathStyle.checked),
+        prefix: cloudBackupPrefix?.value || '',
+        retention: Number(cloudBackupRetention?.value || 7),
+        schedule: cloudBackupSchedule?.value || 'off',
+        hour: Number(cloudBackupHour?.value || 3),
+        minute: Number(cloudBackupMinute?.value || 0),
+        passphrase,
+      }),
+    });
+    toast('云端备份设置已保存', 'success');
+    await loadCloudBackupSettings();
+  } catch (error) {
+    toast(error.message || '保存云端备份设置失败', 'error');
+  } finally {
+    if (cloudBackupSaveBtn) cloudBackupSaveBtn.disabled = false;
+  }
+}
+
+async function testCloudBackupConnection() {
+  if (!cloudBackupTestBtn) return;
+  cloudBackupTestBtn.disabled = true;
+  cloudBackupTestBtn.textContent = '测试中...';
+  try {
+    await fetchJson('/api/cloud-backup/test', { method: 'POST' });
+    toast('连接成功：已写入并删除探针对象', 'success');
+  } catch (error) {
+    toast(error.message || '测试连接失败', 'error');
+  } finally {
+    cloudBackupTestBtn.disabled = false;
+    cloudBackupTestBtn.innerHTML = '<i data-lucide="plug-zap" class="icon-sm"></i> 测试连接';
+    if (window.lucide) window.lucide.createIcons();
+  }
+}
+
+async function runCloudBackupNow() {
+  if (!cloudBackupRunBtn) return;
+  const label = cloudBackupLabel ? cloudBackupLabel.value.trim() : '';
+  cloudBackupRunBtn.disabled = true;
+  cloudBackupRunBtn.textContent = '备份中...';
+  try {
+    const res = await fetchJson('/api/cloud-backup/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    const data = res.data || {};
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+    const suffix = warnings.length ? `（${warnings.length} 条提示，见控制台）` : '';
+    toast(`备份完成：${data.name || data.key || ''}${suffix}`, 'success');
+    warnings.forEach((w) => console.warn('[cloud-backup]', w));
+    if (cloudBackupLabel) cloudBackupLabel.value = '';
+    await loadCloudBackupSettings();
+    await loadCloudBackupList();
+  } catch (error) {
+    toast(error.message || '备份失败', 'error');
+  } finally {
+    cloudBackupRunBtn.disabled = false;
+    cloudBackupRunBtn.innerHTML = '<i data-lucide="cloud-upload" class="icon-sm"></i> 立即备份';
+    if (window.lucide) window.lucide.createIcons();
+  }
+}
+
+async function loadCloudBackupList() {
+  if (!cloudBackupList) return;
+  cloudBackupList.innerHTML = '<p class="muted" style="margin:0;">加载中...</p>';
+  try {
+    const res = await fetchJson('/api/cloud-backup/list');
+    const items = Array.isArray(res.data) ? res.data : [];
+    if (!items.length) {
+      cloudBackupList.innerHTML = '<p class="muted" style="margin:0;">还没有远端备份。点「立即备份」上传第一份。</p>';
+      return;
+    }
+    cloudBackupList._items = items;
+    cloudBackupList.innerHTML = items.map((item, index) => {
+      const when = formatCloudBackupTime(item.lastModified);
+      return `
+        <div class="backup-summary-card" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div style="min-width:0;">
+            <strong style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.name)}</strong>
+            <span class="muted">${when} · ${formatBytes(item.size)}</span>
+          </div>
+          <div class="row" style="gap:6px; flex-wrap:nowrap;">
+            <button type="button" class="alt btn-with-icon" data-cloud-preview="${index}"><i data-lucide="eye" class="icon-sm"></i> 预览</button>
+            <button type="button" class="btn-primary btn-with-icon" data-cloud-restore="${index}"><i data-lucide="download-cloud" class="icon-sm"></i> 恢复</button>
+          </div>
+        </div>`;
+    }).join('');
+    if (window.lucide) window.lucide.createIcons({ root: cloudBackupList });
+  } catch (error) {
+    cloudBackupList.innerHTML = `<p class="muted" style="margin:0;color:#ef4444;">加载失败：${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function closeCloudRestoreModal() {
+  if (!cloudRestoreModal) return;
+  cloudRestoreModal.classList.remove('open');
+  cloudRestoreModal.hidden = true;
+  if (cloudRestoreMask) cloudRestoreMask.hidden = true;
+  cloudRestoreModal.innerHTML = '';
+  pendingCloudRestoreKey = null;
+}
+
+/** 预览某份远端快照。预览和「恢复」按钮共用这条路径：先看清单，再在弹窗里确认还原。 */
+async function previewCloudBackup(key) {
+  if (!cloudRestoreModal) return;
+  try {
+    const res = await fetchJson('/api/cloud-backup/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+    const data = res.data || {};
+    const manifest = data.manifest || {};
+    const counts = manifest.counts || {};
+    pendingCloudRestoreKey = key;
+    const created = manifest.created_at ? new Date(manifest.created_at).toLocaleString() : '-';
+    cloudRestoreModal.innerHTML = `
+      <div class="modal-panel backup-import-panel">
+        <div class="modal-header" style="padding:18px 22px;">
+          <div><h2 style="margin:0;">还原远端快照</h2><p class="muted" style="margin:3px 0 0;">${escapeHtml(data.name || key)}</p></div>
+          <button type="button" class="icon-btn" data-cloud-restore-close aria-label="关闭"><i data-lucide="x" class="icon-md"></i></button>
+        </div>
+        <div class="modal-body" style="padding:22px;">
+          <div class="backup-import-summary">
+            <div class="backup-summary-card"><strong>${counts.tasks ?? '-'}</strong><span class="muted">任务</span></div>
+            <div class="backup-summary-card"><strong>${counts.profiles ?? '-'}</strong><span class="muted">浏览器配置</span></div>
+            <div class="backup-summary-card"><strong>${counts.users ?? '-'}</strong><span class="muted">面板账号</span></div>
+            <div class="backup-summary-card"><strong>${counts.envEntries ?? '-'}</strong><span class="muted">环境变量</span></div>
+          </div>
+          <ul class="backup-conflict-list backup-warning">
+            <li>创建时间：${created}</li>
+            <li>面板版本：${escapeHtml(manifest.panel_version || '-')}</li>
+            <li>包含内容：${escapeHtml((manifest.includes || []).join('、'))}</li>
+          </ul>
+          <p class="schedule-note" style="margin-bottom:12px;">
+            还原会<b>覆盖当前全部任务与配置</b>，原数据挪到 <code>data/pre-restore-&lt;时间戳&gt;/</code> 留作回滚，不会删除。
+            已配置 systemd（bp.sh）时面板将自动重启生效，否则需手动重启。
+          </p>
+          <div class="backup-import-actions">
+            <button type="button" class="alt" data-cloud-restore-close>取消</button>
+            <button type="button" data-cloud-restore-confirm class="btn-primary btn-with-icon"><i data-lucide="download-cloud" class="icon-sm"></i>确认还原</button>
+          </div>
+        </div>
+      </div>`;
+    cloudRestoreModal.hidden = false;
+    if (cloudRestoreMask) cloudRestoreMask.hidden = false;
+    cloudRestoreModal.classList.add('open');
+    cloudRestoreModal.querySelectorAll('[data-cloud-restore-close]').forEach((button) => button.addEventListener('click', closeCloudRestoreModal));
+    cloudRestoreModal.querySelector('[data-cloud-restore-confirm]').addEventListener('click', confirmCloudRestore);
+    if (window.lucide) window.lucide.createIcons({ root: cloudRestoreModal });
+  } catch (error) {
+    toast(error.message || '预览备份失败', 'error');
+  }
+}
+
+async function confirmCloudRestore() {
+  if (!pendingCloudRestoreKey) return;
+  if (!window.confirm('确认还原该快照？当前任务与配置将被覆盖（原数据保留在 pre-restore 目录），面板可能自动重启。')) return;
+  const confirmButton = cloudRestoreModal.querySelector('[data-cloud-restore-confirm]');
+  if (confirmButton) confirmButton.disabled = true;
+  try {
+    const res = await fetchJson('/api/cloud-backup/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: pendingCloudRestoreKey }),
+    });
+    const data = res.data || {};
+    toast(data.message || '还原完成，请稍候面板重启', 'success');
+    closeCloudRestoreModal();
+  } catch (error) {
+    // 还原成功后面板会立刻重启，响应可能被掐断 —— 网络错误按「已触发重启」处理
+    const msg = String(error && error.message || '');
+    if (/fetch failed|failed to fetch|networkerror|ecoonreset|sock/i.test(msg)) {
+      toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
+      closeCloudRestoreModal();
+      return;
+    }
+    toast(error.message || '恢复失败', 'error');
+    if (confirmButton) confirmButton.disabled = false;
+  }
+}
+
 function setSuccessHeuristicsStatus(text, color) {
   if (!successHeuristicsStatus) return;
   successHeuristicsStatus.textContent = text;
@@ -5471,6 +5780,48 @@ if (schedulerForm) {
   });
 }
 
+if (cloudBackupForm) {
+  cloudBackupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (cloudBackupSaveBtn) {
+      cloudBackupSaveBtn.disabled = true;
+      cloudBackupSaveBtn.textContent = '保存中...';
+    }
+    try {
+      await saveCloudBackupSettings();
+    } catch (error) {
+      toast(error.message || '保存云端备份设置失败', 'error');
+    } finally {
+      if (cloudBackupSaveBtn) {
+        cloudBackupSaveBtn.disabled = false;
+        cloudBackupSaveBtn.innerHTML = '<i data-lucide="save" class="icon-sm"></i> 保存设置';
+        if (window.lucide) window.lucide.createIcons();
+      }
+    }
+  });
+}
+if (cloudBackupTestBtn) cloudBackupTestBtn.addEventListener('click', testCloudBackupConnection);
+if (cloudBackupRunBtn) cloudBackupRunBtn.addEventListener('click', runCloudBackupNow);
+if (cloudBackupRefreshBtn) cloudBackupRefreshBtn.addEventListener('click', loadCloudBackupList);
+if (cloudBackupSchedule) cloudBackupSchedule.addEventListener('change', updateCloudBackupTimeFields);
+if (cloudBackupList) {
+  cloudBackupList.addEventListener('click', (e) => {
+    const items = cloudBackupList._items || [];
+    const previewBtn = e.target.closest('[data-cloud-preview]');
+    if (previewBtn) {
+      const item = items[Number(previewBtn.dataset.cloudPreview)];
+      if (item) previewCloudBackup(item.key);
+      return;
+    }
+    const restoreBtn = e.target.closest('[data-cloud-restore]');
+    if (restoreBtn) {
+      const item = items[Number(restoreBtn.dataset.cloudRestore)];
+      if (item) previewCloudBackup(item.key);
+    }
+  });
+}
+if (cloudRestoreMask) cloudRestoreMask.addEventListener('click', closeCloudRestoreModal);
+
 if (successHeuristicsForm) {
   successHeuristicsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -6294,6 +6645,8 @@ async function bootPanel() {
   loadVisionSettings();
   loadGlobalEnvSettings();
   loadTelegramSettings();
+  loadCloudBackupSettings();
+  loadCloudBackupList();
   loadTasksFs(fsCurrentPath);
 }
 

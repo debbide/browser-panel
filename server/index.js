@@ -34,6 +34,8 @@ const { PROXY_MODES } = require('./runtime/runtime-contract');
 const { resolveEffectiveProxyContract } = require('./runtime/env-builder');
 const { manager: warpManager, cleanError: cleanWarpError } = require('./warp/manager');
 const { createWarpRouter } = require('./warp/routes');
+const cloudBackup = require('./cloud/backup-service');
+const { createCloudBackupRouter } = require('./cloud/routes');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
 fs.mkdirSync(config.paths.publicDir, { recursive: true });
@@ -684,6 +686,8 @@ app.get('/api/version', (req, res) => {
 });
 app.use(requireAuth);
 app.use('/api/warp', createWarpRouter(warpManager));
+// 云端备份快照里含全部密钥（代理凭据、面板账号、WARP），必须挂在 requireAuth 之后。
+app.use('/api/cloud-backup', createCloudBackupRouter(cloudBackup));
 // --- 以下全部需要登录 -------------------------------------------------------
 
 // 状态推送（SSE）。放在鉴权之后，所以未登录连不上；放在 express.static 之前，
@@ -2397,6 +2401,13 @@ app.use((req, res) => {
 const httpServer = app.listen(config.server.port, config.server.host, () => {
   reloadJobs(executeTask);
   void warpManager.restore();
+  // 云端备份定时器：启动时先把 next_at 算好（若缺失），再挂 60s 的轮询。
+  try {
+    cloudBackup.ensureScheduled();
+  } catch (err) {
+    console.error('[boot] cloud backup schedule init failed:', err.message || err);
+  }
+  cloudBackup.startTicker();
   try {
     prepareBrowserWorkspace();
   } catch (err) {
@@ -2421,22 +2432,38 @@ const httpServer = app.listen(config.server.port, config.server.host, () => {
   }
 });
 
+// 可复用的停机序列：停调度 → 断 SSE → 停 WARP → 关库。
+// SIGTERM 路径之外，云端备份的恢复流程也要用它（关库后才能动 app.db）。
+// 注意这里不能关 httpServer —— 恢复请求本身就挂在 httpServer 上，等它关完就是死锁，
+// 关 httpServer 只留在真正退出的 shutdown() 里做。
+async function closeCoreServices(reason) {
+  console.log(`[shutdown] ${reason}`);
+  stopAllJobs();
+  events.closeAll();
+  await warpManager.shutdown();
+  db.db.close();
+}
+
 let shutdownPromise = null;
 function shutdown(signal) {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
-    console.log(`[shutdown] received ${signal}`);
-    stopAllJobs();
-    events.closeAll();
-    await warpManager.shutdown();
+    await closeCoreServices(`received ${signal}`);
     await new Promise((resolve) => httpServer.close(resolve));
-    db.db.close();
   })().catch((error) => {
     console.error('[shutdown] failed:', error);
     process.exitCode = 1;
   });
   return shutdownPromise;
 }
+
+// 恢复的换文件回调：停掉会碰库的定时器 → 走停机序列关库 → 旧数据挪到
+// data/pre-restore-<stamp>/ 留作回滚 → 快照内容落盘。返回 pre-restore 目录给 UI 展示。
+cloudBackup.setPerformRestoreSwap(async (stagingDir) => {
+  cloudBackup.stopTicker();
+  await closeCoreServices('restore swap');
+  return cloudBackup.swapDataDir(stagingDir);
+});
 
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.once(signal, () => {

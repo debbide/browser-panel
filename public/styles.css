@@ -659,6 +659,13 @@ a:hover { text-decoration: underline; }
   100% { border-color: var(--glass-border); }
 }
 
+/* 云端备份：设置表单下方的「立即备份 / 远端备份」分区 */
+.cloud-backup-block {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
 .config-advanced .config-details {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-md, 12px);

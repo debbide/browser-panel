@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260811d" />
+  <link rel="stylesheet" href="/styles.css?v=20260812a" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -285,6 +285,7 @@
               <button type="button" class="config-subnav-btn active" data-config-target="cfg-schedule" aria-current="location">调度</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-vision">Vision</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量与密钥</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-cloud-backup">云端备份</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
               <span class="config-subnav-group">高级设置</span>
               <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-runtime" data-config-parent="cfg-advanced">运行时插件</button>
@@ -369,6 +370,143 @@
             <div class="schedule-note">
               脚本通过 <code>os.environ["NAME"]</code> / <code>process.env.NAME</code> 读取。Secret 保存后只显示掩码，留空再保存表示不修改。
             </div>
+          </div>
+        </section>
+
+        <section id="cfg-cloud-backup" class="modal-panel config-panel config-section" data-config-section="cloud-backup" data-config-title="云端备份" data-config-path="云端备份" data-config-keywords="s3 r2 minio oss 云 备份 恢复 快照 backup snapshot restore 轮转 定时 密码 passphrase">
+          <div class="section-header compact">
+            <div>
+              <h2>云端备份</h2>
+              <p class="muted" id="cloud-backup-status-text">状态：加载中...</p>
+            </div>
+          </div>
+          <form id="cloud-backup-form" class="grid single-col">
+            <label class="inline-check">
+              <input type="checkbox" id="cloud-backup-enabled" name="enabled" />
+              启用云端备份（支持定时自动备份）
+            </label>
+            <div>
+              <label class="field-label" for="cloud-backup-endpoint">Endpoint</label>
+              <input type="text" id="cloud-backup-endpoint" name="endpoint" placeholder="https://s3.example.com" autocomplete="off" spellcheck="false" />
+              <div class="schedule-note" style="margin-top:4px;">
+                S3 兼容服务地址。MinIO / 自建填 <code>http://host:9000</code>（会强制升级 HTTPS 则改用代理），R2 填 <code>https://&lt;account&gt;.r2.cloudflarestorage.com</code>。仅支持 HTTPS，走代理时用 http。
+              </div>
+            </div>
+            <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
+              <div>
+                <label class="field-label" for="cloud-backup-region">Region</label>
+                <input type="text" id="cloud-backup-region" name="region" placeholder="us-east-1" autocomplete="off" spellcheck="false" />
+              </div>
+              <div>
+                <label class="field-label" for="cloud-backup-bucket">Bucket</label>
+                <input type="text" id="cloud-backup-bucket" name="bucket" placeholder="my-panel-backup" autocomplete="off" spellcheck="false" />
+              </div>
+            </div>
+            <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
+              <div>
+                <label class="field-label" for="cloud-backup-access-key">Access Key</label>
+                <input type="text" id="cloud-backup-access-key" name="accessKey" placeholder="AKIA..." autocomplete="off" spellcheck="false" />
+              </div>
+              <div>
+                <label class="field-label" for="cloud-backup-secret-key">Secret Key</label>
+                <input type="password" id="cloud-backup-secret-key" name="secretKey" autocomplete="new-password" placeholder="已设置则留空不修改" />
+              </div>
+            </div>
+            <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
+              <div>
+                <label class="field-label" for="cloud-backup-token">Session Token（可选）</label>
+                <input type="password" id="cloud-backup-token" name="token" autocomplete="new-password" placeholder="临时凭据专用，留空不修改" />
+              </div>
+              <div>
+                <label class="field-label" for="cloud-backup-proxy">代理（可选）</label>
+                <input type="text" id="cloud-backup-proxy" name="proxy" placeholder="socks5://127.0.0.1:1080 或 http://127.0.0.1:7890" autocomplete="off" spellcheck="false" />
+              </div>
+            </div>
+            <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
+              <div>
+                <label class="inline-check">
+                  <input type="checkbox" id="cloud-backup-path-style" name="pathStyle" checked />
+                  Path-style 寻址（MinIO / 自建需要）
+                </label>
+                <div class="schedule-note" style="margin-top:4px;">R2 等虚拟主机式服务可关掉。</div>
+              </div>
+              <div>
+                <label class="field-label" for="cloud-backup-prefix">Object 前缀</label>
+                <input type="text" id="cloud-backup-prefix" name="prefix" placeholder="panel-snapshot" autocomplete="off" spellcheck="false" />
+              </div>
+            </div>
+            <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
+              <div>
+                <label class="field-label" for="cloud-backup-retention">远端保留份数</label>
+                <input type="number" id="cloud-backup-retention" name="retention" min="1" max="999" value="7" />
+                <div class="schedule-note" style="margin-top:4px;">只保留最新 N 份，更老的自动删除。</div>
+              </div>
+              <div>
+                <label class="field-label" for="cloud-backup-schedule">自动备份</label>
+                <select id="cloud-backup-schedule" name="schedule">
+                  <option value="off">关闭（仅手动）</option>
+                  <option value="hourly">每小时</option>
+                  <option value="daily">每天</option>
+                </select>
+              </div>
+            </div>
+            <div id="cloud-backup-time-fields" class="two-col-modal" style="grid-template-columns:1fr 1fr; display:none;">
+              <div>
+                <label class="field-label" for="cloud-backup-hour">小时（每天模式，本地时区）</label>
+                <input type="number" id="cloud-backup-hour" name="hour" min="0" max="23" value="3" />
+              </div>
+              <div>
+                <label class="field-label" for="cloud-backup-minute">分钟</label>
+                <input type="number" id="cloud-backup-minute" name="minute" min="0" max="59" value="0" />
+              </div>
+            </div>
+            <div>
+              <label class="field-label" for="cloud-backup-passphrase">备份密码</label>
+              <input type="password" id="cloud-backup-passphrase" name="passphrase" autocomplete="new-password" placeholder="快照加密口令，留空不修改" />
+              <div class="schedule-note" style="margin-top:4px;">
+                <strong>务必离线保存。</strong>密码不会出现在快照里，服务器没了、密码丢了，备份就永远解不开。也可用环境变量 <code>PANEL_S3_BACKUP_PASSPHRASE</code> 代替（写在根目录 <code>.env.panel</code>，不在快照内）。
+              </div>
+            </div>
+            <label class="inline-check" id="cloud-backup-passphrase-confirm-row">
+              <input type="checkbox" id="cloud-backup-passphrase-confirm" />
+              我已把备份密码离线保存，丢失密码将无法恢复任何快照
+            </label>
+            <div class="row" style="margin-top:8px; gap:8px; flex-wrap:wrap;">
+              <button type="button" id="cloud-backup-test-btn" class="alt btn-with-icon">
+                <i data-lucide="plug-zap" class="icon-sm"></i> 测试连接
+              </button>
+              <button type="submit" id="cloud-backup-save-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> 保存设置
+              </button>
+            </div>
+          </form>
+
+          <div class="cloud-backup-block">
+            <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+              <div>
+                <h4 style="margin:0;">立即备份</h4>
+                <p class="muted" style="margin:2px 0 8px;">生成加密全量快照并上传（app.db + tasks/）。名称可自定义，留空用时间戳。</p>
+              </div>
+            </div>
+            <div class="row" style="gap:8px; flex-wrap:wrap;">
+              <input type="text" id="cloud-backup-label" placeholder="自定义名称（可选）" maxlength="60" style="flex:1 1 220px;" autocomplete="off" spellcheck="false" />
+              <button type="button" id="cloud-backup-run-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="cloud-upload" class="icon-sm"></i> 立即备份
+              </button>
+            </div>
+          </div>
+
+          <div class="cloud-backup-block">
+            <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
+              <div>
+                <h4 style="margin:0;">远端备份</h4>
+                <p class="muted" id="cloud-backup-next-text" style="margin:2px 0 8px;">下一次自动备份：-</p>
+              </div>
+              <button type="button" id="cloud-backup-refresh-btn" class="alt btn-with-icon">
+                <i data-lucide="refresh-cw" class="icon-sm"></i> 刷新列表
+              </button>
+            </div>
+            <div id="cloud-backup-list" class="backup-import-summary" style="flex-direction:column; align-items:stretch; gap:8px;"></div>
           </div>
         </section>
 
@@ -576,6 +714,8 @@
   </section>
   <div id="backup-import-mask" class="modal-mask" hidden></div>
   <section id="backup-import-modal" class="modal" aria-hidden="true" hidden></section>
+  <div id="cloud-restore-mask" class="modal-mask" hidden></div>
+  <section id="cloud-restore-modal" class="modal" aria-hidden="true" hidden></section>
   <div id="backup-assets-mask" class="modal-mask" hidden></div>
   <section id="backup-assets-modal" class="modal" aria-hidden="true" hidden></section>
   <section id="task-modal" class="modal modal-wide task-modal" aria-hidden="true">
@@ -1010,7 +1150,7 @@
     </div>
   </section>
 
-  <script src="/app.js?v=20260811d"></script>
+  <script src="/app.js?v=20260812a"></script>
   <script>
     // Initialize Lucide icons on static elements
     lucide.createIcons();

@@ -922,6 +922,59 @@ function maskSecret(value) {
   return `${text.slice(0, 4)}***${text.slice(-4)}`;
 }
 
+// --- 云端备份设置（app_settings k/v，无需 schema 迁移） ---
+const S3_BACKUP_KEY_MAP = Object.freeze({
+  enabled: 's3_backup_enabled',
+  endpoint: 's3_backup_endpoint',
+  region: 's3_backup_region',
+  bucket: 's3_backup_bucket',
+  accessKey: 's3_backup_access_key',
+  secretKey: 's3_backup_secret_key',
+  token: 's3_backup_token',
+  proxy: 's3_backup_proxy',
+  pathStyle: 's3_backup_path_style',
+  prefix: 's3_backup_prefix',
+  retention: 's3_backup_retention',
+  schedule: 's3_backup_schedule',
+  hour: 's3_backup_hour',
+  minute: 's3_backup_minute',
+  nextAt: 's3_backup_next_at',
+  passphrase: 's3_backup_passphrase',
+});
+
+function getS3BackupSettings() {
+  const read = (key) => getSetting(key);
+  const pathStyleRaw = read('s3_backup_path_style');
+  return {
+    enabled: toBool(read('s3_backup_enabled')),
+    endpoint: read('s3_backup_endpoint') || '',
+    region: read('s3_backup_region') || '',
+    bucket: read('s3_backup_bucket') || '',
+    accessKey: read('s3_backup_access_key') || '',
+    secretKey: read('s3_backup_secret_key') || '',
+    token: read('s3_backup_token') || '',
+    proxy: read('s3_backup_proxy') || '',
+    pathStyle: pathStyleRaw === null || pathStyleRaw === undefined || pathStyleRaw === ''
+      ? true : toBool(pathStyleRaw),
+    prefix: read('s3_backup_prefix') || '',
+    retention: Number(read('s3_backup_retention')) || 7,
+    schedule: read('s3_backup_schedule') || 'off',
+    hour: read('s3_backup_hour') || '',
+    minute: read('s3_backup_minute') || '',
+    nextAt: read('s3_backup_next_at') || null,
+    passphrase: read('s3_backup_passphrase') || null,
+  };
+}
+
+/** patch 里出现的字段才写，undefined 跳过；空字符串会让 setSetting 删掉该行。 */
+function setS3BackupSettings(patch = {}) {
+  for (const [field, key] of Object.entries(S3_BACKUP_KEY_MAP)) {
+    if (patch[field] === undefined) continue;
+    setSetting(key, patch[field]);
+  }
+  return getS3BackupSettings();
+}
+
 function toBool(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
@@ -1354,6 +1407,8 @@ module.exports = {
   getSetting,
   setSetting,
   getTelegramSettings,
+  getS3BackupSettings,
+  setS3BackupSettings,
   getVisionSettings,
   getVisionSettingsPublic,
   getVisionChannelsInternal,

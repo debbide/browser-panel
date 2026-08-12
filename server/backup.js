@@ -1145,6 +1145,7 @@ module.exports = {
   SCHEMA_VERSION,
   CONFLICT_STRATEGIES,
   TASK_CONFIG_COLUMNS,
+  ASSET_EXCLUDED_NAMES,
   normalizeTaskIds,
   normalizeStrategy,
   normalizeExtraPaths,
@@ -1158,4 +1159,5 @@ module.exports = {
   toPreview,
   importBackup,
   buildExportFilename,
+  sanitizeExportFilenamePart,
 };

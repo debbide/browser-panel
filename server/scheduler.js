@@ -474,6 +474,7 @@ function reloadJobs(runTaskById) {
 
 module.exports = {
   computeNextRun,
+  getTzDate,
   reloadJobs,
   stopAllJobs,
   isTaskRunning,
