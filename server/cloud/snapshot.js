@@ -129,7 +129,8 @@ async function decryptFileToFile(inputPath, outputPath, passphrase) {
   const aesKey = deriveKey(passphrase, salt);
   const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, nonce);
   decipher.setAuthTag(tag);
-  const input = fs.createReadStream(inputPath, { start: HEADER_LEN });
+  const stat = fs.statSync(inputPath);
+  const input = fs.createReadStream(inputPath, { start: HEADER_LEN, end: stat.size - AES_TAG_LEN - 1 });
   const output = fs.createWriteStream(outputPath);
 
   await new Promise((resolve, reject) => {
