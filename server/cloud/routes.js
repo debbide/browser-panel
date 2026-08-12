@@ -186,7 +186,9 @@ function createCloudBackupRouter(service = backupService) {
     express.raw({ type: 'application/octet-stream', limit: '256mb' }),
     async (req, res) => {
       try {
-        const passphrase = String(req.get('x-backup-passphrase') || '').trim();
+        // 注意：Node 把请求头值按 latin1 解码，而浏览器 fetch 发送时是 UTF-8 字节 ——
+        // 中文/特殊字符密码会乱码，导致 GCM 认证失败报「密码错误」。latin1→utf8 还原。
+        const passphrase = Buffer.from(String(req.get('x-backup-passphrase') || ''), 'latin1').toString('utf8').trim();
         if (!passphrase) {
           res.status(400).json({ message: '缺少备份密码（请求头 x-backup-passphrase）' });
           return;
