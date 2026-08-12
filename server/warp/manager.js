@@ -9,6 +9,7 @@ const { registerIdentity, rebuildWireproxyConfig } = require('./registerer');
 const { WireproxyRunner } = require('./runner');
 const { probeDualStack, compareProbes } = require('./probe');
 const { WarpPolicy } = require('./policy');
+const { HttpSocksBridge } = require('./http-bridge');
 
 const DEFAULT_PORT = 40080;
 const DEFAULT_POLICY = Object.freeze({
@@ -70,6 +71,8 @@ class WarpManager {
     this.currentJobId = null;
     this.shuttingDown = false;
     this.lastProbe = null;
+    this.httpBridge = new HttpSocksBridge(this.port);
+    this.httpPort = null;
     this.policy = options.policy || new WarpPolicy(this, options.policyOptions);
     this.db.interruptWarpJobs();
   }
@@ -97,7 +100,7 @@ class WarpManager {
       policy: this.getPolicy(),
       policyStatus: this.policy.status(),
       components: state && state.manifest || null,
-      httpAddress: this.runner.status().running ? `http://127.0.0.1:${this.port}` : '',
+      httpAddress: this.runner.status().running && this.httpPort ? `http://127.0.0.1:${this.httpPort}` : '',
       process: this.runner.status(),
       probe: latest && latest.snapshot ? latest.snapshot : latest,
       activeSessions: this.sessions.size,
@@ -179,7 +182,7 @@ class WarpManager {
 
   async runProbe(source = 'manual') {
     const state = this.state();
-    const proxyUrl = `http://127.0.0.1:${this.port}`;
+    const proxyUrl = `socks5h://127.0.0.1:${this.port}`;
     const snapshot = await this.probeProxy(proxyUrl);
     this.lastProbe = snapshot;
     this.db.saveWarpProbeSnapshot(state.generation, source, snapshot);
@@ -213,6 +216,7 @@ class WarpManager {
       await this.rebuildConfig({ directory: paths.active, bindAddress: `127.0.0.1:${this.port}` });
       await this.runner.start({ configPath, port: this.port, generation: state.generation });
     }
+    this.httpPort = await this.httpBridge.start();
     const snapshot = await this.runProbe(source);
     if (!snapshot.healthy) {
       await this.runner.stop();
@@ -344,7 +348,7 @@ class WarpManager {
           generation: candidateGeneration,
         });
         progress('probing_candidate', 50);
-        const candidateProbe = await this.probeProxy(`http://127.0.0.1:${candidatePort}`);
+        const candidateProbe = await this.probeProxy(`socks5h://127.0.0.1:${candidatePort}`);
         if (!candidateProbe.healthy) {
           throw warpError('candidate_probe_failed', 'Candidate WARP identity failed the exit probe');
         }
@@ -370,7 +374,7 @@ class WarpManager {
             generation: candidateGeneration,
           });
           progress('probing_promoted', 85);
-          const promotedProbe = await this.probeProxy(`http://127.0.0.1:${this.port}`);
+          const promotedProbe = await this.probeProxy(`socks5h://127.0.0.1:${this.port}`);
           if (!promotedProbe.healthy) {
             throw warpError('candidate_probe_failed', 'Promoted WARP identity failed the stable-port exit probe');
           }
@@ -411,7 +415,7 @@ class WarpManager {
               port: this.port,
               generation: originalState.generation,
             });
-            const restoredProbe = await this.probeProxy(`http://127.0.0.1:${this.port}`);
+            const restoredProbe = await this.probeProxy(`socks5h://127.0.0.1:${this.port}`);
             this.lastProbe = restoredProbe;
             this.db.saveWarpProbeSnapshot(originalState.generation, 'rollback', restoredProbe);
           const recoveredPhase = restoredProbe.healthy ? (restoredProbe.dualStack ? 'healthy' : 'degraded') : 'error';
@@ -454,6 +458,8 @@ class WarpManager {
       if (this.candidateRunner) await this.candidateRunner.stop();
       this.candidateRunner = null;
       await this.runner.stop();
+      await this.httpBridge.stop();
+      this.httpPort = null;
       await fs.rm(paths.candidate, { recursive: true, force: true });
       this.lastProbe = null;
       this.db.updateWarpState({ phase: 'disabled', consecutive_failures: 0, last_error_code: null, last_error_text: null, last_error_at: null });
@@ -472,7 +478,7 @@ class WarpManager {
     const probe = status.probe || null;
     const lease = {
       sessionId: key,
-      proxyUrl: `http://127.0.0.1:${this.port}`,
+      proxyUrl: `http://127.0.0.1:${this.httpPort || this.port}`,
       generation: status.generation,
       snapshot: {
         mode: 'warp', generation: status.generation,
@@ -500,6 +506,8 @@ class WarpManager {
     if (this.candidateRunner) await this.candidateRunner.stop();
     this.candidateRunner = null;
     await this.runner.stop();
+    await this.httpBridge.stop();
+    this.httpPort = null;
     this.sessions.clear();
     if (this.currentJobId) {
       this.db.updateWarpJob(this.currentJobId, {

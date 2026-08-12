@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "meta": {
+    "name": "real-turnstile-login",
+    "created_at": "2026-05-05T00:00:00.000Z",
+    "start_url": "https://example.com/login"
+  },
+  "steps": [
+    {
+      "id": "t1",
+      "type": "input",
+      "selector": {
+        "primary": "css",
+        "value": "#email",
+        "fallbacks": []
+      },
+      "value": "user@example.com"
+    },
+    {
+      "id": "t2",
+      "type": "input",
+      "selector": {
+        "primary": "css",
+        "value": "#password",
+        "fallbacks": []
+      },
+      "value": "{{SECRET}}"
+    },
+    {
+      "id": "t3",
+      "type": "assert_text",
+      "value": "__turnstile_token_ready__"
+    },
+    {
+      "id": "t4",
+      "type": "click",
+      "selector": {
+        "primary": "css",
+        "value": "button.btn.btn-primary",
+        "fallbacks": []
+      }
+    },
+    {
+      "id": "t5",
+      "type": "wait",
+      "wait_for": "url_change",
+      "page_url": "https://example.com/login",
+      "timeout_ms": 12000
+    }
+  ]
+}

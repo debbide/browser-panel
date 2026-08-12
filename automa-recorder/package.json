@@ -1,0 +1,18 @@
+{
+  "name": "automa-recorder-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser recorder IR exporter MVP",
+  "scripts": {
+    "test:cli-smoke": "node tests/cli-smoke.test.js",
+    "test:frame": "node tests/frame-consistency.test.js",
+    "test:real-samples": "node tests/real-samples-smoke.test.js",
+    "test:selector-mapping": "node tests/selector-mapping.test.js",
+    "test:wait-turnstile": "node tests/wait-turnstile-regression.test.js",
+    "test:support": "node tests/support-consistency.test.js",
+    "test": "npm run test:support && npm run test:cli-smoke && npm run test:frame && npm run test:selector-mapping && npm run test:wait-turnstile && npm run test:real-samples",
+    "check:support": "node exporter/check-support.js --in examples/sample.ir.json",
+    "export:playwright": "node exporter/cli.js --target playwright --in examples/sample.ir.json --out examples/out.playwright.js",
+    "export:seleniumbase": "node exporter/cli.js --target seleniumbase --in examples/sample.ir.json --out examples/out.seleniumbase.py"
+  }
+}

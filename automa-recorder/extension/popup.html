@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Automa Recorder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #09090b;
+      --card: rgba(24, 24, 27, 0.6);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --accent: #ff512f;
+      --accent-glow: rgba(255, 81, 47, 0.4);
+      --btn-primary: linear-gradient(135deg, #ff512f 0%, #dd2476 100%);
+      --btn-surface: rgba(255, 255, 255, 0.06);
+      --btn-surface-hover: rgba(255, 255, 255, 0.1);
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --info: #3b82f6;
+      --ring: rgba(255, 81, 47, 0.5);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      width: 420px;
+      min-height: 760px;
+      color: var(--text);
+      font: 13px/1.5 "Inter", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      background-image:
+        radial-gradient(circle at 0% 0%, rgba(255, 81, 47, 0.15) 0%, transparent 40%),
+        radial-gradient(circle at 100% 100%, rgba(221, 36, 118, 0.1) 0%, transparent 40%);
+      background-attachment: fixed;
+    }
+
+    .wrap { padding: 16px; display: grid; gap: 16px; }
+
+    .card {
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      background: var(--card);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      padding: 16px;
+    }
+
+    .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px; }
+    .title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+
+    .badge {
+      border: 1px solid var(--card-border);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      vertical-align: middle;
+      box-shadow: 0 0 8px currentColor;
+    }
+    .dot.ok { color: var(--ok); background: var(--ok); }
+    .dot.warn { color: var(--warn); background: var(--warn); }
+
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stat {
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .stat .k { color: var(--muted); font-size: 11px; font-weight: 500; }
+    .stat .v { margin-top: 4px; font-size: 18px; font-weight: 600; word-break: break-all; color: #fff; }
+
+    .actions, .exports, .options-row, .cleanup-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .exports, .options-row, .cleanup-row { margin-top: 10px; }
+
+    button {
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: #fff;
+      background: var(--btn-surface);
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 13px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    button:hover:not(:disabled) {
+      background: var(--btn-surface-hover);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #startBtn {
+      background: var(--btn-primary);
+      border: none;
+      box-shadow: 0 4px 15px var(--accent-glow);
+      font-weight: 600;
+    }
+
+    .btn-danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.15); border-color: var(--danger); }
+    .btn-info { border-color: rgba(59, 130, 246, 0.3); }
+    .btn-info:hover:not(:disabled) { background: rgba(59, 130, 246, 0.15); border-color: var(--info); }
+
+    .status {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: pre-wrap;
+      min-height: 20px;
+      margin-top: 12px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      border: 1px dashed var(--card-border);
+    }
+
+    .insert-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    select, input, textarea {
+      width: 100%;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+
+    textarea {
+      min-height: 180px;
+      font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+      font-size: 12px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    .switch {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      font-size: 12px;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .switch input { width: 16px; height: 16px; margin: 0; }
+
+    .list {
+      max-height: 320px;
+      overflow-y: auto;
+      display: grid;
+      gap: 8px;
+      padding-right: 4px;
+    }
+    .item {
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.02);
+      position: relative;
+      overflow: hidden;
+    }
+    .item.off { opacity: 0.5; }
+    .item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .t { font-weight: 600; font-size: 13px; color: #fff; }
+    .muted { color: var(--muted); font-size: 11px; }
+    .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+    .line {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .mini { font-size: 11px; padding: 4px 8px; border-radius: 6px; font-weight: 500; }
+
+    .edit-box {
+      margin-top: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.2);
+      display: grid;
+      gap: 8px;
+    }
+    .edit-actions { display: flex; gap: 8px; }
+    .edit-actions button { flex: 1; font-size: 12px; padding: 8px; }
+
+    .rename-row {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+
+    .preview-box {
+      margin-top: 12px;
+      display: grid;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card">
+      <div class="head">
+        <div class="title">Automa Recorder</div>
+        <div class="badge" id="stateBadge"><span class="dot warn" id="stateDot"></span>空闲</div>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <div class="k">步骤数</div>
+          <div class="v" id="stepCount">0</div>
+        </div>
+        <div class="stat">
+          <div class="k">任务名</div>
+          <div class="v" id="taskName">-</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="actions">
+        <button id="startBtn">开始</button>
+        <button id="stopBtn" class="btn-muted">停止</button>
+        <button id="saveBtn" class="btn-muted">保存 IR</button>
+        <button id="clearBtn" class="btn-danger">清空</button>
+      </div>
+      <div class="exports">
+        <button id="exportPwBtn" class="btn-info">导出 Playwright</button>
+        <button id="exportPyBtn" class="btn-info">导出 SeleniumBase</button>
+      </div>
+      <div class="exports">
+        <button id="previewPwBtn" class="btn-muted">预览 Playwright</button>
+        <button id="previewPyBtn" class="btn-muted">预览 SeleniumBase</button>
+      </div>
+      <div class="options-row">
+        <label class="switch">
+          <input type="checkbox" id="recordHoverToggle">
+          <span>录制 hover</span>
+        </label>
+        <button id="cleanHoverBtn" class="btn-muted">清理 hover</button>
+      </div>
+      <div class="cleanup-row">
+        <button id="cleanSmartBtn" class="btn-info">智能精简</button>
+        <button id="cleanWaitBtn" class="btn-muted">清理重复等待</button>
+        <button id="cleanUrlWaitBtn" class="btn-muted">清理 URL 等待</button>
+      </div>
+      <div id="status" class="status">准备就绪</div>
+      <div class="preview-box">
+        <textarea id="previewText" placeholder="脚本预览会显示在这里..." readonly></textarea>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="head" style="margin-bottom: 8px;">
+        <div class="title">步骤编辑</div>
+        <div class="badge" id="listCount">0</div>
+      </div>
+      <div class="insert-row">
+        <select id="insertType">
+          <option value="wait">wait</option>
+          <option value="assert_url_contains">assert_url_contains</option>
+          <option value="screenshot">screenshot</option>
+          <option value="goto">goto</option>
+          <option value="click">click</option>
+          <option value="input">input</option>
+          <option value="scroll">scroll</option>
+          <option value="hover">hover</option>
+          <option value="press">press</option>
+          <option value="select">select</option>
+          <option value="check">check</option>
+          <option value="uncheck">uncheck</option>
+          <option value="assert_text">assert_text</option>
+        </select>
+        <button id="insertBtn" class="mini btn-info" style="padding: 7px 10px;">插入步骤</button>
+      </div>
+      <div class="list" id="stepList"></div>
+    </section>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

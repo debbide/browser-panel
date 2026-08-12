@@ -1,0 +1,82 @@
+{
+  "version": "1.0",
+  "meta": {
+    "name": "sample-dual-target-flow",
+    "created_at": "2026-05-04T00:00:00.000Z",
+    "start_url": "https://example.com/login"
+  },
+  "steps": [
+    {
+      "id": "step-1",
+      "type": "input",
+      "selector": {
+        "primary": "css",
+        "value": "#email",
+        "fallbacks": [
+          { "type": "testid", "value": "email-input" }
+        ]
+      },
+      "value": "demo@example.com"
+    },
+    {
+      "id": "step-2",
+      "type": "input",
+      "selector": {
+        "primary": "css",
+        "value": "#password",
+        "fallbacks": []
+      },
+      "value": "{{PASSWORD}}"
+    },
+    {
+      "id": "step-3",
+      "type": "click",
+      "selector": {
+        "primary": "css",
+        "value": "button[type='submit']",
+        "fallbacks": []
+      }
+    },
+    {
+      "id": "step-4",
+      "type": "wait",
+      "ms": 1500
+    },
+    {
+      "id": "step-5",
+      "type": "assert_url_contains",
+      "value": "dashboard"
+    },
+    {
+      "id": "step-6",
+      "type": "hover",
+      "selector": {
+        "primary": "css",
+        "value": ".user-menu",
+        "fallbacks": []
+      }
+    },
+    {
+      "id": "step-7",
+      "type": "press",
+      "selector": {
+        "primary": "css",
+        "value": "input[name='search']",
+        "fallbacks": []
+      },
+      "key": "Enter"
+    },
+    {
+      "id": "step-8",
+      "type": "scroll",
+      "x": 0,
+      "y": 600
+    },
+    {
+      "id": "step-9",
+      "type": "screenshot",
+      "name": "after-login",
+      "fullPage": false
+    }
+  ]
+}

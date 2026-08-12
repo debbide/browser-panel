@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "meta": {
+    "name": "real-hover-wait",
+    "created_at": "2026-05-05T00:00:00.000Z",
+    "start_url": "https://example.com/home"
+  },
+  "steps": [
+    {
+      "id": "h1",
+      "type": "hover",
+      "selector": {
+        "primary": "css",
+        "value": ".user-menu",
+        "fallbacks": []
+      }
+    },
+    {
+      "id": "h2",
+      "type": "wait",
+      "wait_for": "selector",
+      "selector": {
+        "primary": "css",
+        "value": "",
+        "fallbacks": [
+          { "type": "testid", "value": "menu-popover" }
+        ]
+      },
+      "timeout_ms": 6000,
+      "fallback_ms": 1000
+    },
+    {
+      "id": "h3",
+      "type": "press",
+      "selector": {
+        "primary": "role",
+        "value": "textbox:Search",
+        "fallbacks": [
+          { "type": "css", "value": "input[name='search']" }
+        ]
+      },
+      "key": "Enter"
+    },
+    {
+      "id": "h4",
+      "type": "screenshot",
+      "name": "hover-wait-finish",
+      "fullPage": false
+    }
+  ]
+}
