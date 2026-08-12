@@ -291,6 +291,8 @@ function applyProxyAliases(env, { overwrite = false } = {}) {
         env[key] = effectiveProxy;
       }
     }
+    if (overwrite || !String(env.NO_PROXY || '').trim()) env.NO_PROXY = '127.0.0.1,localhost,::1';
+    if (overwrite || !String(env.no_proxy || '').trim()) env.no_proxy = '127.0.0.1,localhost,::1';
   }
 
   const chrome = String(env.BROWSER_CHROME_PATH || env.CHROME_PATH || env.CHROMIUM_PATH || '').trim();
