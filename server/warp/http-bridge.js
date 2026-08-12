@@ -24,6 +24,18 @@ class HttpSocksBridge {
           return clientSocket.end();
         }
 
+        if (host === '127.0.0.1' || host === 'localhost' || host === '::1') {
+          const directSocket = net.connect(port, host, () => {
+            clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+            if (head && head.length > 0) directSocket.write(head);
+            clientSocket.pipe(directSocket);
+            directSocket.pipe(clientSocket);
+          });
+          directSocket.on('error', () => clientSocket.end());
+          clientSocket.on('error', () => directSocket.end());
+          return;
+        }
+
         const proxySocket = net.connect(this.socksPort, '127.0.0.1', () => {
           proxySocket.write(Buffer.from([0x05, 0x01, 0x00]));
         });
