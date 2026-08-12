@@ -29,13 +29,20 @@ class HttpSocksBridge {
         });
 
         let step = 0;
-        proxySocket.on('data', (data) => {
+        let buffer = Buffer.alloc(0);
+
+        const onData = (chunk) => {
+          buffer = Buffer.concat([buffer, chunk]);
+
           if (step === 0) {
-            if (data[0] !== 0x05 || data[1] !== 0x00) {
+            if (buffer.length < 2) return;
+            if (buffer[0] !== 0x05 || buffer[1] !== 0x00) {
               clientSocket.end();
               return;
             }
+            buffer = buffer.slice(2);
             step = 1;
+            
             const hostLen = Buffer.byteLength(host);
             const reqBuf = Buffer.alloc(4 + 1 + hostLen + 2);
             reqBuf[0] = 0x05; reqBuf[1] = 0x01; reqBuf[2] = 0x00; reqBuf[3] = 0x03;
@@ -43,21 +50,45 @@ class HttpSocksBridge {
             reqBuf.write(host, 5);
             reqBuf.writeUInt16BE(port, 5 + hostLen);
             proxySocket.write(reqBuf);
-          } else if (step === 1) {
-            if (data[0] !== 0x05 || data[1] !== 0x00) {
+          }
+
+          if (step === 1) {
+            if (buffer.length < 4) return;
+            const atyp = buffer[3];
+            let expectedLen = 0;
+            if (atyp === 1) expectedLen = 10;
+            else if (atyp === 4) expectedLen = 22;
+            else if (atyp === 3) expectedLen = 5 + buffer[4];
+            else {
               clientSocket.end();
               return;
             }
+
+            if (buffer.length < expectedLen) return;
+            
+            if (buffer[0] !== 0x05 || buffer[1] !== 0x00) {
+              clientSocket.end();
+              return;
+            }
+
+            const leftover = buffer.slice(expectedLen);
             step = 2;
+            proxySocket.removeListener('data', onData);
+
             clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+            if (leftover.length > 0) {
+              clientSocket.write(leftover);
+            }
             if (head && head.length > 0) {
               proxySocket.write(head);
             }
+            
             clientSocket.pipe(proxySocket);
             proxySocket.pipe(clientSocket);
           }
-        });
+        };
 
+        proxySocket.on('data', onData);
         proxySocket.on('error', () => clientSocket.end());
         clientSocket.on('error', () => proxySocket.end());
       });
