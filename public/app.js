@@ -4152,7 +4152,7 @@ function setBrowserRuntimeStatus(text, color) {
 
 const warpSummaryStatus = document.getElementById('warp-summary-status');
 const warpPhase = document.getElementById('warp-phase');
-const warpSocksAddress = document.getElementById('warp-socks-address');
+const warpHttpAddress = document.getElementById('warp-http-address');
 const warpActiveSessions = document.getElementById('warp-active-sessions');
 const warpJob = document.getElementById('warp-job');
 const warpJobTitle = document.getElementById('warp-job-title');
@@ -4216,7 +4216,7 @@ function renderWarpStatus(data = {}) {
   const phaseLabel = WARP_PHASE_LABELS[data.phase] || data.phase || '未知';
   if (warpSummaryStatus) warpSummaryStatus.textContent = `状态：${phaseLabel}`;
   if (warpPhase) warpPhase.textContent = phaseLabel;
-  if (warpSocksAddress) warpSocksAddress.textContent = data.socksAddress || '未运行';
+  if (warpHttpAddress) warpHttpAddress.textContent = data.httpAddress || '未运行';
   if (warpActiveSessions) warpActiveSessions.textContent = String(data.activeSessions || 0);
   renderWarpFamily('ipv4', data.probe?.ipv4);
   renderWarpFamily('ipv6', data.probe?.ipv6);

@@ -176,7 +176,7 @@ async function renderWireproxyConfig(profileText, bindAddress, options = {}) {
     }
     output.push('');
   }
-  output.push('[Socks5]', `BindAddress = ${bindAddress}`, '');
+  output.push('[http]', `BindAddress = ${bindAddress}`, '');
   return output.join('\n');
 }
 

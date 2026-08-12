@@ -97,7 +97,7 @@ class WarpManager {
       policy: this.getPolicy(),
       policyStatus: this.policy.status(),
       components: state && state.manifest || null,
-      socksAddress: this.runner.status().running ? `socks5h://127.0.0.1:${this.port}` : '',
+      httpAddress: this.runner.status().running ? `http://127.0.0.1:${this.port}` : '',
       process: this.runner.status(),
       probe: latest && latest.snapshot ? latest.snapshot : latest,
       activeSessions: this.sessions.size,
@@ -179,7 +179,7 @@ class WarpManager {
 
   async runProbe(source = 'manual') {
     const state = this.state();
-    const proxyUrl = `socks5h://127.0.0.1:${this.port}`;
+    const proxyUrl = `http://127.0.0.1:${this.port}`;
     const snapshot = await this.probeProxy(proxyUrl);
     this.lastProbe = snapshot;
     this.db.saveWarpProbeSnapshot(state.generation, source, snapshot);
@@ -290,7 +290,7 @@ class WarpManager {
 
   probeNow() {
     return this.startJob('probe', async (progress) => {
-      if (!this.runner.status().running) throw warpError('warp_not_ready', 'WARP SOCKS5 is not running');
+      if (!this.runner.status().running) throw warpError('warp_not_ready', 'WARP HTTP is not running');
       progress('probing', 30);
       const snapshot = await this.runProbe('manual');
       if (!snapshot.healthy) throw warpError('warp_not_ready', 'Neither address family passed the WARP exit probe');
@@ -320,7 +320,7 @@ class WarpManager {
     return this.startJob('rotate', async (progress) => {
       const originalState = this.state();
       if (!originalState.desired_enabled || !this.runner.status().running) {
-        throw warpError('warp_not_ready', 'WARP SOCKS5 is not ready');
+        throw warpError('warp_not_ready', 'WARP HTTP is not ready');
       }
       const beforeRow = this.db.getLatestWarpProbeSnapshot(originalState.generation);
       const before = beforeRow && beforeRow.snapshot || null;
@@ -344,7 +344,7 @@ class WarpManager {
           generation: candidateGeneration,
         });
         progress('probing_candidate', 50);
-        const candidateProbe = await this.probeProxy(`socks5h://127.0.0.1:${candidatePort}`);
+        const candidateProbe = await this.probeProxy(`http://127.0.0.1:${candidatePort}`);
         if (!candidateProbe.healthy) {
           throw warpError('candidate_probe_failed', 'Candidate WARP identity failed the exit probe');
         }
@@ -370,7 +370,7 @@ class WarpManager {
             generation: candidateGeneration,
           });
           progress('probing_promoted', 85);
-          const promotedProbe = await this.probeProxy(`socks5h://127.0.0.1:${this.port}`);
+          const promotedProbe = await this.probeProxy(`http://127.0.0.1:${this.port}`);
           if (!promotedProbe.healthy) {
             throw warpError('candidate_probe_failed', 'Promoted WARP identity failed the stable-port exit probe');
           }
@@ -411,7 +411,7 @@ class WarpManager {
               port: this.port,
               generation: originalState.generation,
             });
-            const restoredProbe = await this.probeProxy(`socks5h://127.0.0.1:${this.port}`);
+            const restoredProbe = await this.probeProxy(`http://127.0.0.1:${this.port}`);
             this.lastProbe = restoredProbe;
             this.db.saveWarpProbeSnapshot(originalState.generation, 'rollback', restoredProbe);
           const recoveredPhase = restoredProbe.healthy ? (restoredProbe.dualStack ? 'healthy' : 'degraded') : 'error';
@@ -466,13 +466,13 @@ class WarpManager {
     if (!key) throw warpError('warp_not_ready', 'A WARP session id is required');
     const status = this.status();
     if (!status.desiredEnabled || !status.process.running || !['healthy', 'degraded'].includes(status.phase)) {
-      throw warpError('warp_not_ready', 'WARP SOCKS5 is not ready');
+      throw warpError('warp_not_ready', 'WARP HTTP is not ready');
     }
     if (this.sessions.has(key)) return this.sessions.get(key);
     const probe = status.probe || null;
     const lease = {
       sessionId: key,
-      proxyUrl: `socks5h://127.0.0.1:${this.port}`,
+      proxyUrl: `http://127.0.0.1:${this.port}`,
       generation: status.generation,
       snapshot: {
         mode: 'warp', generation: status.generation,
