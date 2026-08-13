@@ -118,6 +118,31 @@ function createCloudBackupRouter(service = backupService) {
     }
   });
 
+  router.delete('/settings', (req, res) => {
+    try {
+      const patch = {};
+      const FIELDS = [
+        'enabled', 'endpoint', 'region', 'bucket', 'accessKey', 'secretKey',
+        'token', 'proxy', 'pathStyle', 'prefix', 'retention', 'schedule',
+        'hour', 'minute', 'passphrase', 'nextAt'
+      ];
+      for (const field of FIELDS) patch[field] = '';
+      patch.enabled = false;
+      patch.retention = 7;
+      patch.schedule = 'off';
+      patch.pathStyle = true;
+      const saved = db.setS3BackupSettings(patch);
+      try {
+        service.ensureScheduled();
+      } catch (error) {
+        console.error('[cloud-backup] ensureScheduled:', error.message);
+      }
+      res.json({ data: toPublicSettings(saved) });
+    } catch (error) {
+      res.status(statusForError(error)).json({ message: error.message || '清空云端备份设置失败' });
+    }
+  });
+
   // 测试连接：写入并删除一个探针对象
   router.post('/test', async (req, res) => {
     try {

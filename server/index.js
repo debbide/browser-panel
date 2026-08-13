@@ -98,7 +98,7 @@ async function executeTask(id, options = {}) {
       screenshots_dir: result.screenshotsDir || null,
       error_text: result.errorText,
       error_code: result.errorCode || null,
-      retryable: result.retryable ?? null,
+      retryable: result.retryable == null ? null : (result.retryable ? 1 : 0),
       retry_reason: result.retryReason ?? null,
     });
     if (refreshScheduleOnSuccess && completedRun.status === 'success') {
@@ -123,7 +123,7 @@ async function executeTask(id, options = {}) {
       screenshots_dir: null,
       error_text: safe.message,
       error_code: safe.code,
-      retryable: false,
+      retryable: 0,
       retry_reason: null,
     });
     void notifyTaskRun(task, completedRun);

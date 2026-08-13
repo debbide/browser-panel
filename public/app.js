@@ -436,6 +436,7 @@ const cloudBackupPassphrase = document.getElementById('cloud-backup-passphrase')
 const cloudBackupPassphraseConfirm = document.getElementById('cloud-backup-passphrase-confirm');
 const cloudBackupTestBtn = document.getElementById('cloud-backup-test-btn');
 const cloudBackupSaveBtn = document.getElementById('cloud-backup-save-btn');
+const cloudBackupClearBtn = document.getElementById('cloud-backup-clear-btn');
 const cloudBackupLabel = document.getElementById('cloud-backup-label');
 const cloudBackupRunBtn = document.getElementById('cloud-backup-run-btn');
 const cloudBackupRefreshBtn = document.getElementById('cloud-backup-refresh-btn');
@@ -5841,6 +5842,24 @@ if (cloudBackupForm) {
   });
 }
 if (cloudBackupTestBtn) cloudBackupTestBtn.addEventListener('click', testCloudBackupConnection);
+if (cloudBackupClearBtn) {
+  cloudBackupClearBtn.addEventListener('click', async () => {
+    if (!confirm('确定要清空云端备份的所有配置吗？已填写的密钥、密码等将全部清除。')) return;
+    try {
+      cloudBackupClearBtn.disabled = true;
+      cloudBackupClearBtn.textContent = '清空中...';
+      await fetchJson('/api/cloud-backup/settings', { method: 'DELETE' });
+      toast('云端备份配置已清空', 'success');
+      await loadCloudBackupSettings();
+    } catch (error) {
+      toast(error.message || '清空失败', 'error');
+    } finally {
+      cloudBackupClearBtn.disabled = false;
+      cloudBackupClearBtn.innerHTML = '<i data-lucide="trash-2" class="icon-sm"></i> 清空配置';
+      if (window.lucide) window.lucide.createIcons();
+    }
+  });
+}
 if (cloudBackupRunBtn) cloudBackupRunBtn.addEventListener('click', runCloudBackupNow);
 if (cloudBackupRefreshBtn) cloudBackupRefreshBtn.addEventListener('click', loadCloudBackupList);
 if (cloudBackupSchedule) cloudBackupSchedule.addEventListener('change', updateCloudBackupTimeFields);
