@@ -121,6 +121,20 @@ bash /opt/browser-panel/scripts/install-browser-stack.sh
 
 **Playwright Python**（`requirements-playwright.txt`）：`playwright`；自带 Chromium 或系统 Chrome
 
+**RuyiPage**（可选，仅跑 RuyiPage 任务时需要）：需要专用 Firefox 内核，并自行安装 `ruyipage` Python 库（`pip install ruyipage`）。普通 Chrome/Chromium 即可满足 DrissionPage / SeleniumBase / Playwright；专用 Firefox 是在 **LXC 容器**这类跑不了 Chrome 的场景下用的。安装 Firefox 151.0a1 到 `/opt/ruyipage-firefox`：
+
+```bash
+wget -O /tmp/ff151.tar.xz "https://github.com/LoseNine/ruyipage/releases/download/151-ruyi/firefox-151.0a1.en-US.linux-x86_64.tar.xz" \
+  && rm -rf /opt/ruyipage-firefox \
+  && mkdir -p /tmp/ff151_ext \
+  && tar -xf /tmp/ff151.tar.xz -C /tmp/ff151_ext \
+  && mv /tmp/ff151_ext/firefox /opt/ruyipage-firefox \
+  && chmod -R 777 /opt/ruyipage-firefox \
+  && rm -rf /tmp/ff151.tar.xz /tmp/ff151_ext
+```
+
+> 安装完成后 Firefox 位于 `/opt/ruyipage-firefox/firefox`（面板里也可用 `BROWSER_RUYI_PATH` 覆盖该路径）。
+
 ### 网络与可选
 
 出网、HTTP/SOCKS 代理、Telegram、视觉模型 API（按脚本需要）。
