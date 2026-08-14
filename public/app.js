@@ -6992,14 +6992,14 @@ function open2faDialog() {
           })),
         },
       });
-      const transports = cred.response.getTransports
+      const transports = (typeof cred.response.getTransports === 'function')
         ? cred.response.getTransports()
         : (cred.response.transports || []);
       await fetchJson('/api/auth/2fa/passkey/register/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentPassword: pwd,
+          currentPassword,
           challenge: options.challenge,
           response: {
             id: cred.id || bufferToBase64url(cred.rawId),
