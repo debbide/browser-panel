@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css?v=20260802a" />
+  <link rel="stylesheet" href="/styles.css?v=20260814a" />
   <style>
     .login-wrap {
       min-height: 100vh;
@@ -74,6 +74,30 @@
     }
     .login-error.show { display: block; }
     #login-submit { width: 100%; justify-content: center; margin-top: 6px; }
+    .login-passkey-btn {
+      width: 100%;
+      justify-content: center;
+      margin-top: 10px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .login-passkey-btn:hover { color: var(--text-main); }
+    .login-passkey-btn[hidden] { display: none; }
+    .login-back {
+      margin: 14px 0 0;
+      text-align: center;
+      font-size: 13px;
+    }
+    .login-back a { color: var(--text-muted); }
+    .login-back a:hover { color: var(--accent-hover); text-decoration: none; }
+    #login-totp-step[hidden] { display: none; }
+    #login-totp-code {
+      font: 600 20px/1.2 var(--font-mono);
+      letter-spacing: 0.35em;
+      text-align: center;
+    }
+    #login-totp-submit { width: 100%; justify-content: center; margin-top: 4px; }
+    #login-totp-step .login-field { margin-bottom: 18px; }
     .login-note {
       margin: 18px 0 0;
       font-size: 12px;
@@ -93,36 +117,54 @@
 
       <div class="login-error" id="login-error" role="alert"></div>
 
-      <div class="login-field">
-        <label for="login-username">用户名</label>
-        <input id="login-username" name="username" type="text" autocomplete="username" required />
+      <div id="login-normal">
+        <div class="login-field">
+          <label for="login-username">用户名</label>
+          <input id="login-username" name="username" type="text" autocomplete="username" required />
+        </div>
+
+        <div class="login-field">
+          <label for="login-password" id="login-password-label">密码</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+        </div>
+
+        <div class="login-field" id="login-confirm-field" hidden>
+          <label for="login-confirm">确认密码</label>
+          <input id="login-confirm" name="confirmPassword" type="password" autocomplete="new-password" />
+        </div>
+
+        <div class="login-field login-remember-field" id="login-remember-field">
+          <label class="login-remember-label">
+            <input id="login-remember" name="remember" type="checkbox" />
+            记住我（30 天内免登录）
+          </label>
+        </div>
+
+        <button id="login-submit" type="submit" class="btn-with-icon">
+          <i data-lucide="log-in" class="icon-sm"></i> <span id="login-submit-text">登录</span>
+        </button>
+
+        <button id="login-passkey-btn" type="button" class="btn-with-icon alt login-passkey-btn" hidden>
+          <i data-lucide="fingerprint" class="icon-sm"></i> <span id="login-passkey-text">通行密钥登录</span>
+        </button>
       </div>
 
-      <div class="login-field">
-        <label for="login-password" id="login-password-label">密码</label>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+      <div id="login-totp-step" hidden>
+        <div class="login-field">
+          <label for="login-totp-code">动态验证码</label>
+          <input id="login-totp-code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="6" placeholder="身份验证器里的 6 位数字" />
+        </div>
+        <button id="login-totp-submit" type="submit" class="btn-with-icon">
+          <i data-lucide="shield-check" class="icon-sm"></i> <span id="login-totp-text">验证并登录</span>
+        </button>
+        <p class="login-back"><a href="#" id="login-totp-back">← 重新输入密码</a></p>
       </div>
-
-      <div class="login-field" id="login-confirm-field" hidden>
-        <label for="login-confirm">确认密码</label>
-        <input id="login-confirm" name="confirmPassword" type="password" autocomplete="new-password" />
-      </div>
-
-      <div class="login-field login-remember-field" id="login-remember-field">
-        <label class="login-remember-label">
-          <input id="login-remember" name="remember" type="checkbox" />
-          记住我（30 天内免登录）
-        </label>
-      </div>
-
-      <button id="login-submit" type="submit" class="btn-with-icon">
-        <i data-lucide="log-in" class="icon-sm"></i> <span id="login-submit-text">登录</span>
-      </button>
 
       <p class="login-note" id="login-note" hidden></p>
     </form>
   </div>
 
-  <script src="/login.js?v=20260802a"></script>
+  <script src="/login.js?v=20260814a"></script>
 </body>
 </html>

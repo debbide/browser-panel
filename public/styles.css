@@ -1255,6 +1255,107 @@ a:hover { text-decoration: underline; }
 .modal-header h2 { margin: 0; font-size: 24px; }
 .modal-body { padding: 32px; }
 
+/* 两步验证弹窗 */
+.twofa-section {
+  margin-bottom: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.twofa-section:first-of-type { padding-top: 0; border-top: none; }
+.twofa-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.twofa-section h3 .lucide { color: var(--accent-color); }
+.twofa-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+}
+.twofa-row strong { font-size: 14px; }
+.twofa-row p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.totp-setup {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+}
+.totp-qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+.totp-qr-wrap img { display: block; image-rendering: pixelated; }
+.totp-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.totp-secret-row code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-all;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  user-select: all;
+}
+.passkey-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.passkey-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+}
+.passkey-item strong { font-size: 14px; }
+.passkey-item p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.twofa-add-row {
+  display: flex;
+  gap: 8px;
+}
+.twofa-add-row input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
 .two-col-modal {
   display: grid;
   grid-template-columns: 1fr 1fr;

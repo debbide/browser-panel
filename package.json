@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@simplewebauthn/server": "^13.3.2",
     "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
     "node-cron": "^4.2.1",

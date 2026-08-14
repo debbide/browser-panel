@@ -107,6 +107,22 @@ CREATE TABLE IF NOT EXISTS panel_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_panel_sessions_user ON panel_sessions(user_id);
 
+-- passkey 凭证：discoverable 模式下浏览器在登录页直接给出候选，服务端按
+-- credential_id 找这把 key 属于哪个账号，再验断言签名。
+CREATE TABLE IF NOT EXISTS panel_passkeys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES panel_users(id) ON DELETE CASCADE,
+  credential_id TEXT NOT NULL UNIQUE,   -- base64url
+  public_key TEXT NOT NULL,             -- P-256 原始坐标 base64url（COSE→JWK→raw 后存）
+  counter INTEGER NOT NULL DEFAULT 0,
+  transports TEXT NOT NULL DEFAULT '[]',
+  user_handle TEXT NOT NULL DEFAULT '', -- 登录时浏览器回传，用于定位账号
+  name TEXT NOT NULL DEFAULT '',        -- 展示名，用户可改（v1 直接存注册时的名字）
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_panel_passkeys_user ON panel_passkeys(user_id);
+
 CREATE TABLE IF NOT EXISTS warp_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   desired_enabled INTEGER NOT NULL DEFAULT 0,
@@ -217,6 +233,11 @@ if (!browserProfileColumns.includes('proxy_value')) db.exec("ALTER TABLE browser
 if (!browserProfileColumns.includes('ruyi_fpfile')) db.exec("ALTER TABLE browser_profiles ADD COLUMN ruyi_fpfile TEXT NOT NULL DEFAULT ''");
 if (!browserProfileColumns.includes('locale')) db.exec("ALTER TABLE browser_profiles ADD COLUMN locale TEXT NOT NULL DEFAULT ''");
 if (!browserProfileColumns.includes('timezone_id')) db.exec("ALTER TABLE browser_profiles ADD COLUMN timezone_id TEXT NOT NULL DEFAULT ''");
+
+const panelUserColumns = db.prepare('PRAGMA table_info(panel_users)').all().map(row => row.name);
+// 2FA 的 TOTP 秘钥。NULL = 未启用 TOTP。base32 字符串，明文存——app.db 本来
+// 就是本地敏感库（含任务脚本、代理凭据），和密码哈希的"泄露也白拿"定位不同。
+if (!panelUserColumns.includes('totp_secret')) db.exec('ALTER TABLE panel_users ADD COLUMN totp_secret TEXT');
 
 const taskColumns = [
   'name', 'type', 'script_path', 'cron_expr', 'schedule_mode',
@@ -1325,6 +1346,70 @@ function updateUserPassword(userId, passwordHash) {
   return getUserById(userId);
 }
 
+function getUserTotpSecret(userId) {
+  const row = db.prepare('SELECT totp_secret FROM panel_users WHERE id = ?').get(Number(userId));
+  return row && row.totp_secret ? String(row.totp_secret) : null;
+}
+
+function setUserTotpSecret(userId, secret) {
+  if (secret) {
+    db.prepare('UPDATE panel_users SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(String(secret), Number(userId));
+  } else {
+    db.prepare('UPDATE panel_users SET totp_secret = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(Number(userId));
+  }
+  return getUserById(userId);
+}
+
+function listPasskeys(userId) {
+  return db.prepare(`
+    SELECT id, credential_id, name, transports, created_at, last_used_at
+    FROM panel_passkeys WHERE user_id = ? ORDER BY id ASC
+  `).all(Number(userId));
+}
+
+function getPasskeyByCredentialId(credentialId) {
+  return db.prepare(`
+    SELECT * FROM panel_passkeys WHERE credential_id = ?
+  `).get(String(credentialId)) || null;
+}
+
+function addPasskey({ userId, credentialId, publicKey, counter, transports, userHandle, name }) {
+  const info = db.prepare(`
+    INSERT INTO panel_passkeys (user_id, credential_id, public_key, counter, transports, user_handle, name)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    Number(userId),
+    String(credentialId),
+    String(publicKey),
+    Number(counter || 0),
+    String(transports || '[]'),
+    String(userHandle || ''),
+    String(name || ''),
+  );
+  return getPasskeyByCredentialId(String(credentialId));
+}
+
+function deletePasskey(passkeyId, userId) {
+  db.prepare('DELETE FROM panel_passkeys WHERE id = ? AND user_id = ?')
+    .run(Number(passkeyId), Number(userId));
+  return true;
+}
+
+function updatePasskeyCounter(credentialId, counter) {
+  db.prepare(`
+    UPDATE panel_passkeys
+    SET counter = ?, last_used_at = CURRENT_TIMESTAMP
+    WHERE credential_id = ?
+  `).run(Number(counter || 0), String(credentialId));
+}
+
+// 登录页用来判断"是否值得弹通行密钥登录按钮"：一个都没有时直接提示去设置里添加。
+function hasAnyPasskey() {
+  return Boolean(db.prepare('SELECT 1 FROM panel_passkeys LIMIT 1').get());
+}
+
 function createSession(tokenHash, userId, expiresAt, userAgent = '') {
   db.prepare(`
     INSERT INTO panel_sessions (token_hash, user_id, created_at, expires_at, user_agent)
@@ -1445,6 +1530,14 @@ module.exports = {
   getUserById,
   createUser,
   updateUserPassword,
+  getUserTotpSecret,
+  setUserTotpSecret,
+  listPasskeys,
+  getPasskeyByCredentialId,
+  addPasskey,
+  deletePasskey,
+  updatePasskeyCounter,
+  hasAnyPasskey,
   createSession,
   getSessionUser,
   deleteSession,
