@@ -2128,12 +2128,12 @@ pre {
  */
 @media (max-width: 640px) {
   .task-grid {
-    grid-auto-rows: 360px !important;
+    grid-auto-rows: 390px !important;
   }
   .task-grid .task-card {
-    height: 360px !important;
-    min-height: 360px !important;
-    max-height: 360px !important;
+    height: 390px !important;
+    min-height: 390px !important;
+    max-height: 390px !important;
   }
   .task-grid .task-actions {
     flex-shrink: 0 !important;
