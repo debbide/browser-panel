@@ -191,7 +191,7 @@ els.passkeyBtn.addEventListener('click', async () => {
     await postJson('/api/auth/passkey/login/verify', {
       challenge: options.challenge,
       response: {
-        id: assertion.id,
+        id: assertion.id || bufferToBase64url(assertion.rawId),
         rawId: bufferToBase64url(assertion.rawId),
         type: assertion.type,
         response: {

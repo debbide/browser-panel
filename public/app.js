@@ -7001,7 +7001,7 @@ function open2faDialog() {
         body: JSON.stringify({
           challenge: options.challenge,
           response: {
-            id: cred.id,
+            id: cred.id || bufferToBase64url(cred.rawId),
             rawId: bufferToBase64url(cred.rawId),
             type: cred.type,
             response: {
