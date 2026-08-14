@@ -744,7 +744,7 @@ a:hover { text-decoration: underline; }
 .task-card, .script-card, .run-card {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: auto;
   min-width: 0;
 }
 .script-card, .run-card { padding: 18px; }
