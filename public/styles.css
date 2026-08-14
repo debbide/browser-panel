@@ -2125,10 +2125,22 @@ pre {
  * 这样既保留了 Grid 的 gap 特性，又避免了硬编码 300px 导致的内容重叠和溢出。
  */
 @media (max-width: 640px) {
+  /* 彻底放弃在手机单列使用 Grid 和垂直 Flex 布局，绕开所有老版 WebKit 兼容性天坑！ */
+  .task-grid {
+    display: block !important;
+  }
   .task-grid .task-card {
+    display: block !important;
     height: auto !important;
-    min-height: 250px !important;
+    min-height: 0 !important;
     max-height: none !important;
+    margin-bottom: 16px !important; /* 代替 Grid gap */
+  }
+  .task-card .task-metrics {
+    display: block !important; /* 杀掉内部 Grid */
+  }
+  .task-card .metric-card {
+    margin-bottom: 12px !important; /* 代替内部 gap */
   }
 }
 
