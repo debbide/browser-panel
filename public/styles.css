@@ -2123,16 +2123,17 @@ pre {
 /* 移动端任务卡片高度固定：不管 1 个还是 100 个任务，每张卡片都是同一高度，
  * 内容多了自动截断（任务名/状态本身有 ellipsis），不会把卡片压扁或挤变形。
  * 只作用于手机单列（max-width: 640px），桌面端保持原样。
- * iOS 上 flex 高度可能被 1fr 网格行压缩，加 grid-auto-rows 和 flex 子项兜底。
+ * iOS WebKit 会把 height:100% 的 flex 项按内容压扁，用 !important 把
+ * 卡片与网格行高全部钉死为同一值，不给协商空间。
  */
 @media (max-width: 640px) {
   .task-grid {
-    grid-auto-rows: 300px;
+    grid-auto-rows: 300px !important;
   }
   .task-grid .task-card {
-    height: 300px;
-    min-height: 300px;
-    overflow: hidden;
+    height: 300px !important;
+    min-height: 300px !important;
+    max-height: 300px !important;
   }
 }
 
