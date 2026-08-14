@@ -265,6 +265,46 @@ function buildRetryMarkup(task, run) {
   };
 }
 
+function buildRetryStartedMessage(task, run) {
+  const taskLabel = task?.name || `#${task?.id || '?'}`;
+  return [
+    '<b>\u21bb \u5df2\u5f00\u59cb\u91cd\u8bd5</b>',
+    `<code>${escapeTgHtml(taskLabel)}</code>`,
+    `\u539f\u5931\u8d25\u8fd0\u884c #${run?.id || '?'}\u3002\u53ef\u5728\u9762\u677f\u8fd0\u884c\u8bb0\u5f55\u67e5\u770b\u7ed3\u679c\uff1b\u7b26\u5408\u901a\u77e5\u89c4\u5219\u65f6\u4e5f\u4f1a\u63a8\u9001\u3002`,
+  ].join('\n');
+}
+
+function normalizeWebhookPublicUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('\u516c\u7f51\u5730\u5740\u5fc5\u987b\u662f\u5b8c\u6574\u7684 HTTPS URL');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Telegram Webhook \u53ea\u652f\u6301 HTTPS \u516c\u7f51\u5730\u5740');
+  }
+  if (!parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('\u516c\u7f51\u5730\u5740\u4e0d\u80fd\u5305\u542b\u8d26\u5bc6\u3001\u53c2\u6570\u6216\u951a\u70b9');
+  }
+  if (parsed.pathname && parsed.pathname !== '/') {
+    throw new Error('\u516c\u7f51\u5730\u5740\u53ea\u80fd\u586b\u5199\u57df\u540d\uff0c\u4e0d\u5305\u542b\u8def\u5f84');
+  }
+  return parsed.origin;
+}
+
+function buildTelegramWebhookUrl(publicUrl, botToken) {
+  const origin = normalizeWebhookPublicUrl(publicUrl);
+  if (!origin) throw new Error('\u8bf7\u586b\u5199 Telegram Webhook \u516c\u7f51\u5730\u5740');
+  const token = String(botToken || '').trim();
+  if (!token) throw new Error('Bot Token \u4e0d\u80fd\u4e3a\u7a7a');
+  return `${origin}/api/telegram/webhook/${encodeURIComponent(token)}`;
+}
+
 function getTelegramProxy() {
   const settings = db.getTelegramSettings();
   if (settings.proxy) {
@@ -391,6 +431,29 @@ async function telegramRequest(method, botToken, options) {
   }
 }
 
+async function registerTelegramWebhook(botToken, publicUrl) {
+  const webhookUrl = buildTelegramWebhookUrl(publicUrl, botToken);
+  try {
+    await telegramCurlRequest('setWebhook', botToken, (url) => [
+      '-X', 'POST',
+      url,
+      '--data-urlencode', `url=${webhookUrl}`,
+      '--data-urlencode', 'allowed_updates=["callback_query"]',
+    ]);
+  } catch (error) {
+    console.warn('[telegram] curl setWebhook failed, fallback to fetch:', error.message);
+    const form = new URLSearchParams({
+      url: webhookUrl,
+      allowed_updates: JSON.stringify(['callback_query']),
+    });
+    await telegramRequest('setWebhook', botToken, {
+      method: 'POST',
+      body: form,
+    });
+  }
+  return { webhookUrl };
+}
+
 async function sendTelegramMessage(botToken, chatId, text, replyMarkup = null) {
   const payload = {
     chat_id: chatId,
@@ -455,10 +518,11 @@ async function sendTelegramPhoto(botToken, chatId, filePath, caption, replyMarku
   });
 }
 
-async function answerTelegramCallback(botToken, callbackQueryId, text) {
+async function answerTelegramCallback(botToken, callbackQueryId, text, options = {}) {
   const payload = {
     callback_query_id: callbackQueryId,
     ...(text ? { text: limitText(text, 200) } : {}),
+    ...(options.showAlert ? { show_alert: true } : {}),
   };
   try {
     return await telegramCurlRequest('answerCallbackQuery', botToken, (url) => [
@@ -544,6 +608,9 @@ module.exports = {
   maskTelegramToken,
   buildTaskRunMessage,
   buildRetryCallbackData,
+  buildRetryStartedMessage,
+  normalizeWebhookPublicUrl,
+  registerTelegramWebhook,
   sendTelegramMessage,
   sendTelegramPhoto,
   answerTelegramCallback,

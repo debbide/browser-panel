@@ -253,9 +253,14 @@
               <label class="field-label" for="tg-proxy">代理 (Proxy)</label>
               <input type="text" name="proxy" id="tg-proxy" placeholder="例如: socks5://127.0.0.1:7891" />
             </div>
+            <div>
+              <label class="field-label" for="tg-webhook-url">面板公网 HTTPS 地址</label>
+              <input type="url" name="webhookUrl" id="tg-webhook-url" placeholder="https://panel.example.com" inputmode="url" />
+              <div id="tg-webhook-help" class="schedule-note" style="margin-top: 4px;"></div>
+            </div>
             <div class="row" style="margin-top: 8px;">
               <button type="submit" id="tg-save-btn" class="btn-primary btn-with-icon">
-                <i data-lucide="save" class="icon-sm"></i> 保存设置
+                <i data-lucide="save" class="icon-sm"></i> 保存并注册 Webhook
               </button>
               <button type="button" class="alt btn-with-icon" id="tg-test-btn">
                 <i data-lucide="send" class="icon-sm"></i> 发送测试消息

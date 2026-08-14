@@ -29,7 +29,17 @@ const logStream = require('./log-stream');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
 const { cleanupStorage, normalizeCategories, normalizeRetentionDays } = require('./storage-cleanup');
 const backup = require('./backup');
-const { notifyTaskRun, sendTelegramTestMessage, isTelegramConfigured, maskTelegramToken, answerTelegramCallback } = require('./telegram');
+const {
+  notifyTaskRun,
+  sendTelegramTestMessage,
+  isTelegramConfigured,
+  maskTelegramToken,
+  answerTelegramCallback,
+  buildRetryStartedMessage,
+  normalizeWebhookPublicUrl,
+  registerTelegramWebhook,
+  sendTelegramMessage,
+} = require('./telegram');
 const { PROXY_MODES } = require('./runtime/runtime-contract');
 const { resolveEffectiveProxyContract } = require('./runtime/env-builder');
 const { manager: warpManager, cleanError: cleanWarpError } = require('./warp/manager');
@@ -198,17 +208,17 @@ async function triggerTaskExecutionInBackground(taskId) {
   const taskIdNum = Number(taskId);
   const task = db.getTask(taskIdNum);
   if (!task) {
-    return { ok: false, message: 'Task not found' };
+    return { ok: false, message: '任务不存在或已被删除' };
   }
   if (task.use_browser && getManualBrowserStatus().open) {
-    return { ok: false, message: 'Browser is open manually, close it before running tasks' };
+    return { ok: false, message: '手动浏览器仍在运行，请先关闭后重试' };
   }
   const gate = canStartTask(taskIdNum, { task });
   if (!gate.ok) {
     if (gate.reason === 'browser_busy') {
-      return { ok: false, message: 'Another browser task is already running' };
+      return { ok: false, message: '另一个浏览器任务正在运行，请稍后重试' };
     }
-    return { ok: false, message: 'Task is already running' };
+    return { ok: false, message: '这个任务已经在运行' };
   }
 
   // Calling runTaskSafely immediately reserves the task/browser channel before
@@ -227,7 +237,7 @@ async function triggerTaskExecutionInBackground(taskId) {
       console.warn('[telegram] retry trigger failed:', error.message);
     });
 
-  return { ok: true, message: 'Retry started' };
+  return { ok: true, message: '重试任务已开始' };
 }
 
 function normalizeTelegramSettingsResponse() {
@@ -237,6 +247,9 @@ function normalizeTelegramSettingsResponse() {
     chatId: settings.chatId || '',
     botTokenMasked: maskTelegramToken(settings.botToken),
     proxy: settings.proxy || '',
+    webhookUrl: settings.webhookUrl || '',
+    webhookStatus: settings.webhookStatus || (isTelegramConfigured(settings) ? 'needs_url' : 'unconfigured'),
+    webhookError: settings.webhookError || '',
   };
 }
 
@@ -244,6 +257,40 @@ function resolveTelegramSettingValue(incomingValue, existingValue) {
   const value = String(incomingValue || '').trim();
   if (value) return value;
   return existingValue || null;
+}
+
+function inferTelegramWebhookOrigin(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || '')
+    .split(',')[0].trim().toLowerCase();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0].trim();
+  if (proto !== 'https' || !host) return '';
+  try {
+    return normalizeWebhookPublicUrl(`https://${host}`);
+  } catch {
+    return '';
+  }
+}
+
+async function ensureTelegramWebhook() {
+  const settings = db.getTelegramSettings();
+  if (!settings.botToken || !settings.webhookUrl) return false;
+
+  try {
+    await registerTelegramWebhook(settings.botToken, settings.webhookUrl);
+    db.setSetting('telegram_webhook_status', 'registered');
+    db.setSetting('telegram_webhook_error', '');
+    console.log(`[telegram] webhook registered: ${settings.webhookUrl}`);
+    return true;
+  } catch (error) {
+    const message = String(error.message || 'Telegram Webhook 注册失败')
+      .replace(new RegExp(settings.botToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<redacted>')
+      .slice(0, 500);
+    db.setSetting('telegram_webhook_status', 'error');
+    db.setSetting('telegram_webhook_error', message);
+    console.warn(`[telegram] webhook registration failed: ${message}`);
+    return false;
+  }
 }
 
 function normalizeTaskParams(input) {
@@ -895,24 +942,57 @@ app.post('/api/settings/browser-runtime/install-browser', (req, res) => {
   }
 });
 
-app.post('/api/settings/telegram', (req, res) => {
-  const payload = req.body || {};
-  const current = db.getTelegramSettings();
-  const botToken = resolveTelegramSettingValue(payload.botToken, current.botToken);
-  const chatId = resolveTelegramSettingValue(payload.chatId, current.chatId);
+app.post('/api/settings/telegram', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const current = db.getTelegramSettings();
+    const botToken = resolveTelegramSettingValue(payload.botToken, current.botToken);
+    const chatId = resolveTelegramSettingValue(payload.chatId, current.chatId);
 
-  if (!botToken || !chatId) {
-    return res.status(400).json({ message: 'Bot Token and Chat ID are required' });
+    if (!botToken || !chatId) {
+      return res.status(400).json({ message: 'Bot Token and Chat ID are required' });
+    }
+
+    let webhookUrl = '';
+    try {
+      const rawWebhookUrl = payload.webhookUrl === undefined
+        ? (current.webhookUrl || inferTelegramWebhookOrigin(req))
+        : payload.webhookUrl;
+      webhookUrl = normalizeWebhookPublicUrl(rawWebhookUrl);
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'Webhook URL is invalid' });
+    }
+
+    // Save the transport settings first so setWebhook uses the latest proxy configuration.
+    db.setSetting('telegram_bot_token', botToken);
+    db.setSetting('telegram_chat_id', chatId);
+    if (payload.proxy !== undefined) {
+      db.setSetting('telegram_proxy', String(payload.proxy).trim());
+    }
+    db.setSetting('telegram_webhook_url', webhookUrl);
+
+    if (!webhookUrl) {
+      db.setSetting('telegram_webhook_status', 'needs_url');
+      db.setSetting('telegram_webhook_error', '请填写公网 HTTPS 地址后保存，面板会自动注册 Webhook');
+      return res.json({ data: normalizeTelegramSettingsResponse() });
+    }
+
+    try {
+      await registerTelegramWebhook(botToken, webhookUrl);
+      db.setSetting('telegram_webhook_status', 'registered');
+      db.setSetting('telegram_webhook_error', '');
+      return res.json({ data: normalizeTelegramSettingsResponse() });
+    } catch (error) {
+      const message = String(error.message || 'Telegram Webhook 注册失败')
+        .replace(new RegExp(botToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<redacted>')
+        .slice(0, 500);
+      db.setSetting('telegram_webhook_status', 'error');
+      db.setSetting('telegram_webhook_error', message);
+      return res.json({ data: normalizeTelegramSettingsResponse() });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message || '保存 Telegram 设置失败' });
   }
-
-  db.setSetting('telegram_bot_token', botToken);
-  db.setSetting('telegram_chat_id', chatId);
-  
-  if (payload.proxy !== undefined) {
-    db.setSetting('telegram_proxy', String(payload.proxy).trim());
-  }
-
-  res.json({ data: normalizeTelegramSettingsResponse() });
 });
 
 app.post('/api/settings/telegram/test', async (req, res) => {
@@ -1097,31 +1177,55 @@ app.post('/api/telegram/webhook/:token', async (req, res) => {
   const callbackQueryId = callbackQuery.id;
   const chatId = callbackQuery.message?.chat?.id;
   const parsed = parseRetryCallbackData(callbackQuery.data);
+  console.log(
+    `[telegram] callback received chat=${chatId || '-'} action=${parsed ? 'retry' : 'unknown'}`
+  );
 
   try {
     if (!isConfiguredTelegramChat(chatId)) {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, 'Current chat is not authorized for this task');
+      await answerTelegramCallback(settings.botToken, callbackQueryId, '当前 Chat 未被授权执行任务', { showAlert: true });
       return res.json({ ok: true });
     }
 
     if (!parsed) {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, 'Unable to recognize this action');
+      await answerTelegramCallback(settings.botToken, callbackQueryId, '无法识别这个操作', { showAlert: true });
       return res.json({ ok: true });
     }
 
     const task = db.getTask(parsed.taskId);
     const run = db.getRun(parsed.runId);
     if (!task || !run || run.task_id !== parsed.taskId || run.status !== 'failed' || Number(run.retryable || 0) !== 1) {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, 'This failed run is no longer retryable');
+      await answerTelegramCallback(settings.botToken, callbackQueryId, '这次失败已经不可重试', { showAlert: true });
       return res.json({ ok: true });
     }
 
     const result = await triggerTaskExecutionInBackground(parsed.taskId);
-    await answerTelegramCallback(settings.botToken, callbackQueryId, result.message);
+    if (!result.ok) {
+      console.warn(
+        `[telegram] retry rejected task#${parsed.taskId} source_run#${parsed.runId}: ${result.message}`
+      );
+      await answerTelegramCallback(settings.botToken, callbackQueryId, result.message, { showAlert: true });
+      return res.json({ ok: true });
+    }
+
+    console.log(`[telegram] retry started task#${parsed.taskId} source_run#${parsed.runId}`);
+    await answerTelegramCallback(settings.botToken, callbackQueryId, '重试任务已开始', { showAlert: true });
+    void sendTelegramMessage(
+      settings.botToken,
+      settings.chatId,
+      buildRetryStartedMessage(task, run)
+    ).catch((error) => {
+      console.warn('[telegram] retry confirmation message failed:', error.message);
+    });
     return res.json({ ok: true });
   } catch (error) {
     try {
-      await answerTelegramCallback(settings.botToken, callbackQueryId, error.message || 'Retry task failed');
+      await answerTelegramCallback(
+        settings.botToken,
+        callbackQueryId,
+        error.message || '启动重试任务失败',
+        { showAlert: true }
+      );
     } catch (answerError) {
       console.warn('[telegram] failed to answer callback query:', answerError.message);
     }
@@ -2400,6 +2504,7 @@ app.use((req, res) => {
 
 const httpServer = app.listen(config.server.port, config.server.host, () => {
   reloadJobs(executeTask);
+  void ensureTelegramWebhook();
   void warpManager.restore();
   // 云端备份定时器：启动时先把 next_at 算好（若缺失），再挂 60s 的轮询。
   try {

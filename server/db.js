@@ -933,6 +933,9 @@ function getTelegramSettings() {
     botToken: getSetting('telegram_bot_token'),
     chatId: getSetting('telegram_chat_id'),
     proxy: getSetting('telegram_proxy'),
+    webhookUrl: getSetting('telegram_webhook_url'),
+    webhookStatus: getSetting('telegram_webhook_status'),
+    webhookError: getSetting('telegram_webhook_error'),
   };
 }
 
