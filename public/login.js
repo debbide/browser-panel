@@ -14,6 +14,8 @@ const els = {
   passwordLabel: document.getElementById('login-password-label'),
   confirmField: document.getElementById('login-confirm-field'),
   confirm: document.getElementById('login-confirm'),
+  rememberField: document.getElementById('login-remember-field'),
+  remember: document.getElementById('login-remember'),
   submit: document.getElementById('login-submit'),
   submitText: document.getElementById('login-submit-text'),
   note: document.getElementById('login-note'),
@@ -47,6 +49,7 @@ function applySetupMode(on) {
     els.passwordLabel.textContent = '密码（至少 8 位）';
     els.confirmField.hidden = false;
     els.confirm.required = true;
+    els.rememberField.hidden = true;
     els.password.autocomplete = 'new-password';
     els.submitText.textContent = '创建并登录';
     els.note.hidden = false;
@@ -58,6 +61,7 @@ function applySetupMode(on) {
     els.passwordLabel.textContent = '密码';
     els.confirmField.hidden = true;
     els.confirm.required = false;
+    els.rememberField.hidden = false;
     els.password.autocomplete = 'current-password';
     els.submitText.textContent = '登录';
     els.note.hidden = true;
@@ -123,7 +127,11 @@ els.form.addEventListener('submit', async (event) => {
         confirmPassword: els.confirm.value,
       });
     } else {
-      await postJson('/api/auth/login', { username, password });
+      await postJson('/api/auth/login', {
+        username,
+        password,
+        remember: els.remember.checked,
+      });
     }
     location.replace(nextTarget());
   } catch (err) {

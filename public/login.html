@@ -49,6 +49,18 @@
       color: var(--text-muted);
     }
     .login-field input { width: 100%; }
+    .login-remember-field { margin-bottom: 6px; }
+    .login-remember-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text-muted);
+      user-select: none;
+    }
+    .login-remember-label input { width: auto; cursor: pointer; }
     .login-error {
       display: none;
       margin-bottom: 16px;
@@ -94,6 +106,13 @@
       <div class="login-field" id="login-confirm-field" hidden>
         <label for="login-confirm">确认密码</label>
         <input id="login-confirm" name="confirmPassword" type="password" autocomplete="new-password" />
+      </div>
+
+      <div class="login-field login-remember-field" id="login-remember-field">
+        <label class="login-remember-label">
+          <input id="login-remember" name="remember" type="checkbox" />
+          记住我（30 天内免登录）
+        </label>
       </div>
 
       <button id="login-submit" type="submit" class="btn-with-icon">

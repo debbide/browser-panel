@@ -19,7 +19,8 @@ const express = require('express');
 const db = require('./db');
 
 const COOKIE_NAME = 'panel_sess';
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天（默认，不勾"记住我"）
+const REMEMBER_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天（勾选"记住我"）
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
@@ -225,12 +226,19 @@ function validatePasswordInput(password, confirm) {
   return null;
 }
 
-function issueSession(req, res, user) {
+function issueSession(req, res, user, remember = false) {
   const token = crypto.randomBytes(32).toString('base64url');
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  const ttl = remember ? REMEMBER_TTL_MS : SESSION_TTL_MS;
+  const expiresAt = new Date(Date.now() + ttl).toISOString();
   db.createSession(hashToken(token), user.id, expiresAt, req.headers['user-agent'] || '');
-  setSessionCookie(req, res, token, SESSION_TTL_MS);
+  setSessionCookie(req, res, token, ttl);
   return { token, expiresAt };
+}
+
+// 前端 checkbox 可能送来 true / 1 / 'true' / '1'，统一收敛成布尔。
+function parseRememberFlag(payload) {
+  const v = payload && payload.remember;
+  return v === true || v === 1 || v === '1' || String(v).toLowerCase() === 'true';
 }
 
 const router = express.Router();
@@ -263,7 +271,7 @@ router.post('/setup', (req, res) => {
 
   try {
     const user = db.createUser(username, hashPassword(payload.password));
-    issueSession(req, res, user);
+    issueSession(req, res, user, parseRememberFlag(payload));
     res.json({ data: { username: user.username } });
   } catch (error) {
     res.status(400).json({ message: error.message || '初始化失败' });
@@ -295,7 +303,8 @@ router.post('/login', (req, res) => {
 
   clearLoginFailures(ip);
   db.purgeExpiredSessions();
-  issueSession(req, res, user);
+  // 记住我：勾选后 30 天，否则 7 天
+  issueSession(req, res, user, parseRememberFlag(req.body));
   res.json({ data: { username: user.username } });
 });
 
@@ -338,5 +347,6 @@ module.exports = {
   isPublicPath,
   COOKIE_NAME,
   SESSION_TTL_MS,
+  REMEMBER_TTL_MS,
   MIN_PASSWORD_LEN,
 };
