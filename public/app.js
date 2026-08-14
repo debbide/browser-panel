@@ -6999,6 +6999,7 @@ function open2faDialog() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          currentPassword,
           challenge: options.challenge,
           response: {
             id: cred.id,
