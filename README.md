@@ -52,12 +52,26 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 面板需要登录才能使用。第一次打开会自动进入**引导页**，设置管理员账号和密码（至少 8 位），设好后立刻生效。
 
 - 登录状态存在 Cookie 里，默认 7 天
-- 忘记密码：在服务器上删掉账号后重启面板，会重新进引导页
+- 忘记密码：在服务器上删掉账号后重启面板，会重新进引导页。无需安装系统 `sqlite3`；下面的命令使用面板现有的 Node.js 依赖，并会一并清除登录会话、TOTP 与服务端保存的 Passkey。
 
   ```bash
-  sqlite3 /opt/browser-panel/data/app.db "DELETE FROM panel_users; DELETE FROM panel_sessions;"
-  systemctl restart browser-automation-panel
+  systemctl stop browser-automation-panel
+  cd /opt/browser-panel
+
+  node -e '
+  const Database = require("better-sqlite3");
+  const db = new Database("data/app.db");
+  db.pragma("foreign_keys = ON");
+  db.transaction(() => {
+    db.prepare("DELETE FROM panel_users").run();
+  })();
+  db.close();
+  '
+
+  systemctl start browser-automation-panel
   ```
+
+  浏览器或密码管理器中保留的旧 Passkey 不再能登录；重新设置管理员账号后，请注册新的 Passkey 并删除旧凭证。
 
 > **不要把 3210 直接暴露到公网**：面板本身是明文 HTTP，且脚本管理功能能写文件并执行、服务又是 root 跑的 —— 端口裸奔等于把 root shell 挂在公网上。三种收口方式任选：
 >
