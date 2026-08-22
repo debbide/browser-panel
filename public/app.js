@@ -4993,13 +4993,17 @@ function fillTaskForm(task) {
     proxyValue = findManagedEnvValue(task.env, 'BROWSER_PROXY_VALUE') || findManagedEnvValue(task.env, 'BROWSER_PROXY');
     proxyMode = findManagedEnvValue(task.env, 'BROWSER_PROXY_MODE') || (proxyValue ? 'launch' : 'inherit');
     runtimeStack = findManagedEnvValue(task.env, 'BROWSER_RUNTIME_STACK');
-    syncTaskParamsUI(task.script_path, filterManagedEnvRows(task.env));
+    // Keep managed values available to dedicated controls; the editor itself
+    // filters them from the ordinary variable list.
+    syncTaskParamsUI(task.script_path, task.env);
   } else {
     const params = task.params || parseParamsJson(task.params_json);
     proxyValue = findManagedParamValue(params, 'BROWSER_PROXY_VALUE') || findManagedParamValue(params, 'BROWSER_PROXY');
     proxyMode = findManagedParamValue(params, 'BROWSER_PROXY_MODE') || (proxyValue ? 'launch' : 'inherit');
     runtimeStack = findManagedParamValue(params, 'BROWSER_RUNTIME_STACK');
-    syncTaskParamsUI(task.script_path, filterManagedEnvObject(params));
+    // Keep managed values available to dedicated controls; the editor itself
+    // filters them from the ordinary variable list.
+    syncTaskParamsUI(task.script_path, params);
   }
   setTaskBrowserProxyInput(proxyValue, runtimeStack, proxyMode);
   updateTaskProfileModeUI();
