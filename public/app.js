@@ -6611,7 +6611,7 @@ function wireTasksFsUi() {
 
 /* ========== 插件与用户目录文件管理 ========== */
 const resourceManagerState = {
-  extensions: { path: '', api: '/api/extensions-fs', rootLabel: 'extensions/' },
+  extensions: { path: '', api: '/api/extensions-fs', rootLabel: '/home/browser/browser-work/' },
   profiles: { path: '', api: '/api/profiles-fs', rootLabel: 'profiles/' },
 };
 

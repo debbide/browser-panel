@@ -38,7 +38,7 @@ module.exports = {
     screenshotsDir: path.join(__dirname, 'screenshots'),
     tasksDir: path.join(__dirname, 'tasks'),
     publicDir: path.join(__dirname, 'public'),
-    extensionsDir: process.env.BROWSER_EXTENSIONS_DIR || path.join(browserWork, 'extensions'),
+    extensionsDir: process.env.BROWSER_EXTENSIONS_DIR || browserWork,
     profilesDir: process.env.BROWSER_PROFILES_DIR || path.join(browserWork, 'profiles'),
   },
 };
