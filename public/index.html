@@ -29,6 +29,12 @@
         <button id="tab-scripts" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="scripts-tab" aria-controls="scripts-tab" aria-selected="false">
           <i data-lucide="file-code-2" class="icon-sm"></i> 脚本管理
         </button>
+        <button id="tab-extensions" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="extensions-tab" aria-controls="extensions-tab" aria-selected="false">
+          <i data-lucide="puzzle" class="icon-sm"></i> 插件管理
+        </button>
+        <button id="tab-profile-files" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="profile-files-tab" aria-controls="profile-files-tab" aria-selected="false">
+          <i data-lucide="folder-user" class="icon-sm"></i> 用户目录
+        </button>
         <button id="tab-warp" class="tab-btn btn-with-icon" type="button" role="tab" tabindex="-1" data-tab="warp-tab" aria-controls="warp-tab" aria-selected="false">
           <i data-lucide="shield-check" class="icon-sm"></i> Cloudflare WARP
         </button>
@@ -175,6 +181,46 @@
           </div>
           <div id="fs-breadcrumb" class="files-breadcrumb muted" style="margin-bottom:8px; font-size:13px;">tasks/</div>
           <div id="fs-list" class="files-list"></div>
+        </section>
+      </div>
+
+      <div id="extensions-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-extensions" hidden>
+        <section class="modal-panel config-panel resource-manager" data-resource="extensions">
+          <div class="section-header compact">
+            <div>
+              <h2>插件管理</h2>
+              <p class="muted">管理浏览器插件目录，支持上传压缩包并解压到当前目录。</p>
+            </div>
+          </div>
+          <div class="files-toolbar row" style="gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <button type="button" class="alt btn-with-icon resource-up"><i data-lucide="corner-left-up" class="icon-sm"></i> 上级</button>
+            <button type="button" class="alt btn-with-icon resource-refresh"><i data-lucide="refresh-cw" class="icon-sm"></i> 刷新</button>
+            <button type="button" class="alt btn-with-icon resource-mkdir"><i data-lucide="folder-plus" class="icon-sm"></i> 新建文件夹</button>
+            <button type="button" class="alt btn-with-icon resource-upload"><i data-lucide="upload" class="icon-sm"></i> 上传压缩包</button>
+            <input type="file" class="resource-upload-input" accept=".zip,.tar,.tar.gz,.tgz" hidden />
+          </div>
+          <div class="files-breadcrumb resource-breadcrumb muted" style="margin-bottom:8px; font-size:13px;"></div>
+          <div class="files-list resource-list"></div>
+        </section>
+      </div>
+
+      <div id="profile-files-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-profile-files" hidden>
+        <section class="modal-panel config-panel resource-manager" data-resource="profiles">
+          <div class="section-header compact">
+            <div>
+              <h2>用户目录</h2>
+              <p class="muted">管理浏览器用户目录，浏览器运行期间禁止修改。</p>
+            </div>
+          </div>
+          <div class="files-toolbar row" style="gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <button type="button" class="alt btn-with-icon resource-up"><i data-lucide="corner-left-up" class="icon-sm"></i> 上级</button>
+            <button type="button" class="alt btn-with-icon resource-refresh"><i data-lucide="refresh-cw" class="icon-sm"></i> 刷新</button>
+            <button type="button" class="alt btn-with-icon resource-mkdir"><i data-lucide="folder-plus" class="icon-sm"></i> 新建文件夹</button>
+            <button type="button" class="alt btn-with-icon resource-upload"><i data-lucide="upload" class="icon-sm"></i> 上传压缩包</button>
+            <input type="file" class="resource-upload-input" accept=".zip,.tar,.tar.gz,.tgz" hidden />
+          </div>
+          <div class="files-breadcrumb resource-breadcrumb muted" style="margin-bottom:8px; font-size:13px;"></div>
+          <div class="files-list resource-list"></div>
         </section>
       </div>
 

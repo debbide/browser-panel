@@ -46,6 +46,7 @@ const { manager: warpManager, cleanError: cleanWarpError } = require('./warp/man
 const { createWarpRouter } = require('./warp/routes');
 const cloudBackup = require('./cloud/backup-service');
 const { createCloudBackupRouter } = require('./cloud/routes');
+const { createResourceRouter } = require('./resources/router');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
 fs.mkdirSync(config.paths.publicDir, { recursive: true });
@@ -732,6 +733,17 @@ app.get('/api/version', (req, res) => {
   res.json({ data: getVersion() });
 });
 app.use(requireAuth);
+app.use('/api/extensions-fs', createResourceRouter({
+  rootDir: config.paths.extensionsDir,
+  label: '插件管理',
+}));
+app.use('/api/profiles-fs', createResourceRouter({
+  rootDir: config.paths.profilesDir,
+  label: '用户目录',
+  // 当前运行状态无法可靠映射到具体子目录时，优先采取保守保护：
+  // 任意手动浏览器或浏览器任务运行期间，不允许修改 Profile 文件树。
+  isBusy: () => getManualBrowserStatus().open || isAnyBrowserTaskRunning(),
+}));
 app.use('/api/warp', createWarpRouter(warpManager));
 // 云端备份快照里含全部密钥（代理凭据、面板账号、WARP），必须挂在 requireAuth 之后。
 app.use('/api/cloud-backup', createCloudBackupRouter(cloudBackup));

@@ -502,6 +502,8 @@ const tabMeta = {
   'tasks-tab': ['Dashboard', '管理任务、运行状态与手动浏览器。'],
   'profiles-tab': ['Browser Profiles', '维护独立的浏览器数据与代理配置。'],
   'scripts-tab': ['Script Management', '管理任务脚本、目录与上传文件。'],
+  'extensions-tab': ['插件管理', '上传、解压和管理浏览器插件目录。'],
+  'profile-files-tab': ['用户目录', '管理浏览器用户数据目录与压缩包。'],
   'warp-tab': ['Cloudflare WARP', '管理 WARP 连接与双栈出口。'],
   'notifications-tab': ['TG Notifications', '配置 Telegram 通知与测试消息。'],
   'config-tab': ['Global Settings', '查找并调整面板级运行设置。'],
@@ -567,6 +569,8 @@ function activateAppTab(targetId, { focus = false } = {}) {
   if (focus) btn.focus();
 
   if (targetId === 'scripts-tab') loadTasksFs(fsCurrentPath);
+  if (targetId === 'extensions-tab') loadResourceManager('extensions');
+  if (targetId === 'profile-files-tab') loadResourceManager('profiles');
   if (targetId === 'warp-tab') loadWarpStatus();
   if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
     window.__onConfigTabShow();
@@ -6605,6 +6609,190 @@ function wireTasksFsUi() {
 
 }
 
+/* ========== 插件与用户目录文件管理 ========== */
+const resourceManagerState = {
+  extensions: { path: '', api: '/api/extensions-fs', rootLabel: 'extensions/' },
+  profiles: { path: '', api: '/api/profiles-fs', rootLabel: 'profiles/' },
+};
+
+function getResourceManager(kind) {
+  const root = document.querySelector(`.resource-manager[data-resource="${kind}"]`);
+  const state = resourceManagerState[kind];
+  return root && state ? { root, state } : null;
+}
+
+async function fileToResourceBase64(file) {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function resourceAction(kind, path, action, extra = {}) {
+  const manager = getResourceManager(kind);
+  if (!manager) return;
+  await fetchJson(`${manager.state.api}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, ...extra }),
+  });
+  await loadResourceManager(kind);
+}
+
+async function loadResourceManager(kind, dir) {
+  const manager = getResourceManager(kind);
+  if (!manager) return;
+  const { root, state } = manager;
+  if (dir !== undefined) state.path = String(dir || '').replace(/^\/+|\/+$/g, '');
+  const list = root.querySelector('.resource-list');
+  const breadcrumb = root.querySelector('.resource-breadcrumb');
+  breadcrumb.innerHTML = `<code>${escapeHtml(state.rootLabel)}${escapeHtml(state.path)}${state.path ? '/' : ''}</code>`;
+  list.innerHTML = '<div class="files-list-empty">加载中…</div>';
+  try {
+    const suffix = state.path ? `?path=${encodeURIComponent(state.path)}` : '';
+    const response = await fetchJson(`${state.api}${suffix}`);
+    const entries = response.data?.entries || [];
+    if (!entries.length) {
+      list.innerHTML = '<div class="files-list-empty">空目录</div>';
+      return;
+    }
+    list.innerHTML = `<div class="files-row files-row-head"><span></span><div class="files-name">名称</div><div class="files-meta">大小</div><div class="files-mtime">修改时间</div><div class="files-actions"></div></div>`;
+    for (const entry of entries) {
+      const row = document.createElement('div');
+      row.className = `files-row ${entry.type === 'dir' ? 'is-dir' : ''}`;
+      row.innerHTML = `
+        <i data-lucide="${entry.type === 'dir' ? 'folder' : (entry.archive ? 'file-archive' : 'file')}" class="icon-sm"></i>
+        <div class="files-name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
+        <div class="files-meta">${entry.type === 'dir' ? '文件夹' : formatBytes(entry.size)}</div>
+        <div class="files-mtime">${escapeHtml(formatFsMtime(entry.mtime))}</div>
+        <div class="files-actions"></div>`;
+      const actions = row.querySelector('.files-actions');
+      if (entry.type === 'dir') {
+        row.addEventListener('click', (event) => {
+          if (!event.target.closest('button')) loadResourceManager(kind, entry.path);
+        });
+      }
+      if (entry.archive) {
+        for (const [label, mode] of [['解压到当前目录', 'current'], ['解压到同名目录', 'folder']]) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'alt';
+          button.textContent = label;
+          button.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            try {
+              await resourceAction(kind, entry.path, 'extract', { mode, overwrite: false });
+              toast('解压完成', 'success');
+            } catch (error) {
+              toast(error.message || '解压失败', 'error');
+            }
+          });
+          actions.appendChild(button);
+        }
+      }
+      const renameButton = document.createElement('button');
+      renameButton.type = 'button';
+      renameButton.className = 'alt';
+      renameButton.textContent = '重命名';
+      renameButton.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const newName = await promptFsName('重命名', entry.name);
+        if (!newName || newName === entry.name) return;
+        try {
+          await resourceAction(kind, entry.path, 'rename', { newName });
+          toast('已重命名', 'success');
+        } catch (error) {
+          toast(error.message || '重命名失败', 'error');
+        }
+      });
+      actions.appendChild(renameButton);
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'alt danger';
+      deleteButton.textContent = '删除';
+      deleteButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        dialogConfirm(`确定删除「${entry.name}」？${entry.type === 'dir' ? ' 文件夹内容也会一并删除。' : ''}`, async () => {
+          try {
+            await fetchJson(state.api, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: entry.path }),
+            });
+            toast('已删除', 'success');
+            await loadResourceManager(kind);
+          } catch (error) {
+            toast(error.message || '删除失败', 'error');
+          }
+        });
+      });
+      actions.appendChild(deleteButton);
+      list.appendChild(row);
+    }
+    if (window.lucide) window.lucide.createIcons({ root: list });
+  } catch (error) {
+    list.innerHTML = `<div class="files-list-empty">${escapeHtml(error.message || '加载失败')}</div>`;
+  }
+}
+
+function wireResourceManagers() {
+  for (const kind of Object.keys(resourceManagerState)) {
+    const manager = getResourceManager(kind);
+    if (!manager) continue;
+    const { root, state } = manager;
+    root.querySelector('.resource-up')?.addEventListener('click', () => {
+      const parts = state.path.split('/').filter(Boolean);
+      parts.pop();
+      loadResourceManager(kind, parts.join('/'));
+    });
+    root.querySelector('.resource-refresh')?.addEventListener('click', () => loadResourceManager(kind));
+    root.querySelector('.resource-mkdir')?.addEventListener('click', async () => {
+      const name = await promptFsName('新建文件夹', 'folder-name');
+      if (!name) return;
+      try {
+        await fetchJson(`${state.api}/mkdir`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parent: state.path, name }),
+        });
+        toast('文件夹已创建', 'success');
+        await loadResourceManager(kind);
+      } catch (error) {
+        toast(error.message || '创建失败', 'error');
+      }
+    });
+    const uploadButton = root.querySelector('.resource-upload');
+    const uploadInput = root.querySelector('.resource-upload-input');
+    uploadButton?.addEventListener('click', () => uploadInput?.click());
+    uploadInput?.addEventListener('change', async () => {
+      const file = uploadInput.files?.[0];
+      uploadInput.value = '';
+      if (!file) return;
+      if (file.size > 14 * 1024 * 1024) {
+        toast('压缩包不能超过 14 MB', 'error');
+        return;
+      }
+      try {
+        toast(`正在上传 ${file.name}…`, 'info');
+        const content = await fileToResourceBase64(file);
+        await fetchJson(`${state.api}/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parent: state.path, name: file.name, content, overwrite: false }),
+        });
+        toast('上传完成', 'success');
+        await loadResourceManager(kind);
+      } catch (error) {
+        toast(error.message || '上传失败', 'error');
+      }
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 登录态 / 顶栏用户区
 // ---------------------------------------------------------------------------
@@ -7129,6 +7317,7 @@ async function bootPanel() {
   wireAuthUi(state.username);
 
   wireTasksFsUi();
+  wireResourceManagers();
 
   resetAllModalState();
   closeModal();
