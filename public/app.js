@@ -6621,17 +6621,6 @@ function getResourceManager(kind) {
   return root && state ? { root, state } : null;
 }
 
-async function fileToResourceBase64(file) {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
-}
-
 async function resourceAction(kind, path, action, extra = {}) {
   const manager = getResourceManager(kind);
   if (!manager) return;
@@ -6772,17 +6761,17 @@ function wireResourceManagers() {
       const file = uploadInput.files?.[0];
       uploadInput.value = '';
       if (!file) return;
-      if (file.size > 14 * 1024 * 1024) {
-        toast('压缩包不能超过 14 MB', 'error');
-        return;
-      }
       try {
         toast(`正在上传 ${file.name}…`, 'info');
-        const content = await fileToResourceBase64(file);
-        await fetchJson(`${state.api}/upload`, {
+        const query = new URLSearchParams({
+          parent: state.path,
+          name: file.name,
+          overwrite: 'false',
+        });
+        await fetchJson(`${state.api}/upload?${query}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ parent: state.path, name: file.name, content, overwrite: false }),
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: file,
         });
         toast('上传完成', 'success');
         await loadResourceManager(kind);

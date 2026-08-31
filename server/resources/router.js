@@ -4,9 +4,6 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 const express = require('express');
 
-// Uploads are base64 encoded inside the application's 20 MB JSON body limit.
-// Keep the binary limit below that ceiling after base64 expansion and JSON overhead.
-const MAX_UPLOAD_BYTES = 14 * 1024 * 1024;
 const ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 
 function normalizeRelativePath(value = '') {
@@ -164,20 +161,38 @@ function createResourceRouter({ rootDir, label, isBusy = () => false }) {
   });
 
   router.post('/upload', (req, res) => {
+    let target = '';
+    let settled = false;
+
+    function fail(status, message) {
+      if (settled) return;
+      settled = true;
+      if (target) fs.rmSync(target, { force: true });
+      if (!res.headersSent) res.status(status).json({ message });
+    }
+
     try {
-      const payload = req.body || {};
-      const name = validateName(payload.name);
-      const { abs: parentAbs, rel: parentRel } = resolveInside(rootDir, payload.parent || '');
+      const name = validateName(req.query.name);
+      const { abs: parentAbs, rel: parentRel } = resolveInside(rootDir, req.query.parent || '');
       if (isBusy(parentRel)) return res.status(409).json({ message: '目标目录正在被浏览器使用' });
-      const content = Buffer.from(String(payload.content || ''), 'base64');
-      if (content.length > MAX_UPLOAD_BYTES) return res.status(413).json({ message: '文件超过 14 MB 限制' });
       fs.mkdirSync(parentAbs, { recursive: true });
-      const target = path.join(parentAbs, name);
-      if (fs.existsSync(target) && !payload.overwrite) return res.status(409).json({ message: '同名文件已存在' });
-      fs.writeFileSync(target, content);
-      res.json({ ok: true, data: { path: parentRel ? `${parentRel}/${name}` : name, size: content.length } });
+      target = path.join(parentAbs, name);
+      const overwrite = ['1', 'true', 'yes'].includes(String(req.query.overwrite || '').toLowerCase());
+      if (fs.existsSync(target) && !overwrite) return res.status(409).json({ message: '同名文件已存在' });
+
+      const output = fs.createWriteStream(target, { flags: overwrite ? 'w' : 'wx' });
+      output.on('error', (error) => fail(error.code === 'EEXIST' ? 409 : 500, error.message || '上传失败'));
+      req.on('error', (error) => fail(400, error.message || '上传中断'));
+      req.on('aborted', () => fail(400, '上传已中断'));
+      output.on('finish', () => {
+        if (settled) return;
+        settled = true;
+        const size = fs.statSync(target).size;
+        res.json({ ok: true, data: { path: parentRel ? `${parentRel}/${name}` : name, size } });
+      });
+      req.pipe(output);
     } catch (error) {
-      res.status(400).json({ message: error.message || '上传失败' });
+      fail(400, error.message || '上传失败');
     }
   });
 
