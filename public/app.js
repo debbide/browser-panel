@@ -6621,6 +6621,36 @@ function getResourceManager(kind) {
   return root && state ? { root, state } : null;
 }
 
+function uploadResourceFile(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.responseType = 'json';
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable && typeof onProgress === 'function') {
+        onProgress(event.loaded, event.total);
+      }
+    });
+    xhr.addEventListener('load', () => {
+      const data = xhr.response || {};
+      if (xhr.status === 401) {
+        goLogin();
+        reject(new Error('会话已失效，正在跳转登录页'));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(data.message || `上传失败（HTTP ${xhr.status}）`));
+        return;
+      }
+      resolve(data);
+    });
+    xhr.addEventListener('error', () => reject(new Error('网络错误，上传失败')));
+    xhr.addEventListener('abort', () => reject(new Error('上传已取消')));
+    xhr.send(file);
+  });
+}
+
 async function resourceAction(kind, path, action, extra = {}) {
   const manager = getResourceManager(kind);
   if (!manager) return;
@@ -6756,27 +6786,45 @@ function wireResourceManagers() {
     });
     const uploadButton = root.querySelector('.resource-upload');
     const uploadInput = root.querySelector('.resource-upload-input');
+    const progressBox = root.querySelector('.resource-upload-progress');
+    const progressText = root.querySelector('.resource-upload-progress-text');
+    const progressPercent = root.querySelector('.resource-upload-progress-percent');
+    const progressMeter = root.querySelector('.resource-upload-progress-meter');
     uploadButton?.addEventListener('click', () => uploadInput?.click());
     uploadInput?.addEventListener('change', async () => {
       const file = uploadInput.files?.[0];
       uploadInput.value = '';
       if (!file) return;
       try {
-        toast(`正在上传 ${file.name}…`, 'info');
+        uploadButton.disabled = true;
+        if (progressBox) progressBox.hidden = false;
+        if (progressMeter) progressMeter.value = 0;
+        if (progressPercent) progressPercent.textContent = '0%';
+        if (progressText) progressText.textContent = `${file.name} · 0 B / ${formatBytes(file.size)}`;
         const query = new URLSearchParams({
           parent: state.path,
           name: file.name,
           overwrite: 'false',
         });
-        await fetchJson(`${state.api}/upload?${query}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: file,
+        await uploadResourceFile(`${state.api}/upload?${query}`, file, (loaded, total) => {
+          const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+          if (progressMeter) progressMeter.value = percent;
+          if (progressPercent) progressPercent.textContent = `${percent}%`;
+          if (progressText) progressText.textContent = `${file.name} · ${formatBytes(loaded)} / ${formatBytes(total)}`;
         });
+        if (progressMeter) progressMeter.value = 100;
+        if (progressPercent) progressPercent.textContent = '100%';
+        if (progressText) progressText.textContent = `${file.name} · 上传完成`;
         toast('上传完成', 'success');
         await loadResourceManager(kind);
       } catch (error) {
+        if (progressText) progressText.textContent = `${file.name} · ${error.message || '上传失败'}`;
         toast(error.message || '上传失败', 'error');
+      } finally {
+        uploadButton.disabled = false;
+        window.setTimeout(() => {
+          if (progressBox) progressBox.hidden = true;
+        }, 2500);
       }
     });
   }

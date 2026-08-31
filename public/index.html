@@ -199,6 +199,13 @@
             <button type="button" class="alt btn-with-icon resource-upload"><i data-lucide="upload" class="icon-sm"></i> 上传压缩包</button>
             <input type="file" class="resource-upload-input" accept=".zip,.tar,.tar.gz,.tgz" hidden />
           </div>
+          <div class="resource-upload-progress" hidden>
+            <div class="resource-upload-progress-head">
+              <span class="resource-upload-progress-text">准备上传…</span>
+              <strong class="resource-upload-progress-percent">0%</strong>
+            </div>
+            <progress class="resource-upload-progress-meter" max="100" value="0"></progress>
+          </div>
           <div class="files-breadcrumb resource-breadcrumb muted" style="margin-bottom:8px; font-size:13px;"></div>
           <div class="files-list resource-list"></div>
         </section>
@@ -218,6 +225,13 @@
             <button type="button" class="alt btn-with-icon resource-mkdir"><i data-lucide="folder-plus" class="icon-sm"></i> 新建文件夹</button>
             <button type="button" class="alt btn-with-icon resource-upload"><i data-lucide="upload" class="icon-sm"></i> 上传压缩包</button>
             <input type="file" class="resource-upload-input" accept=".zip,.tar,.tar.gz,.tgz" hidden />
+          </div>
+          <div class="resource-upload-progress" hidden>
+            <div class="resource-upload-progress-head">
+              <span class="resource-upload-progress-text">准备上传…</span>
+              <strong class="resource-upload-progress-percent">0%</strong>
+            </div>
+            <progress class="resource-upload-progress-meter" max="100" value="0"></progress>
           </div>
           <div class="files-breadcrumb resource-breadcrumb muted" style="margin-bottom:8px; font-size:13px;"></div>
           <div class="files-list resource-list"></div>
