@@ -6621,7 +6621,7 @@ function getResourceManager(kind) {
   return root && state ? { root, state } : null;
 }
 
-function uploadResourceFile(url, file, onProgress) {
+function uploadResourceChunk(url, chunk, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
@@ -6647,8 +6647,44 @@ function uploadResourceFile(url, file, onProgress) {
     });
     xhr.addEventListener('error', () => reject(new Error('网络错误，上传失败')));
     xhr.addEventListener('abort', () => reject(new Error('上传已取消')));
-    xhr.send(file);
+    xhr.send(chunk);
   });
+}
+
+async function uploadResourceFile(url, file, onProgress) {
+  const chunkSize = 5 * 1024 * 1024;
+  const chunkCount = Math.max(1, Math.ceil(file.size / chunkSize));
+  const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let result = null;
+
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    const start = chunkIndex * chunkSize;
+    const end = Math.min(file.size, start + chunkSize);
+    const chunk = file.slice(start, end);
+    const query = new URLSearchParams({
+      uploadId,
+      chunkIndex: String(chunkIndex),
+      chunkCount: String(chunkCount),
+    });
+    const chunkUrl = `${url}&${query}`;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        result = await uploadResourceChunk(chunkUrl, chunk, (loaded) => {
+          if (typeof onProgress === 'function') onProgress(start + loaded, file.size);
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+      }
+    }
+    if (lastError) throw lastError;
+    if (typeof onProgress === 'function') onProgress(end, file.size);
+  }
+  return result;
 }
 
 async function resourceAction(kind, path, action, extra = {}) {

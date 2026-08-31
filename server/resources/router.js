@@ -178,17 +178,50 @@ function createResourceRouter({ rootDir, label, isBusy = () => false }) {
       fs.mkdirSync(parentAbs, { recursive: true });
       target = path.join(parentAbs, name);
       const overwrite = ['1', 'true', 'yes'].includes(String(req.query.overwrite || '').toLowerCase());
-      if (fs.existsSync(target) && !overwrite) return res.status(409).json({ message: '同名文件已存在' });
+      const uploadId = String(req.query.uploadId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      const chunkIndex = Number(req.query.chunkIndex);
+      const chunkCount = Number(req.query.chunkCount);
+      if (!uploadId || !Number.isInteger(chunkIndex) || !Number.isInteger(chunkCount)
+        || chunkIndex < 0 || chunkCount < 1 || chunkIndex >= chunkCount) {
+        return res.status(400).json({ message: '分片参数不合法' });
+      }
 
-      const output = fs.createWriteStream(target, { flags: overwrite ? 'w' : 'wx' });
+      const tempTarget = path.join(parentAbs, `.${name}.${uploadId}.uploading`);
+      target = tempTarget;
+      if (chunkIndex === 0) {
+        if (fs.existsSync(path.join(parentAbs, name)) && !overwrite) {
+          return res.status(409).json({ message: '同名文件已存在' });
+        }
+        fs.rmSync(tempTarget, { force: true });
+      } else if (!fs.existsSync(tempTarget)) {
+        return res.status(409).json({ message: '上传会话不存在，请重新上传' });
+      }
+
+      const output = fs.createWriteStream(tempTarget, { flags: chunkIndex === 0 ? 'wx' : 'a' });
       output.on('error', (error) => fail(error.code === 'EEXIST' ? 409 : 500, error.message || '上传失败'));
       req.on('error', (error) => fail(400, error.message || '上传中断'));
       req.on('aborted', () => fail(400, '上传已中断'));
       output.on('finish', () => {
         if (settled) return;
         settled = true;
-        const size = fs.statSync(target).size;
-        res.json({ ok: true, data: { path: parentRel ? `${parentRel}/${name}` : name, size } });
+        const size = fs.statSync(tempTarget).size;
+        const complete = chunkIndex === chunkCount - 1;
+        if (complete) {
+          const finalTarget = path.join(parentAbs, name);
+          if (overwrite) fs.rmSync(finalTarget, { force: true });
+          fs.renameSync(tempTarget, finalTarget);
+          target = '';
+        }
+        res.json({
+          ok: true,
+          data: {
+            path: parentRel ? `${parentRel}/${name}` : name,
+            size,
+            chunkIndex,
+            chunkCount,
+            complete,
+          },
+        });
       });
       req.pipe(output);
     } catch (error) {
