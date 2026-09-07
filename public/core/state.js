@@ -22,7 +22,6 @@
   global.createStateStore = createStateStore;
 })(window);
 
-let profilesCache = [];
 let editingId = null;
 let tasksCache = [];
 let runsCache = [];

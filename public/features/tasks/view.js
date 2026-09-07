@@ -1,12 +1,12 @@
 (function exposeTasksView(global) {
 function taskCard(task, groupName = '', deps = {}) {
-  const { taskIsRunning, latestRunSummary, profilesCache, describeConditionValueFull, describeCondition, conditionStatusClass, describeConditionValue, describeNextRun, selectedBackupTaskIds, backupSelectionMode, escapeHtml } = deps;
+  const { taskIsRunning, latestRunSummary, profileStore, describeConditionValueFull, describeCondition, conditionStatusClass, describeConditionValue, describeNextRun, selectedBackupTaskIds, backupSelectionMode, escapeHtml } = deps;
   const isRunning = taskIsRunning(task);
   const latest = latestRunSummary(task.id, task);
   const isPersistent = Boolean(Number(task.use_persistent));
   const profileName = (() => {
     if (!task.browser_profile_id) return isPersistent ? '默认配置' : '每次全新';
-    const p = profilesCache.find((x) => Number(x.id) === Number(task.browser_profile_id));
+    const p = profileStore.find(task.browser_profile_id);
     return p ? p.name : `#${task.browser_profile_id}`;
   })();
   const profileMode = isPersistent ? '持久' : '临时';
