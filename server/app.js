@@ -7,4 +7,11 @@ function createApp(options = {}) {
   return app;
 }
 
-module.exports = { createApp };
+function createApplication(registerRoutes, options = {}) {
+  return createApp({
+    ...options,
+    registerRoutes,
+  });
+}
+
+module.exports = { createApp, createApplication };

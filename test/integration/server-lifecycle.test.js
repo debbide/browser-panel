@@ -92,3 +92,22 @@ test('lifecycle starts and shuts down only once', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /lifecycle is idempotent/);
 });
+
+test('backend composition keeps the entry thin and dependency direction acyclic', () => {
+  const indexSource = fs.readFileSync(path.join(projectRoot, 'server/index.js'), 'utf8');
+  const appSource = fs.readFileSync(path.join(projectRoot, 'server/app.js'), 'utf8');
+  const serverFiles = fs.readdirSync(path.join(projectRoot, 'server'), { recursive: true })
+    .filter((file) => file.endsWith('.js'));
+
+  assert.doesNotMatch(indexSource, /app\.(get|post|put|delete|patch|use)\(/);
+  assert.match(indexSource, /require\(['"]\.\/application['"]\)/);
+  assert.match(indexSource, /application\.registerSignals\(\)/);
+  assert.match(appSource, /function createApplication\(/);
+
+  for (const file of serverFiles) {
+    if (file === 'index.js') continue;
+    const source = fs.readFileSync(path.join(projectRoot, 'server', file), 'utf8');
+    assert.doesNotMatch(source, /require\(['"][^'"]*server\/index(?:\.js)?['"]\)/, file);
+    assert.doesNotMatch(source, /require\(['"]\.\.?(?:\/[^'"]+)*\/index(?:\.js)?['"]\)/, file);
+  }
+});
