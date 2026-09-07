@@ -39,7 +39,7 @@ test('production page loads scheduler modules before app', () => {
 });
 
 test('application entry delegates scheduler startup', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /SchedulerController\.create\(/);
   assert.match(source, /schedulerController\.mount\(\)/);
   assert.match(source, /schedulerController\.load\(\)/);

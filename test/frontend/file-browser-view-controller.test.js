@@ -41,7 +41,7 @@ test('production page loads file browser modules before app', () => {
 });
 
 test('application entry delegates file browser startup', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /FileBrowserController\.create\(/);
   assert.match(source, /fileBrowserController\.mount\(\)/);
   assert.match(source, /fileBrowserController\.load\(/);

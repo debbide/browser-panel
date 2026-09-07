@@ -42,7 +42,7 @@ test('production page loads settings view and controller before app', () => {
 });
 
 test('application entry delegates settings startup to the controller', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /SettingsController\.create\(/);
   assert.match(source, /settingsController\.mount\(\)/);
   assert.match(source, /settingsController\.load\(\)/);

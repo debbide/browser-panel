@@ -40,14 +40,14 @@ test('task list and modal selectors remain present', () => {
 });
 
 test('task edit flow preserves explicit script path', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /selectedScriptPath = task\.script_path;/);
   assert.match(source, /loadScriptIntoEditor\(task\.script_path, \{ preserveHint: true, reopenModal: false \}\)/);
   assert.match(source, /form\.script_path\.value = scriptPath;/);
 });
 
 test('task create and update payloads retain task type and script path', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /const formData = new FormData\(form\)/);
   assert.match(source, /const payload = Object\.fromEntries\(formData\.entries\(\)\)/);
   assert.match(source, /payload\.type = TasksModel\.resolveTaskType\(payload\.script_path, payload\.type\)/);
@@ -55,7 +55,7 @@ test('task create and update payloads retain task type and script path', () => {
 });
 
 test('settings save keeps JSON endpoint and payload contract', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /fetchJson\('\/api\/settings\/scheduler'/);
   assert.match(source, /method:\s*'POST'/);
   assert.match(source, /headers:\s*\{ 'Content-Type': 'application\/json' \}/);

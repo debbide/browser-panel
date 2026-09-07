@@ -143,7 +143,7 @@ test('queued refresh preserves the active SSE connection', () => {
 });
 
 test('active panel activation keeps tab and header state synchronized', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /function activateAppTab\(targetId/);
   assert.match(source, /classList\.toggle\('active'/);
   assert.match(source, /tabContents\.forEach/);
@@ -153,7 +153,7 @@ test('task filter and backup selections use persistent module state', () => {
   const source = read('public/core/state.js');
   assert.match(source, /let selectedBackupTaskIds = new Set\(\)/);
   assert.match(source, /let tasksCache = \[\]/);
-  assert.match(read('public/app.js'), /window\.selectTaskGroup/);
+  assert.match(read('public/panel-runtime.js'), /window\.selectTaskGroup/);
 });
 
 test('SSE startup is guarded and reconnect timing remains explicit', () => {

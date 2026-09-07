@@ -8,7 +8,7 @@ test('production page keeps the existing application entry path', () => {
 });
 
 test('boot checks authentication before panel requests', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   const auth = source.indexOf("fetch('/api/auth/state')");
   const refresh = source.indexOf('refreshAll();', auth);
   assert.ok(auth >= 0);
@@ -16,7 +16,7 @@ test('boot checks authentication before panel requests', () => {
 });
 
 test('authenticated startup request sequence remains stable', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   const order = [
     'wireAuthUi(state.username);',
     'fileBrowserController.mount();',

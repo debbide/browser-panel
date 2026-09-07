@@ -40,7 +40,7 @@ test('production page loads backup and storage modules before app', () => {
 });
 
 test('application entry delegates backup and storage startup', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /BackupStorageController\.create\(/);
   assert.match(source, /backupStorageController\.mount\(\)/);
   assert.match(source, /backupStorageController\.load\(\)/);

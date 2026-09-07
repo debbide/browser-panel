@@ -39,7 +39,7 @@ test('production page loads browser resources modules before app', () => {
 });
 
 test('application entry delegates resource manager startup', () => {
-  const source = read('public/app.js');
+  const source = read('public/panel-runtime.js');
   assert.match(source, /BrowserResourcesController\.create\(/);
   assert.match(source, /browserResourcesController\.mount\(\)/);
 });
