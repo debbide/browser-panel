@@ -4,7 +4,7 @@ const { JSDOM } = require('jsdom');
 const { evaluateFunctions, read } = require('./helpers');
 
 test('HTML, status, unit and time formatting remain stable', () => {
-  const source = read('public/app.js');
+  const source = read('public/core/dom.js');
   const { prettyStatus, prettyUnit, shortTime } = evaluateFunctions(['prettyStatus', 'prettyUnit', 'shortTime']);
   assert.match(source, /function escapeHtml\(input\)/);
   assert.match(source, /\.replace\(\/&\/g, '&amp;'\)/);
@@ -12,6 +12,14 @@ test('HTML, status, unit and time formatting remain stable', () => {
   assert.equal(prettyStatus('success'), '成功');
   assert.equal(prettyUnit('minutes'), '分钟');
   assert.equal(shortTime('2026-09-07T12:34:56Z').length > 0, true);
+});
+
+test('DOM utilities load before the application entry', () => {
+  const html = read('public/index.html');
+  const domIndex = html.indexOf('/core/dom.js?v=20260907a');
+  const appIndex = html.indexOf('/app.js?v=20260814c');
+  assert.ok(domIndex >= 0);
+  assert.ok(appIndex > domIndex);
 });
 
 test('task list and modal selectors remain present', () => {

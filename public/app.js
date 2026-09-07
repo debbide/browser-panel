@@ -787,15 +787,6 @@ let selectedScriptPath = '';
 let browserSessionOpen = false;
 let browserOpenedAt = null;
 
-function escapeHtml(input) {
-  return String(input ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 function prettyErrorCode(code) {
   const map = {
     timeout: '超时',
@@ -868,28 +859,6 @@ async function closeBrowserSession() {
   } catch (error) {
     toast(error.message || '浏览器关闭失败', 'error');
   }
-}
-
-function prettyStatus(status) {
-  if (status === 'success') return '成功';
-  if (status === 'failed') return '失败';
-  if (status === 'running') return '运行中';
-  if (status === 'stopped') return '已停止';
-  return status || '-';
-}
-
-function prettyUnit(unit) {
-  if (unit === 'minutes') return '分钟';
-  if (unit === 'days') return '天';
-  return '小时';
-}
-
-function shortTime(value) {
-  if (!value) return '-';
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return String(value).replace('T', ' ').slice(0, 19);
-  const pad = n => n.toString().padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function openModal(mode = 'create') {

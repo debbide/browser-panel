@@ -44,7 +44,7 @@ function extractFunction(source, name) {
 }
 
 function evaluateFunctions(names, globals = {}) {
-  const source = read('public/app.js');
+  const source = `${read('public/core/dom.js')}\n${read('public/app.js')}`;
   const declarations = names.map((name) => extractFunction(source, name)).join('\n');
   const context = vm.createContext({ URLSearchParams, Error, String, Number, Date, ...globals });
   vm.runInContext(`${declarations}\nthis.exports = { ${names.join(', ')} };`, context);
