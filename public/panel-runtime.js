@@ -1942,8 +1942,15 @@ const backupStorageController = BackupStorageController.create({
 const schedulerController = SchedulerController.create({
   api: SchedulerApi,
   view: SchedulerView,
-  actions: {
-    load: loadSchedulerSettings,
+  elements: {
+    form: schedulerForm,
+    statusText: schedulerStatusText,
+    allowParallel: schedulerAllowParallel,
+    saveBtn: schedulerSaveBtn,
+  },
+  toast,
+  createIcons: () => {
+    if (window.lucide) window.lucide.createIcons();
   },
 });
 
@@ -3624,40 +3631,6 @@ function normalizePluginPackagesForUi(value) {
     .map(item => item.trim())
     .filter(Boolean)
     .join(', ');
-}
-
-function setSchedulerStatus(text, color) {
-  if (!schedulerStatusText) return;
-  schedulerStatusText.textContent = text;
-  if (color) schedulerStatusText.style.color = color;
-}
-
-async function loadSchedulerSettings() {
-  if (!schedulerForm) return;
-  try {
-    const res = await fetchJson('/api/settings/scheduler');
-    const data = res.data || {};
-    if (schedulerAllowParallel) {
-      schedulerAllowParallel.checked = Boolean(data.allowParallel);
-    }
-    const mode = data.allowParallel ? '浏览器任务并行' : '浏览器任务串行（默认）';
-    const running = Array.isArray(data.runningTaskIds) ? data.runningTaskIds : [];
-    const runningText = running.length ? `，当前运行：#${running.join(', #')}` : '，当前空闲';
-    setSchedulerStatus(`状态：${mode}${runningText}`, '#94a3b8');
-  } catch (error) {
-    setSchedulerStatus('状态：加载失败', '#ef4444');
-    console.error('Failed to load scheduler settings:', error);
-  }
-}
-
-async function saveSchedulerSettings() {
-  const allowParallel = Boolean(schedulerAllowParallel && schedulerAllowParallel.checked);
-  await fetchJson('/api/settings/scheduler', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ allowParallel }),
-  });
-  await loadSchedulerSettings();
 }
 
 /* ---------- 云端备份 ---------- */
@@ -5502,28 +5475,6 @@ if (backupImportBtn && backupFileInput) {
   });
 }
 if (backupImportMask) backupImportMask.addEventListener('click', closeBackupImportModal);
-
-if (schedulerForm) {
-  schedulerForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (schedulerSaveBtn) {
-      schedulerSaveBtn.disabled = true;
-      schedulerSaveBtn.textContent = '保存中...';
-    }
-    try {
-      await saveSchedulerSettings();
-      toast('调度设置已保存', 'success');
-    } catch (error) {
-      toast(error.message || '保存调度设置失败', 'error');
-    } finally {
-      if (schedulerSaveBtn) {
-        schedulerSaveBtn.disabled = false;
-        schedulerSaveBtn.innerHTML = '<i data-lucide="save" class="icon-sm"></i> 保存调度设置';
-        if (window.lucide) window.lucide.createIcons();
-      }
-    }
-  });
-}
 
 if (cloudBackupForm) {
   cloudBackupForm.addEventListener('submit', async (e) => {

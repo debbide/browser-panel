@@ -48,23 +48,26 @@ test('application entry delegates scheduler startup', () => {
 test('scheduler DOM, visible text, state, and binding contracts are frozen before extraction', () => {
   const html = read('public/index.html');
   const runtime = read('public/panel-runtime.js');
+  const controller = read('public/features/scheduler/controller.js');
   for (const id of ['scheduler-form', 'scheduler-status-text', 'scheduler-allow-parallel', 'scheduler-save-btn']) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
-  assert.match(runtime, /浏览器任务并行/);
-  assert.match(runtime, /浏览器任务串行（默认）/);
-  assert.match(runtime, /当前运行：#/);
-  assert.match(runtime, /当前空闲/);
-  assert.match(runtime, /状态：加载失败/);
-  assert.match(runtime, /调度设置已保存/);
-  assert.match(runtime, /保存调度设置失败/);
-  assert.equal((runtime.match(/schedulerForm\.addEventListener\('submit'/g) || []).length, 1);
+  assert.match(controller, /浏览器任务并行/);
+  assert.match(controller, /浏览器任务串行（默认）/);
+  assert.match(controller, /当前运行：#/);
+  assert.match(controller, /当前空闲/);
+  assert.match(controller, /状态：加载失败/);
+  assert.match(controller, /调度设置已保存/);
+  assert.match(controller, /保存调度设置失败/);
+  assert.equal((controller.match(/addEventListener\('submit'/g) || []).length, 1);
+  assert.equal((controller.match(/removeEventListener\('submit'/g) || []).length, 1);
+  assert.doesNotMatch(runtime, /schedulerForm\.addEventListener\('submit'/);
 });
 
 test('scheduler load and refresh timing preserve save then reload behavior', () => {
-  const runtime = read('public/panel-runtime.js');
-  assert.match(runtime, /async function saveSchedulerSettings\(\)[\s\S]*await fetchJson\('\/api\/settings\/scheduler'[\s\S]*await loadSchedulerSettings\(\)/);
-  assert.match(runtime, /schedulerSaveBtn\.disabled = true/);
-  assert.match(runtime, /schedulerSaveBtn\.disabled = false/);
-  assert.match(runtime, /schedulerSaveBtn\.innerHTML = '<i data-lucide="save" class="icon-sm"><\/i> 保存调度设置'/);
+  const controller = read('public/features/scheduler/controller.js');
+  assert.match(controller, /await api\.save\(\{ allowParallel \}\);[\s\S]*await load\(\)/);
+  assert.match(controller, /elements\.saveBtn\.disabled = true/);
+  assert.match(controller, /elements\.saveBtn\.disabled = false/);
+  assert.match(controller, /elements\.saveBtn\.innerHTML = '<i data-lucide="save" class="icon-sm"><\/i> 保存调度设置'/);
 });
