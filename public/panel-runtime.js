@@ -5846,25 +5846,6 @@ if (globalEnvSaveBtn) {
 /* ========== tasks/ 脚本文件管理（全局配置） ========== */
 let fsCurrentPath = '';
 
-function formatBytes(n) {
-  const v = Number(n) || 0;
-  if (v < 1024) return `${v} B`;
-  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
-  return `${(v / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** File mtime for script manager — short local datetime. */
-function formatFsMtime(value) {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) {
-    const s = String(value);
-    return s.length >= 16 ? s.slice(0, 16).replace('T', ' ') : s;
-  }
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 function fsBreadcrumb(rel) {
   const el = document.getElementById('fs-breadcrumb');
   if (!el) return;
@@ -6020,43 +6001,6 @@ function openTasksFileEditor(relPath) {
       setTimeout(() => area.focus(), 40);
     })
     .catch((err) => toast(err.message || '读取失败', 'error'));
-}
-
-function promptFsName(title, placeholder) {
-  return new Promise((resolve) => {
-    const mask = document.createElement('div');
-    mask.className = 'modal-mask open';
-    mask.style.zIndex = '10050';
-    const dialog = document.createElement('div');
-    dialog.className = 'modal open';
-    dialog.style.cssText = 'z-index:10051; max-width:420px; width:min(420px,92vw);';
-    dialog.innerHTML = `
-      <div class="modal-header">
-        <h2>${escapeHtml(title)}</h2>
-        <button type="button" class="icon-btn fs-nm-close"><i data-lucide="x" class="icon-md"></i></button>
-      </div>
-      <div class="modal-body">
-        <input type="text" class="fs-nm-input" placeholder="${escapeHtml(placeholder || '')}" spellcheck="false" autocomplete="off" style="width:100%" />
-        <div class="row" style="margin-top:12px; gap:8px; justify-content:flex-end;">
-          <button type="button" class="alt fs-nm-cancel">取消</button>
-          <button type="button" class="btn-primary fs-nm-ok">确定</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(mask);
-    document.body.appendChild(dialog);
-    if (window.lucide) window.lucide.createIcons({ root: dialog });
-    const input = dialog.querySelector('.fs-nm-input');
-    const done = (val) => { mask.remove(); dialog.remove(); resolve(val); };
-    dialog.querySelector('.fs-nm-close').addEventListener('click', () => done(null));
-    dialog.querySelector('.fs-nm-cancel').addEventListener('click', () => done(null));
-    mask.addEventListener('click', () => done(null));
-    dialog.querySelector('.fs-nm-ok').addEventListener('click', () => done(String(input.value || '').trim()));
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); done(String(input.value || '').trim()); }
-    });
-    setTimeout(() => input.focus(), 40);
-  });
 }
 
 function wireTasksFsUi() {

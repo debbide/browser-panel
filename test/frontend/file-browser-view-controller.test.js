@@ -3,18 +3,24 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { read } = require('./helpers');
 
-function loadModule(path, name) {
-  const context = vm.createContext({ window: {} });
+function loadModule(path, name, window = {}) {
+  const context = vm.createContext({ window });
   context.window.window = context.window;
   vm.runInContext(read(path), context);
   return context.window[name];
 }
 
 test('file browser view exposes stable formatting and rendering boundaries', () => {
-  const view = loadModule('public/features/file-browser/view.js', 'FileBrowserView');
-  assert.equal(view.formatBytes(0), '0 B');
-  assert.equal(view.formatBytes(1536), '1.5 KB');
-  assert.equal(view.formatMtime(''), '—');
+  const window = { FsPresentation: {
+    formatBytes: (value) => `bytes:${value}`,
+    formatFsMtime: (value) => `mtime:${value}`,
+    promptFsName: async () => 'shared-name',
+  } };
+  const view = loadModule('public/features/file-browser/view.js', 'FileBrowserView', window);
+  assert.equal(view.formatBytes, window.FsPresentation.formatBytes);
+  assert.equal(view.formatMtime, window.FsPresentation.formatFsMtime);
+  assert.equal(view.formatBytes(0), 'bytes:0');
+  assert.equal(view.formatMtime(''), 'mtime:');
   assert.equal(typeof view.renderBreadcrumb, 'function');
   assert.equal(typeof view.renderEntries, 'function');
 });
@@ -50,6 +56,7 @@ test('application entry delegates file browser startup', () => {
 test('file browser freezes DOM, visible text, modal, selection, and binding contracts before extraction', () => {
   const html = read('public/index.html');
   const runtime = read('public/panel-runtime.js');
+  const fsPresentation = read('public/core/fs-presentation.js');
   for (const id of [
     'scripts-tab', 'fs-btn-up', 'fs-btn-refresh', 'fs-btn-new-file',
     'fs-btn-new-folder', 'fs-btn-upload', 'fs-btn-upload-folder',
@@ -64,7 +71,8 @@ test('file browser freezes DOM, visible text, modal, selection, and binding cont
   assert.match(runtime, /fsCurrentPath = String\(dir \|\| ''\)\.replace/);
   assert.match(runtime, /files-editor-dialog/);
   assert.match(runtime, /fs-ed-save/);
-  assert.match(runtime, /fs-nm-ok/);
+  assert.match(fsPresentation, /function promptFsName\(/);
+  assert.match(fsPresentation, /fs-nm-ok/);
   assert.match(runtime, /dialogConfirm\(`确定删除「\$\{ent\.name\}」？`/);
   assert.equal((runtime.match(/function wireTasksFsUi\(/g) || []).length, 1);
 });
