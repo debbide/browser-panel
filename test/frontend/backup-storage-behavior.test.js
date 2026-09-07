@@ -2,9 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
-const { read, extractFunction } = require('./helpers');
-
-const runtime = read('public/panel-runtime.js');
+const { read } = require('./helpers');
 
 function flush() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -64,15 +62,33 @@ function createHarness({ responses = [] } = {}) {
   };
   dom.window.lucide = { createIcons() {} };
   dom.window.confirm = (message) => { confirmations.push(message); return true; };
-  const names = [
-    'closeBackupAssetsModal', 'showBackupAssetsModal', 'persistExtraPaths', 'startBackupExport',
-    'closeBackupImportModal', 'showBackupImportModal', 'previewBackupPayload', 'importPendingBackup',
-    'formatCloudBackupTime', 'loadCloudBackupList', 'closeCloudRestoreModal', 'previewCloudBackup', 'confirmCloudRestore',
-    'getStorageCleanupPayload', 'renderStorageCleanupResult', 'previewStorageCleanup',
-  ];
   const context = vm.createContext(globals);
-  vm.runInContext(`${names.map((name) => extractFunction(runtime, name)).join('\n')}\nthis.subject = { ${names.join(', ')} };`, context);
-  return { ...context.subject, context, dom, calls, toasts, confirmations, order, elements };
+  context.window.window = context.window;
+  context.window.fetchJson = fetchJson;
+  vm.runInContext(read('public/features/backup-storage/api.js'), context);
+  vm.runInContext(read('public/features/backup-storage/view.js'), context);
+  vm.runInContext(read('public/features/backup-storage/controller.js'), context);
+  const actions = {
+    toast: (message, type) => context.toast(message, type),
+    refreshAll: () => context.refreshAll(),
+    loadTasks: () => context.loadTasks?.(),
+    downloadBackup: (ids, passphrase) => context.downloadBackup?.(ids, passphrase),
+    dialogConfirm: (message, action) => context.dialogConfirm(message, action),
+    escapeHtml: context.escapeHtml,
+    formatBytes: context.formatBytes,
+    createIcons() {},
+  };
+  const controller = context.window.BackupStorageController.create({
+    api: context.window.BackupStorageApi,
+    view: context.window.BackupStorageView,
+    elements: {
+      backupAssetsMask: dom.window.document.querySelector('#backup-assets-mask'),
+      backupAssetsModal: dom.window.document.querySelector('#backup-assets-modal'),
+      ...elements,
+    },
+    actions,
+  });
+  return { ...controller, controller, context, dom, calls, toasts, confirmations, order, elements };
 }
 
 test('backup export scans assets, confirms selection, saves exact payload, then refreshes tasks before download', async () => {
@@ -188,9 +204,7 @@ test('storage cleanup execution confirms exact preview, posts payload, reports r
     { data: { count: 3, bytes: 40, runRows: 2, categories: [] } },
     { data: { count: 3, bytes: 40, runRows: 2, failures: [] } },
   ] });
-  const source = read('public/panel-runtime.js');
-  const binding = source.slice(source.indexOf('if (storageCleanupRunBtn) {'), source.indexOf('if (taskProfileModeSelect) {'));
-  vm.runInContext(binding, harness.context);
+  harness.controller.mount();
   await harness.previewStorageCleanup();
   harness.elements.storageCleanupRunBtn.click();
   await flush();

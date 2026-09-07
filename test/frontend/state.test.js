@@ -151,7 +151,8 @@ test('active panel activation keeps tab and header state synchronized', () => {
 
 test('task filter and backup selections use persistent module state', () => {
   const source = read('public/core/state.js');
-  assert.match(source, /let selectedBackupTaskIds = new Set\(\)/);
+  assert.match(read('public/features/backup-storage/controller.js'), /selectedTaskIds: new Set\(\)/);
+  assert.doesNotMatch(source, /selectedBackupTaskIds/);
   assert.match(source, /let tasksCache = \[\]/);
   assert.match(read('public/panel-runtime.js'), /window\.selectTaskGroup/);
 });

@@ -409,7 +409,6 @@ const storageCleanupPreviewBtn = document.getElementById('storage-cleanup-previe
 const storageCleanupRunBtn = document.getElementById('storage-cleanup-run-btn');
 const storageCleanupStatus = document.getElementById('storage-cleanup-status');
 const storageCleanupResult = document.getElementById('storage-cleanup-result');
-let storageCleanupPreview = null;
 const visionForm = document.getElementById('vision-form');
 const visionStatusText = document.getElementById('vision-status-text');
 const visionChannelsList = document.getElementById('vision-channels-list');
@@ -1930,11 +1929,92 @@ const fileBrowserController = FileBrowserController.create({
 const backupStorageController = BackupStorageController.create({
   api: BackupStorageApi,
   view: BackupStorageView,
+  elements: {
+    backupSelectBtn,
+    backupImportBtn,
+    backupFileInput,
+    backupSelectCancelBtn,
+    backupSelectAll,
+    backupSelectionBar,
+    backupSelectionCount,
+    backupIncludeSecrets,
+    backupExportBtn,
+    backupImportModal,
+    backupImportMask,
+    backupAssetsModal: document.getElementById('backup-assets-modal'),
+    backupAssetsMask: document.getElementById('backup-assets-mask'),
+    storageCleanupDays,
+    storageCleanupCategories,
+    storageCleanupPreviewBtn,
+    storageCleanupRunBtn,
+    storageCleanupStatus,
+    storageCleanupResult,
+    cloudBackupForm,
+    cloudBackupStatusText,
+    cloudBackupEnabled,
+    cloudBackupEndpoint,
+    cloudBackupRegion,
+    cloudBackupBucket,
+    cloudBackupAccessKey,
+    cloudBackupSecretKey,
+    cloudBackupToken,
+    cloudBackupProxy,
+    cloudBackupPathStyle,
+    cloudBackupPrefix,
+    cloudBackupRetention,
+    cloudBackupSchedule,
+    cloudBackupTimeFields,
+    cloudBackupHour,
+    cloudBackupMinute,
+    cloudBackupPassphrase,
+    cloudBackupPassphraseConfirm,
+    cloudBackupTestBtn,
+    cloudBackupSaveBtn,
+    cloudBackupClearBtn,
+    cloudBackupLabel,
+    cloudBackupRunBtn,
+    cloudBackupRefreshBtn,
+    cloudBackupNextText,
+    cloudBackupList,
+    cloudRestoreModal,
+    cloudRestoreMask,
+    cloudBackupUploadBtn,
+    cloudBackupUploadInput,
+  },
   actions: {
-    loadSettings: loadCloudBackupSettings,
-    loadList: loadCloudBackupList,
+    getTasks: () => tasksCache,
+    renderTasks: () => {
+      lastTasksHtml = null;
+      renderTasks();
+    },
+    createIcons: (root) => window.lucide?.createIcons(root ? { root } : undefined),
+    toast,
+    dialogPassphrase,
+    dialogPassphraseOnce,
+    fetch: window.fetch.bind(window),
+    goLogin,
+    loadTasks,
+    refreshAll,
+    escapeHtml,
+    formatBytes,
+    dialogConfirm,
+    confirm: (message) => window.confirm(message),
+    uploadCloudBackupRestore,
+    warn: (...args) => console.warn(...args),
+    error: (...args) => console.error(...args),
+    downloadBlob(blob, filename) {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+    },
   },
 });
+const backupStorageState = backupStorageController.state;
+window.toggleBackupTask = backupStorageController.toggleBackupTask;
 
 const schedulerController = SchedulerController.create({
   api: SchedulerApi,
@@ -3092,331 +3172,11 @@ function taskCard(task, groupName = '') {
   return TasksView.taskCard(task, groupName, {
     taskIsRunning, latestRunSummary, profilesCache, describeConditionValueFull,
     describeCondition, conditionStatusClass, describeConditionValue, describeNextRun,
-    selectedBackupTaskIds, backupSelectionMode, escapeHtml,
+    selectedBackupTaskIds: backupStorageState.selectedTaskIds,
+    backupSelectionMode: backupStorageState.selectionMode,
+    escapeHtml,
   });
 }
-function setBackupSelectionMode(enabled) {
-  backupSelectionMode = Boolean(enabled);
-  if (!backupSelectionMode) selectedBackupTaskIds.clear();
-  if (backupSelectionBar) backupSelectionBar.hidden = !backupSelectionMode;
-  if (backupSelectBtn) backupSelectBtn.innerHTML = backupSelectionMode
-    ? '<i data-lucide="x" class="icon-sm"></i> 退出选择'
-    : '<i data-lucide="archive" class="icon-sm"></i> 备份';
-  updateBackupSelectionUi();
-  lastTasksHtml = null;
-  renderTasks();
-  if (window.lucide) window.lucide.createIcons();
-}
-
-function updateBackupSelectionUi() {
-  const available = tasksCache.length;
-  const count = selectedBackupTaskIds.size;
-  if (backupSelectionCount) backupSelectionCount.textContent = `已选择 ${count} 个任务`;
-  if (backupExportBtn) backupExportBtn.disabled = count === 0;
-  if (backupSelectAll) {
-    backupSelectAll.checked = available > 0 && count === available;
-    backupSelectAll.indeterminate = count > 0 && count < available;
-  }
-}
-
-window.toggleBackupTask = function toggleBackupTask(id, event) {
-  if (!backupSelectionMode) return;
-  if (event && event.target && event.target.closest('[data-task-action-area]')) return;
-  const taskId = Number(id);
-  if (selectedBackupTaskIds.has(taskId)) selectedBackupTaskIds.delete(taskId);
-  else selectedBackupTaskIds.add(taskId);
-  updateBackupSelectionUi();
-  lastTasksHtml = null;
-  renderTasks();
-}
-
-function closeBackupAssetsModal() {
-  const modal = document.getElementById('backup-assets-modal');
-  const mask = document.getElementById('backup-assets-mask');
-  if (modal) { modal.classList.remove('open'); modal.hidden = true; modal.innerHTML = ''; }
-  if (mask) mask.hidden = true;
-}
-
-/**
- * 导出前的附加模块确认。扫描是预填，勾选才算数 —— 脚本自己改 sys.path 再 import
- * 的写法静态分析看不见，得让用户有机会看一眼再决定带什么。
- */
-function showBackupAssetsModal(rows, onConfirm) {
-  const modal = document.getElementById('backup-assets-modal');
-  const mask = document.getElementById('backup-assets-mask');
-  if (!modal) { onConfirm(null); return; }
-
-  const state = rows.map((row) => ({
-    ...row,
-    checked: new Set(row.paths),
-  }));
-
-  const render = () => {
-    const total = state.reduce((sum, row) => sum + row.checked.size, 0);
-    modal.innerHTML = `
-      <div class="modal-panel backup-assets-panel">
-        <div class="modal-header" style="padding:18px 22px;">
-          <div>
-            <h2 style="margin:0;">附加模块</h2>
-            <p class="muted" style="margin:3px 0 0;">勾选的目录会跟主脚本一起打包。只影响这次备份，不影响运行。</p>
-          </div>
-          <button type="button" class="icon-btn" data-assets-close aria-label="关闭">关闭</button>
-        </div>
-        <div class="modal-body" style="padding:22px;">
-          ${state.map((row, ri) => `
-            <div class="backup-assets-task">
-              <div class="backup-assets-task-head">
-                <strong>${escapeHtml(row.name)}</strong>
-                <code class="muted">${escapeHtml(row.script_path || '')}</code>
-              </div>
-              ${row.error ? `<p class="muted" style="margin:4px 0 0;font-size:12px;">扫描失败：${escapeHtml(row.error)}</p>` : ''}
-              ${row.paths.length ? `
-                <div class="backup-assets-list">
-                  ${row.paths.map((p, pi) => `
-                    <label class="inline-check">
-                      <input type="checkbox" data-assets-row="${ri}" data-assets-path="${pi}" ${row.checked.has(p) ? 'checked' : ''} />
-                      <code>${escapeHtml(p)}</code>
-                      ${row.declared.includes(p) ? '<span class="muted" style="font-size:11px;">已声明</span>' : '<span class="muted" style="font-size:11px;">扫描发现</span>'}
-                    </label>`).join('')}
-                </div>` : '<p class="muted" style="margin:4px 0 0;font-size:12px;">没扫到 tasks/ 下的本地模块，只带主脚本。</p>'}
-            </div>`).join('')}
-          <div class="backup-import-actions">
-            <span class="muted" style="margin-right:auto;">共选中 ${total} 项</span>
-            <button type="button" class="alt" data-assets-close>取消</button>
-            <button type="button" data-assets-confirm><i data-lucide="download" class="icon-sm"></i>确认并导出</button>
-          </div>
-        </div>
-      </div>`;
-
-    modal.querySelectorAll('[data-assets-row]').forEach((box) => {
-      box.addEventListener('change', () => {
-        const row = state[Number(box.dataset.assetsRow)];
-        const p = row.paths[Number(box.dataset.assetsPath)];
-        if (box.checked) row.checked.add(p);
-        else row.checked.delete(p);
-        render();
-      });
-    });
-    modal.querySelectorAll('[data-assets-close]').forEach((btn) => {
-      btn.addEventListener('click', () => closeBackupAssetsModal());
-    });
-    const confirmBtn = modal.querySelector('[data-assets-confirm]');
-    if (confirmBtn) confirmBtn.addEventListener('click', () => {
-      const selection = state.map((row) => ({ id: row.id, paths: [...row.checked].sort() }));
-      closeBackupAssetsModal();
-      onConfirm(selection);
-    });
-    if (window.lucide) window.lucide.createIcons({ root: modal });
-  };
-
-  render();
-  modal.hidden = false;
-  modal.classList.add('open');
-  if (mask) mask.hidden = false;
-}
-
-// 把确认后的勾选写回任务，下次导出就是默认值，不用重复勾。
-// 走独立接口而不是 PUT /api/tasks/:id —— 后者是整行替换，只发一个字段会把
-// 任务名、定时、浏览器配置全写成默认值。
-async function persistExtraPaths(selection) {
-  const tasks = (selection || [])
-    .map((row) => ({ id: Number(row.id), paths: row.paths }))
-    .filter((row) => Number.isInteger(row.id) && row.id > 0);
-  if (!tasks.length) return;
-  try {
-    await fetchJson('/api/backup/save-assets', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tasks }),
-    });
-  } catch (error) {
-    toast(`附加模块保存失败：${error.message || ''}（本次导出仍会带上勾选内容）`, 'warn');
-  }
-}
-
-async function startBackupExport(ids, passphrase) {
-  let rows = null;
-  try {
-    const data = await fetchJson('/api/backup/scan-assets', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task_ids: ids }),
-    });
-    rows = Array.isArray(data.data) ? data.data : [];
-  } catch (error) {
-    // 扫描挂了不该挡住导出 —— 退回到按已声明内容打包。
-    toast(`依赖扫描失败：${error.message || ''}，按已声明的模块导出`, 'warn');
-    await downloadBackup(ids, passphrase);
-    return;
-  }
-
-  // 没有任何模块可选就别弹窗打扰，直接导。
-  if (!rows.some((row) => row.paths.length)) {
-    await downloadBackup(ids, passphrase);
-    return;
-  }
-
-  showBackupAssetsModal(rows, async (selection) => {
-    if (!selection) return;
-    await persistExtraPaths(selection);
-    await loadTasks();
-    await downloadBackup(ids, passphrase);
-  });
-}
-
-async function downloadBackup(taskIds, passphrase) {
-  try {
-    const body = {};
-    if (taskIds && taskIds.length) body.task_ids = taskIds.join(',');
-    if (passphrase) body.passphrase = passphrase;
-
-    const res = await fetch('/api/backup/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (res.status === 401) { goLogin(); return; }
-    if (!res.ok) {
-      let message = '导出失败';
-      try {
-        const err = JSON.parse(await res.text());
-        message = err.message || message;
-      } catch {}
-      throw new Error(message);
-    }
-    const blob = await res.blob();
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const utf8Match = disposition.match(/filename\*=UTF-8''([^;\n]+)/i);
-    const basicMatch = disposition.match(/filename="?([^";\n]+)"?/i);
-    let filename = passphrase ? 'backup.bpenc' : 'backup.json';
-    if (utf8Match) {
-      try {
-        filename = decodeURIComponent(utf8Match[1]);
-      } catch {
-        filename = basicMatch ? basicMatch[1] : filename;
-      }
-    } else if (basicMatch) {
-      filename = basicMatch[1];
-    }
-
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(link.href);
-
-    // 退出选择模式
-    setBackupSelectionMode(false);
-  } catch (error) {
-    toast(error.message || '导出备份失败', 'error');
-  }
-}
-
-function closeBackupImportModal() {
-  if (!backupImportModal) return;
-  backupImportModal.classList.remove('open');
-  backupImportModal.hidden = true;
-  if (backupImportMask) backupImportMask.hidden = true;
-  backupImportModal.innerHTML = '';
-  pendingBackupPayload = null;
-}
-
-function showBackupImportModal(plan) {
-  if (!backupImportModal) return;
-  const conflicts = [
-    ...plan.scripts.filter((item) => ['overwrite', 'rename', 'skip'].includes(item.action)).map((item) => `脚本 ${item.path}：${item.action}`),
-    ...plan.tasks.filter((item) => ['overwrite', 'rename', 'skip'].includes(item.action)).map((item) => `任务「${item.name}」：${item.action}`),
-  ];
-  const warningList = [
-    ...(plan.warnings || []),
-    ...(plan.names_only ? ['此备份只包含变量名，导入后需要手动补填所有变量值'] : []),
-  ];
-  backupImportModal.innerHTML = `
-    <div class="modal-panel backup-import-panel">
-      <div class="modal-header" style="padding:18px 22px;">
-        <div><h2 style="margin:0;">恢复任务备份</h2><p class="muted" style="margin:3px 0 0;">导入后任务默认停用，请确认冲突处理方式。</p></div>
-        <button type="button" class="icon-btn" data-backup-close aria-label="关闭">关闭</button>
-      </div>
-      <div class="modal-body" style="padding:22px;">
-        <div class="backup-import-summary">
-          <div class="backup-summary-card"><strong>${plan.tasks.length}</strong><span class="muted">任务</span></div>
-          <div class="backup-summary-card"><strong>${plan.scripts.length}</strong><span class="muted">脚本</span></div>
-          <div class="backup-summary-card"><strong>${plan.profiles.length}</strong><span class="muted">浏览器配置</span></div>
-        </div>
-        <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
-          <label>任务重名处理<select id="backup-task-strategy"><option value="rename">重命名导入</option><option value="overwrite">覆盖已有任务</option><option value="skip">跳过重名任务</option></select></label>
-          <label>脚本冲突处理<select id="backup-script-strategy"><option value="skip">跳过已有脚本</option><option value="overwrite">覆盖已有脚本</option><option value="rename">重命名脚本</option></select></label>
-        </div>
-        ${conflicts.length ? `<h4>冲突摘要</h4><ul class="backup-conflict-list">${conflicts.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="muted">没有发现文件或任务冲突。</p>'}
-        ${warningList.length ? `<h4 class="backup-warning">导入提示</h4><ul class="backup-conflict-list backup-warning">${warningList.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
-        <div class="backup-import-actions"><button type="button" class="alt" data-backup-close>取消</button><button type="button" data-backup-confirm><i data-lucide="upload" class="icon-sm"></i>确认导入</button></div>
-      </div>
-    </div>`;
-  backupImportModal.hidden = false;
-  if (backupImportMask) backupImportMask.hidden = false;
-  backupImportModal.classList.add('open');
-  backupImportModal.querySelectorAll('[data-backup-close]').forEach((button) => button.addEventListener('click', closeBackupImportModal));
-  backupImportModal.querySelector('[data-backup-confirm]').addEventListener('click', importPendingBackup);
-  if (window.lucide) window.lucide.createIcons({ root: backupImportModal });
-}
-
-async function previewBackupPayload(backup, passphrase = null) {
-  const data = await fetchJson('/api/backup/preview', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ backup, passphrase }),
-  });
-  pendingBackupPayload = { backup, passphrase };
-  showBackupImportModal(data.data);
-}
-
-async function previewBackupFile(file) {
-  const text = await file.text();
-  if (!text.trim()) throw new Error('备份文件为空');
-
-  if (text.trimStart().startsWith('bp-enc$')) {
-    dialogPassphraseOnce('这是加密备份，请输入导出时设置的密码。', async (passphrase) => {
-      try {
-        await previewBackupPayload(text.trim(), passphrase);
-      } catch (error) {
-        toast(error.message || '解析加密备份失败', 'error');
-      }
-    });
-    return;
-  }
-
-  let backup;
-  try { backup = JSON.parse(text); } catch { throw new Error('备份文件不是合法 JSON 或加密备份'); }
-  await previewBackupPayload(backup);
-}
-
-async function importPendingBackup() {
-  if (!pendingBackupPayload) return;
-  const taskStrategy = backupImportModal.querySelector('#backup-task-strategy').value;
-  const scriptStrategy = backupImportModal.querySelector('#backup-script-strategy').value;
-  const confirmButton = backupImportModal.querySelector('[data-backup-confirm]');
-  confirmButton.disabled = true;
-  try {
-    const data = await fetchJson('/api/backup/import', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        backup: pendingBackupPayload.backup,
-        passphrase: pendingBackupPayload.passphrase,
-        task_strategy: taskStrategy,
-        script_strategy: scriptStrategy,
-      }),
-    });
-    closeBackupImportModal();
-    toast(`备份已导入：新增 ${data.data.created.length} 个任务`, 'success');
-    await refreshAll();
-  } catch (error) {
-    confirmButton.disabled = false;
-    toast(error.message || '导入备份失败', 'error');
-  }
-}
-
 function renderScripts() {
   if (!scriptSelectEl) return;
   const options = ['<option value="">请选择脚本</option>'];
@@ -3628,331 +3388,6 @@ function normalizePluginPackagesForUi(value) {
     .map(item => item.trim())
     .filter(Boolean)
     .join(', ');
-}
-
-/* ---------- 云端备份 ---------- */
-
-let pendingCloudRestoreKey = null;
-
-function setCloudBackupStatus(text, color) {
-  if (!cloudBackupStatusText) return;
-  cloudBackupStatusText.textContent = text;
-  if (color) cloudBackupStatusText.style.color = color;
-}
-
-function updateCloudBackupTimeFields() {
-  if (!cloudBackupTimeFields) return;
-  const show = cloudBackupSchedule && cloudBackupSchedule.value !== 'off';
-  cloudBackupTimeFields.style.display = show ? 'grid' : 'none';
-}
-
-function formatCloudBackupTime(iso) {
-  if (!iso) return '-';
-  try {
-    return new Date(iso).toLocaleString();
-  } catch { return String(iso); }
-}
-
-async function loadCloudBackupSettings() {
-  if (!cloudBackupForm) return;
-  setCloudBackupStatus('状态：加载中...', '#94a3b8');
-  try {
-    const res = await fetchJson('/api/cloud-backup/settings');
-    const data = res.data || {};
-    if (cloudBackupEnabled) cloudBackupEnabled.checked = Boolean(data.enabled);
-    if (cloudBackupEndpoint) cloudBackupEndpoint.value = data.endpoint || '';
-    if (cloudBackupRegion) cloudBackupRegion.value = data.region || '';
-    if (cloudBackupBucket) cloudBackupBucket.value = data.bucket || '';
-    if (cloudBackupAccessKey) {
-      cloudBackupAccessKey.value = '';
-      cloudBackupAccessKey.placeholder = data.hasAccessKey ? `已设置 ${data.accessKeyMasked}（留空不修改）` : 'AKIA...';
-    }
-    if (cloudBackupSecretKey) {
-      cloudBackupSecretKey.value = '';
-      cloudBackupSecretKey.placeholder = data.hasSecretKey ? `已设置 ${data.secretKeyMasked}（留空不修改）` : '未设置';
-    }
-    if (cloudBackupToken) {
-      cloudBackupToken.value = '';
-      cloudBackupToken.placeholder = data.hasToken ? `已设置 ${data.tokenMasked}（留空不修改）` : '临时凭据专用，留空不修改';
-    }
-    if (cloudBackupProxy) cloudBackupProxy.value = data.proxy || '';
-    if (cloudBackupPathStyle) cloudBackupPathStyle.checked = Boolean(data.pathStyle);
-    if (cloudBackupPrefix) cloudBackupPrefix.value = data.prefix || '';
-    if (cloudBackupRetention) cloudBackupRetention.value = data.retention ?? 7;
-    if (cloudBackupSchedule) cloudBackupSchedule.value = data.schedule || 'off';
-    if (cloudBackupHour) cloudBackupHour.value = data.hour ?? 3;
-    if (cloudBackupMinute) cloudBackupMinute.value = data.minute ?? 0;
-    if (cloudBackupPassphrase) {
-      cloudBackupPassphrase.value = '';
-      cloudBackupPassphrase.placeholder = data.hasPassphrase ? '已设置备份密码（留空不修改）' : '未设置，请填写并离线保存';
-    }
-    if (cloudBackupPassphraseConfirm) cloudBackupPassphraseConfirm.checked = false;
-    updateCloudBackupTimeFields();
-    const enabledText = data.enabled ? '已启用' : '未启用';
-    const scheduleText = { off: '仅手动', hourly: '每小时', daily: '每天' }[data.schedule] || '仅手动';
-    setCloudBackupStatus(`状态：${enabledText} · ${scheduleText}`, '#94a3b8');
-    if (cloudBackupNextText) {
-      if (data.nextAt) {
-        try {
-          cloudBackupNextText.textContent = `下一次自动备份：${new Date(data.nextAt).toLocaleString()}`;
-        } catch {
-          cloudBackupNextText.textContent = '下一次自动备份：未排期';
-        }
-      } else {
-        cloudBackupNextText.textContent = '下一次自动备份：未排期';
-      }
-    }
-  } catch (error) {
-    setCloudBackupStatus('状态：加载失败', '#ef4444');
-    console.error('Failed to load cloud backup settings:', error);
-  }
-}
-
-async function saveCloudBackupSettings() {
-  if (!cloudBackupForm) return;
-  const passphrase = cloudBackupPassphrase ? cloudBackupPassphrase.value : '';
-  if (passphrase && (!cloudBackupPassphraseConfirm || !cloudBackupPassphraseConfirm.checked)) {
-    toast('设置新密码前请先勾选「我已把备份密码离线保存」', 'warn');
-    return;
-  }
-  if (cloudBackupSaveBtn) cloudBackupSaveBtn.disabled = true;
-  try {
-    await fetchJson('/api/cloud-backup/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        enabled: Boolean(cloudBackupEnabled && cloudBackupEnabled.checked),
-        endpoint: cloudBackupEndpoint?.value || '',
-        region: cloudBackupRegion?.value || '',
-        bucket: cloudBackupBucket?.value || '',
-        accessKey: cloudBackupAccessKey?.value || '',
-        secretKey: cloudBackupSecretKey?.value || '',
-        token: cloudBackupToken?.value || '',
-        proxy: cloudBackupProxy?.value || '',
-        pathStyle: Boolean(cloudBackupPathStyle && cloudBackupPathStyle.checked),
-        prefix: cloudBackupPrefix?.value || '',
-        retention: Number(cloudBackupRetention?.value || 7),
-        schedule: cloudBackupSchedule?.value || 'off',
-        hour: Number(cloudBackupHour?.value || 3),
-        minute: Number(cloudBackupMinute?.value || 0),
-        passphrase,
-      }),
-    });
-    toast('云端备份设置已保存', 'success');
-    await loadCloudBackupSettings();
-  } catch (error) {
-    toast(error.message || '保存云端备份设置失败', 'error');
-  } finally {
-    if (cloudBackupSaveBtn) cloudBackupSaveBtn.disabled = false;
-  }
-}
-
-async function testCloudBackupConnection() {
-  if (!cloudBackupTestBtn) return;
-  cloudBackupTestBtn.disabled = true;
-  cloudBackupTestBtn.textContent = '测试中...';
-  try {
-    await fetchJson('/api/cloud-backup/test', { method: 'POST' });
-    toast('连接成功：已写入并删除探针对象', 'success');
-  } catch (error) {
-    toast(error.message || '测试连接失败', 'error');
-  } finally {
-    cloudBackupTestBtn.disabled = false;
-    cloudBackupTestBtn.innerHTML = '<i data-lucide="plug-zap" class="icon-sm"></i> 测试连接';
-    if (window.lucide) window.lucide.createIcons();
-  }
-}
-
-async function runCloudBackupNow() {
-  if (!cloudBackupRunBtn) return;
-  const label = cloudBackupLabel ? cloudBackupLabel.value.trim() : '';
-  cloudBackupRunBtn.disabled = true;
-  cloudBackupRunBtn.textContent = '备份中...';
-  try {
-    const res = await fetchJson('/api/cloud-backup/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label }),
-    });
-    const data = res.data || {};
-    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
-    const suffix = warnings.length ? `（${warnings.length} 条提示，见控制台）` : '';
-    toast(`备份完成：${data.name || data.key || ''}${suffix}`, 'success');
-    warnings.forEach((w) => console.warn('[cloud-backup]', w));
-    if (cloudBackupLabel) cloudBackupLabel.value = '';
-    await loadCloudBackupSettings();
-    await loadCloudBackupList();
-  } catch (error) {
-    toast(error.message || '备份失败', 'error');
-  } finally {
-    cloudBackupRunBtn.disabled = false;
-    cloudBackupRunBtn.innerHTML = '<i data-lucide="cloud-upload" class="icon-sm"></i> 立即备份';
-    if (window.lucide) window.lucide.createIcons();
-  }
-}
-
-async function loadCloudBackupList() {
-  if (!cloudBackupList) return;
-  cloudBackupList.innerHTML = '<p class="muted" style="margin:0;">加载中...</p>';
-  try {
-    const res = await fetchJson('/api/cloud-backup/list');
-    const items = Array.isArray(res.data) ? res.data : [];
-    if (!items.length) {
-      cloudBackupList.innerHTML = '<p class="muted" style="margin:0;">还没有远端备份。点「立即备份」上传第一份。</p>';
-      return;
-    }
-    cloudBackupList._items = items;
-    cloudBackupList.innerHTML = items.map((item, index) => {
-      const when = formatCloudBackupTime(item.lastModified);
-      return `
-        <div class="backup-summary-card" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-          <div style="min-width:0;">
-            <strong style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.name)}</strong>
-            <span class="muted">${when} · ${formatBytes(item.size)}</span>
-          </div>
-          <div class="row" style="gap:6px; flex-wrap:nowrap;">
-            <button type="button" class="alt btn-with-icon" data-cloud-preview="${index}"><i data-lucide="eye" class="icon-sm"></i> 预览</button>
-            <button type="button" class="btn-primary btn-with-icon" data-cloud-restore="${index}"><i data-lucide="download-cloud" class="icon-sm"></i> 恢复</button>
-          </div>
-        </div>`;
-    }).join('');
-    if (window.lucide) window.lucide.createIcons({ root: cloudBackupList });
-  } catch (error) {
-    cloudBackupList.innerHTML = `<p class="muted" style="margin:0;color:#ef4444;">加载失败：${escapeHtml(error.message)}</p>`;
-  }
-}
-
-function closeCloudRestoreModal() {
-  if (!cloudRestoreModal) return;
-  cloudRestoreModal.classList.remove('open');
-  cloudRestoreModal.hidden = true;
-  if (cloudRestoreMask) cloudRestoreMask.hidden = true;
-  cloudRestoreModal.innerHTML = '';
-  pendingCloudRestoreKey = null;
-}
-
-/** 预览某份远端快照。预览和「恢复」按钮共用这条路径：先看清单，再在弹窗里确认还原。 */
-async function previewCloudBackup(key) {
-  if (!cloudRestoreModal) return;
-  try {
-    const res = await fetchJson('/api/cloud-backup/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key }),
-    });
-    const data = res.data || {};
-    const manifest = data.manifest || {};
-    const counts = manifest.counts || {};
-    pendingCloudRestoreKey = key;
-    const created = manifest.created_at ? new Date(manifest.created_at).toLocaleString() : '-';
-    cloudRestoreModal.innerHTML = `
-      <div class="modal-panel backup-import-panel">
-        <div class="modal-header" style="padding:18px 22px;">
-          <div><h2 style="margin:0;">还原远端快照</h2><p class="muted" style="margin:3px 0 0;">${escapeHtml(data.name || key)}</p></div>
-          <button type="button" class="icon-btn" data-cloud-restore-close aria-label="关闭"><i data-lucide="x" class="icon-md"></i></button>
-        </div>
-        <div class="modal-body" style="padding:22px;">
-          <div class="backup-import-summary">
-            <div class="backup-summary-card"><strong>${counts.tasks ?? '-'}</strong><span class="muted">任务</span></div>
-            <div class="backup-summary-card"><strong>${counts.profiles ?? '-'}</strong><span class="muted">浏览器配置</span></div>
-            <div class="backup-summary-card"><strong>${counts.users ?? '-'}</strong><span class="muted">面板账号</span></div>
-            <div class="backup-summary-card"><strong>${counts.envEntries ?? '-'}</strong><span class="muted">环境变量</span></div>
-          </div>
-          <ul class="backup-conflict-list backup-warning">
-            <li>创建时间：${created}</li>
-            <li>面板版本：${escapeHtml(manifest.panel_version || '-')}</li>
-            <li>包含内容：${escapeHtml((manifest.includes || []).join('、'))}</li>
-          </ul>
-          <p class="schedule-note" style="margin-bottom:12px;">
-            还原会<b>覆盖当前全部任务与配置</b>，原数据挪到 <code>data/pre-restore-&lt;时间戳&gt;/</code> 留作回滚，不会删除。
-            已配置 systemd（bp.sh）时面板将自动重启生效，否则需手动重启。
-          </p>
-          <div class="backup-import-actions">
-            <button type="button" class="alt" data-cloud-restore-close>取消</button>
-            <button type="button" data-cloud-restore-confirm class="btn-primary btn-with-icon"><i data-lucide="download-cloud" class="icon-sm"></i>确认还原</button>
-          </div>
-        </div>
-      </div>`;
-    cloudRestoreModal.hidden = false;
-    if (cloudRestoreMask) cloudRestoreMask.hidden = false;
-    cloudRestoreModal.classList.add('open');
-    cloudRestoreModal.querySelectorAll('[data-cloud-restore-close]').forEach((button) => button.addEventListener('click', closeCloudRestoreModal));
-    cloudRestoreModal.querySelector('[data-cloud-restore-confirm]').addEventListener('click', confirmCloudRestore);
-    if (window.lucide) window.lucide.createIcons({ root: cloudRestoreModal });
-  } catch (error) {
-    toast(error.message || '预览备份失败', 'error');
-  }
-}
-
-async function confirmCloudRestore() {
-  if (!pendingCloudRestoreKey) return;
-  if (!window.confirm('确认还原该快照？当前任务与配置将被覆盖（原数据保留在 pre-restore 目录），面板可能自动重启。')) return;
-  const confirmButton = cloudRestoreModal.querySelector('[data-cloud-restore-confirm]');
-  if (confirmButton) confirmButton.disabled = true;
-  try {
-    const res = await fetchJson('/api/cloud-backup/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: pendingCloudRestoreKey }),
-    });
-    const data = res.data || {};
-    toast(data.message || '还原完成，请稍候面板重启', 'success');
-    closeCloudRestoreModal();
-  } catch (error) {
-    // 还原成功后面板会立刻重启，响应可能被掐断 —— 网络错误按「已触发重启」处理
-    const msg = String(error && error.message || '');
-    if (/fetch failed|failed to fetch|networkerror|ecoonreset|sock/i.test(msg)) {
-      toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
-      closeCloudRestoreModal();
-      return;
-    }
-    toast(error.message || '恢复失败', 'error');
-    if (confirmButton) confirmButton.disabled = false;
-  }
-}
-
-/**
- * 手动上传 .bpsnap 快照还原（不经 S3）。选文件 → 现场输入该快照的备份密码 →
- * 以 octet-stream 上传，密码走请求头。成功后面板重启，网络错误按「已触发重启」处理。
- */
-async function uploadCloudBackupRestore() {
-  if (!cloudBackupUploadBtn || !cloudBackupUploadInput) return;
-  const file = cloudBackupUploadInput.files && cloudBackupUploadInput.files[0];
-  if (!file) { toast('请先选择 .bpsnap 快照文件', 'warn'); return; }
-  cloudBackupUploadInput.value = '';
-
-  dialogPassphraseOnce('请输入这份快照的备份密码（备份时设置的口令，不是云端设置里的那个）。', async (passphrase) => {
-    cloudBackupUploadBtn.disabled = true;
-    cloudBackupUploadBtn.textContent = '上传中...';
-    try {
-      await fetchJson('/api/cloud-backup/restore-upload', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'x-backup-passphrase': passphrase,
-        },
-        body: file,
-      });
-      toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
-    } catch (error) {
-      const msg = String(error && error.message || '');
-      if (/fetch failed|failed to fetch|networkerror|ecoonreset|sock/i.test(msg)) {
-        toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
-        return;
-      }
-      toast(error.message || '上传还原失败', 'error');
-    } finally {
-      cloudBackupUploadBtn.disabled = false;
-      cloudBackupUploadBtn.innerHTML = '<i data-lucide="upload" class="icon-sm"></i> 上传并还原';
-      if (window.lucide) window.lucide.createIcons();
-    }
-  });
-}
-
-function setSuccessHeuristicsStatus(text, color) {
-  if (!successHeuristicsStatus) return;
-  successHeuristicsStatus.textContent = text;
-  if (color) successHeuristicsStatus.style.color = color;
 }
 
 async function loadSuccessHeuristicsSettings() {
@@ -5427,117 +4862,6 @@ function openVisionTestModal() {
   openVisionTestModalForCard(first);
 }
 
-if (backupSelectBtn) {
-  backupSelectBtn.addEventListener('click', () => setBackupSelectionMode(!backupSelectionMode));
-}
-if (backupSelectCancelBtn) {
-  backupSelectCancelBtn.addEventListener('click', () => setBackupSelectionMode(false));
-}
-if (backupSelectAll) {
-  backupSelectAll.addEventListener('change', () => {
-    if (backupSelectAll.checked) tasksCache.forEach((task) => selectedBackupTaskIds.add(Number(task.id)));
-    else selectedBackupTaskIds.clear();
-    updateBackupSelectionUi();
-    lastTasksHtml = null;
-    renderTasks();
-  });
-}
-if (backupExportBtn) {
-  backupExportBtn.addEventListener('click', () => {
-    if (!selectedBackupTaskIds.size) return;
-    const ids = [...selectedBackupTaskIds];
-    if (backupIncludeSecrets && backupIncludeSecrets.checked) {
-      // 带配置 ⇒ 必须加密。密码只在这一刻存在于内存里，不落库、不进 URL。
-      dialogPassphrase(
-        '导出文件将包含所有环境变量的值，整体加密后保存。密码不会被保存，忘记就无法恢复。',
-        (passphrase) => startBackupExport(ids, passphrase),
-      );
-      return;
-    }
-    // 不带配置 ⇒ 只有变量名，可以放心分享，不需要密码。
-    startBackupExport(ids, null);
-  });
-}
-if (backupImportBtn && backupFileInput) {
-  backupImportBtn.addEventListener('click', () => backupFileInput.click());
-  backupFileInput.addEventListener('change', async () => {
-    const file = backupFileInput.files && backupFileInput.files[0];
-    backupFileInput.value = '';
-    if (!file) return;
-    try {
-      await previewBackupFile(file);
-    } catch (error) {
-      toast(error.message || '读取备份文件失败', 'error');
-    }
-  });
-}
-if (backupImportMask) backupImportMask.addEventListener('click', closeBackupImportModal);
-
-if (cloudBackupForm) {
-  cloudBackupForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (cloudBackupSaveBtn) {
-      cloudBackupSaveBtn.disabled = true;
-      cloudBackupSaveBtn.textContent = '保存中...';
-    }
-    try {
-      await saveCloudBackupSettings();
-    } catch (error) {
-      toast(error.message || '保存云端备份设置失败', 'error');
-    } finally {
-      if (cloudBackupSaveBtn) {
-        cloudBackupSaveBtn.disabled = false;
-        cloudBackupSaveBtn.innerHTML = '<i data-lucide="save" class="icon-sm"></i> 保存设置';
-        if (window.lucide) window.lucide.createIcons();
-      }
-    }
-  });
-}
-if (cloudBackupTestBtn) cloudBackupTestBtn.addEventListener('click', testCloudBackupConnection);
-if (cloudBackupClearBtn) {
-  cloudBackupClearBtn.addEventListener('click', async () => {
-    if (!confirm('确定要清空云端备份的所有配置吗？已填写的密钥、密码等将全部清除。')) return;
-    try {
-      cloudBackupClearBtn.disabled = true;
-      cloudBackupClearBtn.textContent = '清空中...';
-      await fetchJson('/api/cloud-backup/settings', { method: 'DELETE' });
-      toast('云端备份配置已清空', 'success');
-      await loadCloudBackupSettings();
-    } catch (error) {
-      toast(error.message || '清空失败', 'error');
-    } finally {
-      cloudBackupClearBtn.disabled = false;
-      cloudBackupClearBtn.innerHTML = '<i data-lucide="trash-2" class="icon-sm"></i> 清空配置';
-      if (window.lucide) window.lucide.createIcons();
-    }
-  });
-}
-if (cloudBackupRunBtn) cloudBackupRunBtn.addEventListener('click', runCloudBackupNow);
-if (cloudBackupRefreshBtn) cloudBackupRefreshBtn.addEventListener('click', loadCloudBackupList);
-if (cloudBackupSchedule) cloudBackupSchedule.addEventListener('change', updateCloudBackupTimeFields);
-if (cloudBackupList) {
-  cloudBackupList.addEventListener('click', (e) => {
-    const items = cloudBackupList._items || [];
-    const previewBtn = e.target.closest('[data-cloud-preview]');
-    if (previewBtn) {
-      const item = items[Number(previewBtn.dataset.cloudPreview)];
-      if (item) previewCloudBackup(item.key);
-      return;
-    }
-    const restoreBtn = e.target.closest('[data-cloud-restore]');
-    if (restoreBtn) {
-      const item = items[Number(restoreBtn.dataset.cloudRestore)];
-      if (item) previewCloudBackup(item.key);
-    }
-  });
-}
-if (cloudRestoreMask) cloudRestoreMask.addEventListener('click', closeCloudRestoreModal);
-if (cloudBackupUploadBtn && cloudBackupUploadInput) {
-  cloudBackupUploadBtn.addEventListener('click', () => {
-    cloudBackupUploadInput.click();
-  });
-  cloudBackupUploadInput.addEventListener('change', uploadCloudBackupRestore);
-}
 
 if (successHeuristicsForm) {
   successHeuristicsForm.addEventListener('submit', async (e) => {
@@ -5628,111 +4952,6 @@ if (brInstallBrowserBtn) {
       brInstallBrowserBtn.disabled = false;
       brInstallBrowserBtn.textContent = '安装浏览器环境';
     }
-  });
-}
-
-function getStorageCleanupPayload() {
-  const retentionDays = Math.min(3650, Math.max(1, Number(storageCleanupDays?.value) || 30));
-  const categories = storageCleanupCategories
-    ? Array.from(storageCleanupCategories.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value)
-    : [];
-  return { retentionDays, categories };
-}
-
-function renderStorageCleanupResult(data, executed = false) {
-  if (!data || !storageCleanupResult) return;
-  const categoryText = Object.values(data.byCategory || {})
-    .filter((item) => item.count > 0)
-    .map((item) => `${item.label} ${item.count} 项`)
-    .join('，');
-  const failureText = data.failures?.length ? `；失败 ${data.failures.length} 项` : '';
-  storageCleanupResult.textContent = executed
-    ? `清理完成：处理 ${data.count} 项，约 ${formatBytes(data.bytes)}，删除运行记录 ${data.removedRunRows || 0} 条${failureText}`
-    : `预计 ${data.count} 项，约 ${formatBytes(data.bytes)}，运行记录 ${data.runRows || 0} 条${categoryText ? `；${categoryText}` : ''}`;
-  if (storageCleanupStatus) {
-    storageCleanupStatus.textContent = executed
-      ? `已清理 ${data.count} 项${failureText}`
-      : `预计释放 ${formatBytes(data.bytes)}`;
-  }
-}
-
-async function previewStorageCleanup() {
-  const payload = getStorageCleanupPayload();
-  if (!payload.categories.length) {
-    toast('请至少选择一个清理类别', 'warn');
-    return null;
-  }
-  storageCleanupPreviewBtn.disabled = true;
-  storageCleanupPreviewBtn.textContent = '预览中...';
-  try {
-    const query = new URLSearchParams({
-      retentionDays: String(payload.retentionDays),
-      categories: payload.categories.join(','),
-    });
-    const res = await fetchJson(`/api/storage/cleanup/preview?${query}`);
-    storageCleanupPreview = res.data || null;
-    renderStorageCleanupResult(storageCleanupPreview, false);
-    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = !storageCleanupPreview?.count;
-    return storageCleanupPreview;
-  } catch (error) {
-    storageCleanupPreview = null;
-    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = true;
-    toast(error.message || '生成清理预览失败', 'error');
-    return null;
-  } finally {
-    storageCleanupPreviewBtn.disabled = false;
-    storageCleanupPreviewBtn.innerHTML = '<i data-lucide="search" class="icon-sm"></i> 预览估算';
-    if (window.lucide) window.lucide.createIcons({ root: storageCleanupPreviewBtn });
-  }
-}
-
-if (storageCleanupCategories) {
-  storageCleanupCategories.addEventListener('change', () => {
-    storageCleanupPreview = null;
-    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = true;
-    if (storageCleanupStatus) storageCleanupStatus.textContent = '选项已改变，请重新预览';
-  });
-}
-if (storageCleanupDays) {
-  storageCleanupDays.addEventListener('input', () => {
-    storageCleanupPreview = null;
-    if (storageCleanupRunBtn) storageCleanupRunBtn.disabled = true;
-    if (storageCleanupStatus) storageCleanupStatus.textContent = '保留天数已改变，请重新预览';
-  });
-}
-if (storageCleanupPreviewBtn) storageCleanupPreviewBtn.addEventListener('click', previewStorageCleanup);
-if (storageCleanupRunBtn) {
-  storageCleanupRunBtn.addEventListener('click', async () => {
-    const preview = storageCleanupPreview || await previewStorageCleanup();
-    if (!preview?.count) {
-      toast('没有符合条件的可清理产物', 'info');
-      return;
-    }
-    dialogConfirm(
-      `确认清理 ${preview.count} 项（约 ${formatBytes(preview.bytes)}）及 ${preview.runRows || 0} 条旧运行记录？此操作不可撤销。`,
-      async () => {
-        storageCleanupRunBtn.disabled = true;
-        storageCleanupRunBtn.textContent = '清理中...';
-        try {
-          const payload = getStorageCleanupPayload();
-          const res = await fetchJson('/api/storage/cleanup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          storageCleanupPreview = null;
-          renderStorageCleanupResult(res.data || {}, true);
-          toast(res.data?.failures?.length ? '清理完成，部分项目处理失败' : '存储清理完成', res.data?.failures?.length ? 'warn' : 'success');
-          await refreshAll();
-        } catch (error) {
-          toast(error.message || '存储清理失败', 'error');
-        } finally {
-          storageCleanupRunBtn.disabled = true;
-          storageCleanupRunBtn.innerHTML = '<i data-lucide="trash-2" class="icon-sm"></i> 执行清理';
-          if (window.lucide) window.lucide.createIcons({ root: storageCleanupRunBtn });
-        }
-      }
-    );
   });
 }
 

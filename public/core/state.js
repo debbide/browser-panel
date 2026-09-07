@@ -25,9 +25,6 @@
 let profilesCache = [];
 let editingId = null;
 let tasksCache = [];
-let backupSelectionMode = false;
-let selectedBackupTaskIds = new Set();
-let pendingBackupPayload = null;
 let runsCache = [];
 let runningTaskIds = new Set();
 let stoppingTaskIds = new Set();
