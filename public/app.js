@@ -4843,14 +4843,7 @@ function deleteTask(id) {
 
 function fillTaskForm(task) {
   form.name.value = task.name;
-  const scriptPathLower = String(task.script_path || '').toLowerCase();
-  form.type.value = scriptPathLower.endsWith('.py')
-    ? 'python'
-    : scriptPathLower.endsWith('.php')
-      ? 'php'
-      : scriptPathLower.endsWith('.sh')
-        ? 'shell'
-        : task.type;
+  form.type.value = TasksModel.resolveTaskType(task.script_path, task.type);
   form.script_path.value = task.script_path;
   form.timeout_sec.value = task.timeout_sec;
   // host2play 默认至少 900；已保存的更大值（如 1200）原样保留
@@ -4926,14 +4919,7 @@ async function editTask(id) {
 function useScript(scriptPath, type) {
   selectedScriptPath = scriptPath;
   form.script_path.value = scriptPath;
-  const normalizedPath = String(scriptPath || '').toLowerCase();
-  const resolvedType = normalizedPath.endsWith('.py')
-    ? 'python'
-    : normalizedPath.endsWith('.php')
-      ? 'php'
-      : normalizedPath.endsWith('.sh')
-        ? 'shell'
-        : type;
+  const resolvedType = TasksModel.resolveTaskType(scriptPath, type);
   form.type.value = resolvedType;
   if (isHost2PlayScript(scriptPath) && Number(form.elements.timeout_sec?.value || 0) < 600) {
     form.elements.timeout_sec.value = '900';
@@ -5012,10 +4998,7 @@ form.addEventListener('submit', async (event) => {
   // FormData may stringify checkboxes; force boolean flags from builders
   payload.enabled = Boolean(schedule.enabled);
   payload.condition_enabled = Boolean(conditionPayload.condition_enabled);
-  const payloadScriptPath = String(payload.script_path || '').toLowerCase();
-  if (payloadScriptPath.endsWith('.py')) payload.type = 'python';
-  else if (payloadScriptPath.endsWith('.php')) payload.type = 'php';
-  else if (payloadScriptPath.endsWith('.sh')) payload.type = 'shell';
+  payload.type = TasksModel.resolveTaskType(payload.script_path, payload.type);
   payload.use_browser = true;
   // 默认临时；仅当用户明确选「持久配置」才写 use_persistent=1
   const wantPersistent = !isTaskTempProfileMode();

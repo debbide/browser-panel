@@ -42,8 +42,7 @@ test('task create and update payloads retain task type and script path', () => {
   const source = read('public/app.js');
   assert.match(source, /const formData = new FormData\(form\)/);
   assert.match(source, /const payload = Object\.fromEntries\(formData\.entries\(\)\)/);
-  assert.match(source, /const payloadScriptPath = String\(payload\.script_path \|\| ''\)\.toLowerCase\(\)/);
-  assert.match(source, /payloadScriptPath\.endsWith\('\.py'\)\) payload\.type = 'python'/);
+  assert.match(source, /payload\.type = TasksModel\.resolveTaskType\(payload\.script_path, payload\.type\)/);
   assert.match(source, /editingId\s*\?\s*`\/api\/tasks\/\$\{editingId\}`\s*:\s*'\/api\/tasks'/);
 });
 
