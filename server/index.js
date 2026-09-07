@@ -2034,13 +2034,18 @@ app.post('/api/scripts/import', (req, res) => {
     let name = path.basename(String(payload.name || '')).trim();
     const content = String(payload.content || '');
     if (!name) return res.status(400).json({ message: 'Script name is required' });
-    const requestedType = String(payload.type || '').trim().toLowerCase();
+    let requestedType = String(payload.type || '').trim().toLowerCase();
     const extensionByType = {
       javascript: '.js',
       python: '.py',
       php: '.php',
       shell: '.sh',
     };
+    // Recover extensionless PHP imports sent by older cached clients that
+    // omitted both the selected type and the generated filename suffix.
+    if (!requestedType && !path.extname(name) && /^\s*<\?php\b/i.test(content)) {
+      requestedType = 'php';
+    }
     const requestedExt = extensionByType[requestedType];
     if (requestedExt) {
       name = name.replace(/\.[^./]+$/i, '') + requestedExt;
