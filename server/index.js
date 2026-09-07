@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const { createApp } = require('./app');
+const { createLifecycle, registerSignalHandlers } = require('./lifecycle');
 const { spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
@@ -699,9 +701,7 @@ function reserveUniqueScriptFilename(taskName, type, ignoreTaskId = null, prefer
   throw new Error('Unable to allocate an available script filename');
 }
 
-const app = express();
-// 备份包含脚本正文,可能明显大于普通设置请求;仍限制上限避免无限制内存占用。
-app.use(express.json({ limit: '20mb' }));
+const app = createApp();
 
 // --- 鉴权分界线 -------------------------------------------------------------
 // 顺序有讲究，别把 requireAuth 往下挪：
@@ -2476,11 +2476,7 @@ app.use((req, res) => {
   res.sendFile(path.join(config.paths.publicDir, 'index.html'));
 });
 
-let httpServer = null;
-
-function startServer() {
-  if (httpServer) return httpServer;
-  httpServer = app.listen(config.server.port, config.server.host, () => {
+function onServerStarted() {
     reloadJobs(executeTask);
     void ensureTelegramWebhook();
     void warpManager.restore();
@@ -2513,8 +2509,18 @@ function startServer() {
         + '建议改绑 127.0.0.1 走 SSH 隧道，或前置 nginx + TLS。',
       );
     }
-  });
-  return httpServer;
+}
+
+const lifecycle = createLifecycle({
+  app,
+  port: config.server.port,
+  host: config.server.host,
+  onStarted: onServerStarted,
+  closeCoreServices,
+});
+
+function startServer() {
+  return lifecycle.startServer();
 }
 
 // 可复用的停机序列：停调度 → 断 SSE → 停 WARP → 关库。
@@ -2530,20 +2536,8 @@ async function closeCoreServices(reason) {
   db.db.close();
 }
 
-let shutdownPromise = null;
 function shutdown(signal) {
-  if (shutdownPromise) return shutdownPromise;
-  shutdownPromise = (async () => {
-    await closeCoreServices(`received ${signal}`);
-    if (httpServer) {
-      await new Promise((resolve) => httpServer.close(resolve));
-      httpServer = null;
-    }
-  })().catch((error) => {
-    console.error('[shutdown] failed:', error);
-    process.exitCode = 1;
-  });
-  return shutdownPromise;
+  return lifecycle.shutdown(signal);
 }
 
 // 恢复的换文件回调：停掉会碰库的定时器 → 走停机序列关库 → 旧数据挪到
@@ -2556,11 +2550,7 @@ cloudBackup.setPerformRestoreSwap(async (stagingDir) => {
 
 if (require.main === module) {
   startServer();
-  for (const signal of ['SIGTERM', 'SIGINT']) {
-    process.once(signal, () => {
-      void shutdown(signal).finally(() => process.exit());
-    });
-  }
+  registerSignalHandlers(shutdown);
 }
 
 module.exports = {
