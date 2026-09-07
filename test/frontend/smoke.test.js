@@ -27,8 +27,7 @@ test('authenticated startup request sequence remains stable', () => {
     'loadSuccessHeuristicsSettings();',
     'loadBrowserRuntimeSettings();',
     'settingsController.load();',
-    'loadCloudBackupSettings();',
-    'loadCloudBackupList();',
+    'backupStorageController.load();',
     'fileBrowserController.load(fsCurrentPath);',
   ];
   let cursor = source.indexOf('async function bootPanel()');

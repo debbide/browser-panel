@@ -1907,6 +1907,15 @@ const fileBrowserController = FileBrowserController.create({
   },
 });
 
+const backupStorageController = BackupStorageController.create({
+  api: BackupStorageApi,
+  view: BackupStorageView,
+  actions: {
+    loadSettings: loadCloudBackupSettings,
+    loadList: loadCloudBackupList,
+  },
+});
+
 function entriesFromParamsObject(params = {}) {
   return Object.entries(params || {})
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
@@ -7161,6 +7170,7 @@ async function bootPanel() {
   fileBrowserController.mount();
   wireResourceManagers();
   settingsController.mount();
+  backupStorageController.mount();
 
   resetAllModalState();
   closeModal();
@@ -7170,8 +7180,7 @@ async function bootPanel() {
   loadSuccessHeuristicsSettings();
   loadBrowserRuntimeSettings();
   settingsController.load();
-  loadCloudBackupSettings();
-  loadCloudBackupList();
+  backupStorageController.load();
   fileBrowserController.load(fsCurrentPath);
 }
 
