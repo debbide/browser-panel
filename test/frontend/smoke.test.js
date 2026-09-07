@@ -20,7 +20,7 @@ test('authenticated startup request sequence remains stable', () => {
   const order = [
     'wireAuthUi(state.username);',
     'fileBrowserController.mount();',
-    'wireResourceManagers();',
+    'browserResourcesController.mount();',
     'refreshAll();',
     'startStatusStream();',
     'schedulerController.load();',

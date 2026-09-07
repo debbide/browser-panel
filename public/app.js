@@ -1924,6 +1924,14 @@ const schedulerController = SchedulerController.create({
   },
 });
 
+const browserResourcesController = BrowserResourcesController.create({
+  api: BrowserResourcesApi,
+  view: BrowserResourcesView,
+  actions: {
+    mount: wireResourceManagers,
+  },
+});
+
 function entriesFromParamsObject(params = {}) {
   return Object.entries(params || {})
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
@@ -7176,7 +7184,7 @@ async function bootPanel() {
   wireAuthUi(state.username);
 
   fileBrowserController.mount();
-  wireResourceManagers();
+  browserResourcesController.mount();
   settingsController.mount();
   backupStorageController.mount();
   schedulerController.mount();
