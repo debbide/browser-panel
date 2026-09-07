@@ -117,7 +117,11 @@ function normalizeTaskExecutionPayload(payload = {}, fallback = {}) {
   );
   return {
     script_engine: scriptEngine,
-    type: normalizeScriptTypeByEngine(scriptEngine),
+    type: String(
+      payload.type !== undefined
+        ? payload.type
+        : (fallback.type !== undefined ? fallback.type : normalizeScriptTypeByEngine(scriptEngine))
+    ).trim().toLowerCase() || normalizeScriptTypeByEngine(scriptEngine),
     execution_mode: normalizeExecutionMode(
       payload.execution_mode !== undefined
         ? payload.execution_mode
