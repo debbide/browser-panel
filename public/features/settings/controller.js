@@ -65,12 +65,70 @@
       }
     }
 
+    async function loadVision() {
+      const vision = elements.vision || {};
+      if (!vision.form) return;
+      try {
+        const response = await api.loadVision();
+        const data = response.data || {};
+        view.renderVisionChannels(vision, data.channelList);
+        vision.updateStatus?.(data);
+      } catch (error) {
+        if (vision.status) {
+          vision.status.textContent = 'Status: load failed';
+          vision.status.style.color = '#ef4444';
+        }
+        global.console?.error('Failed to load vision settings:', error);
+      }
+    }
+
+    async function saveVision(event) {
+      event.preventDefault();
+      const vision = elements.vision || {};
+      const channelList = view.collectVisionChannels(vision);
+      if (!channelList.length) {
+        toast('请至少配置一个视觉通道', 'error');
+        return;
+      }
+      for (let index = 0; index < channelList.length; index += 1) {
+        const channel = channelList[index];
+        if (!channel.baseUrl || !channel.model) {
+          toast(`${index === 0 ? '主通道' : `备用通道 ${index}`} 需要填写 Base URL 和 Model`, 'error');
+          return;
+        }
+      }
+      const button = vision.saveButton;
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Saving...';
+      }
+      try {
+        await api.saveVision({ channelList });
+        toast('Vision settings saved', 'success');
+        await loadVision();
+      } catch (error) {
+        toast(error.message || 'Failed to save vision settings', 'error');
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Save Vision Settings';
+        }
+      }
+    }
+
+    function testVision() {
+      elements.vision?.openTestModal?.();
+    }
+
     function mount() {
       if (mounted) return;
       mounted = true;
       const telegram = elements.telegram || {};
+      const vision = elements.vision || {};
       if (telegram.form) telegram.form.addEventListener('submit', saveTelegram);
       if (telegram.testButton) telegram.testButton.addEventListener('click', testTelegram);
+      if (vision.form) vision.form.addEventListener('submit', saveVision);
+      if (vision.testButton) vision.testButton.addEventListener('click', testVision);
       if (typeof actions.mount === 'function') actions.mount({ api, view });
     }
 
@@ -78,13 +136,17 @@
       if (!mounted) return;
       mounted = false;
       const telegram = elements.telegram || {};
+      const vision = elements.vision || {};
       if (telegram.form) telegram.form.removeEventListener('submit', saveTelegram);
       if (telegram.testButton) telegram.testButton.removeEventListener('click', testTelegram);
+      if (vision.form) vision.form.removeEventListener('submit', saveVision);
+      if (vision.testButton) vision.testButton.removeEventListener('click', testVision);
       if (typeof actions.unmount === 'function') actions.unmount();
     }
 
     async function load() {
       await loadTelegram();
+      await loadVision();
       if (typeof actions.load === 'function') return actions.load({ api, view });
       return undefined;
     }

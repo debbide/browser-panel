@@ -1902,11 +1902,20 @@ const settingsController = SettingsController.create({
       saveButton: tgSaveBtn,
       testButton: tgTestBtn,
     },
+    vision: {
+      form: visionForm,
+      status: visionStatusText,
+      saveButton: visionSaveBtn,
+      testButton: visionTestBtn,
+      render: renderVisionChannels,
+      collect: collectVisionChannels,
+      updateStatus: updateVisionStatusText,
+      openTestModal: openVisionTestModal,
+    },
   },
   actions: {
     mount() {},
     load() {
-      loadVisionSettings();
       loadGlobalEnvSettings();
     },
   },
@@ -5493,45 +5502,6 @@ if (backupImportBtn && backupFileInput) {
   });
 }
 if (backupImportMask) backupImportMask.addEventListener('click', closeBackupImportModal);
-
-if (visionTestBtn) {
-  // Legacy top-level button (if still in DOM): test primary
-  visionTestBtn.addEventListener('click', () => openVisionTestModal());
-}
-
-if (visionForm) {
-  visionForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const channelList = collectVisionChannels();
-    if (!channelList.length) {
-      toast('请至少配置一个视觉通道', 'error');
-      return;
-    }
-    for (let i = 0; i < channelList.length; i += 1) {
-      const ch = channelList[i];
-      if (!ch.baseUrl || !ch.model) {
-        toast(`${i === 0 ? '主通道' : `备用通道 ${i}`} 需要填写 Base URL 和 Model`, 'error');
-        return;
-      }
-    }
-    if (visionSaveBtn) {
-      visionSaveBtn.disabled = true;
-      visionSaveBtn.textContent = 'Saving...';
-    }
-    try {
-      await SettingsApi.saveVision({ channelList });
-      toast('Vision settings saved', 'success');
-      await loadVisionSettings();
-    } catch (error) {
-      toast(error.message || 'Failed to save vision settings', 'error');
-    } finally {
-      if (visionSaveBtn) {
-        visionSaveBtn.disabled = false;
-        visionSaveBtn.textContent = 'Save Vision Settings';
-      }
-    }
-  });
-}
 
 if (schedulerForm) {
   schedulerForm.addEventListener('submit', async (e) => {

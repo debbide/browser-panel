@@ -104,7 +104,7 @@ test('settings static scripts preserve api view controller runtime app order', (
 });
 
 test('vision settings freeze card, dropdown and modal DOM contracts before extraction', () => {
-  const source = read('public/panel-runtime.js');
+  const source = `${read('public/features/settings/controller.js')}\n${read('public/panel-runtime.js')}`;
   for (const selector of [
     'vision-channel-card',
     'vision-channel-row',
@@ -132,12 +132,18 @@ test('vision settings freeze card, dropdown and modal DOM contracts before extra
 });
 
 test('vision settings freeze selection state and event binding contracts before extraction', () => {
-  const source = read('public/panel-runtime.js');
+  const runtime = read('public/panel-runtime.js');
+  const controller = read('public/features/settings/controller.js');
+  const source = `${controller}\n${runtime}`;
   assert.match(source, /const visionModelCache = new Map\(\)/);
   assert.match(source, /document\.addEventListener\('mousedown', visionDropdownOutsideHandler, true\)/);
   assert.match(source, /document\.addEventListener\('keydown', visionDropdownKeyHandler, true\)/);
-  assert.equal((source.match(/visionForm\.addEventListener\('submit'/g) || []).length, 1);
-  assert.equal((source.match(/visionTestBtn\.addEventListener\('click'/g) || []).length, 1);
+  assert.equal((runtime.match(/visionForm\.addEventListener\('submit'/g) || []).length, 0);
+  assert.equal((runtime.match(/visionTestBtn\.addEventListener\('click'/g) || []).length, 0);
+  assert.equal((controller.match(/vision\.form\.addEventListener\('submit', saveVision\)/g) || []).length, 1);
+  assert.equal((controller.match(/vision\.testButton\.addEventListener\('click', testVision\)/g) || []).length, 1);
+  assert.equal((controller.match(/vision\.form\.removeEventListener\('submit', saveVision\)/g) || []).length, 1);
+  assert.equal((controller.match(/vision\.testButton\.removeEventListener\('click', testVision\)/g) || []).length, 1);
   assert.match(source, /visionChannelsList\.insertBefore\(card, first\)/);
   assert.match(source, /runTest\(\{ testImage: true \}\)/);
   assert.match(source, /mask\.addEventListener\('click', close\)/);
