@@ -2031,10 +2031,21 @@ app.delete('/api/tasks-fs', (req, res) => {
 app.post('/api/scripts/import', (req, res) => {
   try {
     const payload = req.body || {};
-    const name = path.basename(String(payload.name || '')).trim();
+    let name = path.basename(String(payload.name || '')).trim();
     const content = String(payload.content || '');
-    const ext = path.extname(name).toLowerCase();
     if (!name) return res.status(400).json({ message: 'Script name is required' });
+    const requestedType = String(payload.type || '').trim().toLowerCase();
+    const extensionByType = {
+      javascript: '.js',
+      python: '.py',
+      php: '.php',
+      shell: '.sh',
+    };
+    const requestedExt = extensionByType[requestedType];
+    if (requestedExt) {
+      name = name.replace(/\.[^./]+$/i, '') + requestedExt;
+    }
+    const ext = path.extname(name).toLowerCase();
     if (!['.js', '.py', '.php', '.sh'].includes(ext)) return res.status(400).json({ message: 'Only .js, .py, .php and .sh scripts are supported' });
     if (!content.trim()) return res.status(400).json({ message: 'Script content is required' });
     fs.mkdirSync(config.paths.tasksDir, { recursive: true });
