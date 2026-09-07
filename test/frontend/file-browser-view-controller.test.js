@@ -55,7 +55,7 @@ test('application entry delegates file browser startup', () => {
 
 test('file browser freezes DOM, visible text, modal, selection, and binding contracts before extraction', () => {
   const html = read('public/index.html');
-  const runtime = read('public/panel-runtime.js');
+  const runtime = read('public/features/file-browser/controller.js');
   const fsPresentation = read('public/core/fs-presentation.js');
   for (const id of [
     'scripts-tab', 'fs-btn-up', 'fs-btn-refresh', 'fs-btn-new-file',
@@ -78,7 +78,7 @@ test('file browser freezes DOM, visible text, modal, selection, and binding cont
 });
 
 test('file browser freezes API refresh and static loading order contracts before extraction', () => {
-  const runtime = read('public/panel-runtime.js');
+  const runtime = read('public/features/file-browser/controller.js');
   const html = read('public/index.html');
   assert.match(runtime, /await loadTasksFs\(fsCurrentPath\);[\s\S]*await loadScripts\(\)/);
   assert.match(runtime, /window\.open\(`\/api\/tasks-fs\/download\?path=\$\{encodeURIComponent\(ent\.path\)\}`/);

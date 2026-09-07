@@ -51,4 +51,4 @@ function evaluateFunctions(names, globals = {}) {
   return context.exports;
 }
 
-module.exports = { evaluateFunctions, read };
+module.exports = { evaluateFunctions, extractFunction, read };

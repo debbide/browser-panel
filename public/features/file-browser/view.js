@@ -11,5 +11,5 @@
     renderer(element, Array.isArray(entries) ? entries : []);
   }
 
-  global.FileBrowserView = { formatBytes, formatMtime, renderBreadcrumb, renderEntries };
+  global.FileBrowserView = { formatBytes, formatMtime, promptFsName: global.FsPresentation.promptFsName, renderBreadcrumb, renderEntries };
 })(window);
