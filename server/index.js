@@ -681,7 +681,7 @@ function runBashCommand(command, timeout = 10 * 60 * 1000) {
 }
 
 function buildTaskScriptFilename(taskName, type) {
-  const ext = type === 'python' ? '.py' : '.js';
+  const ext = type === 'python' ? '.py' : type === 'php' ? '.php' : type === 'shell' ? '.sh' : '.js';
   const base = slugifyScriptName(taskName) || 'task-script';
   return `${base}${ext}`;
 }
@@ -1554,7 +1554,7 @@ app.post('/api/tasks', (req, res) => {
   try {
     const payload = req.body || {};
     normalizeTaskEnvPayload(payload);
-    const type = payload.type === 'python' ? 'python' : 'javascript';
+    const type = ['javascript','python','php','shell'].includes(String(payload.type)) ? String(payload.type) : 'javascript';
     const name = String(payload.name || 'Untitled Task');
     const conditionFields = buildConditionFieldsFromPayload(payload, null);
     let task = db.createTask({
@@ -1596,7 +1596,7 @@ app.put('/api/tasks/:id', (req, res) => {
     normalizeTaskEnvPayload(payload);
     const existing = db.getTask(id);
     if (!existing) return res.status(404).json({ message: 'Task not found' });
-    const type = payload.type === 'python' ? 'python' : 'javascript';
+    const type = ['javascript','python','php','shell'].includes(String(payload.type)) ? String(payload.type) : 'javascript';
     const name = String(payload.name || 'Untitled Task');
     const requestedScriptPath = String(payload.script_path || existing?.script_path || '');
     const conditionFields = buildConditionFieldsFromPayload(payload, existing);
@@ -1705,7 +1705,7 @@ app.delete('/api/tasks/:id', (req, res) => {
 });
 
 const TASKS_TEXT_EXTS = new Set([
-  '.js', '.py', '.json', '.txt', '.md', '.env', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.sh', '.css', '.html', '.xml', '.csv',
+  '.js', '.py', '.php', '.json', '.txt', '.md', '.env', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.sh', '.css', '.html', '.xml', '.csv',
 ]);
 const TASKS_MAX_TEXT = 2 * 1024 * 1024;
 const TASKS_MAX_UPLOAD = 15 * 1024 * 1024;
@@ -1741,7 +1741,7 @@ function listTasksBoundToPath(relFromTasks) {
 // Default: top-level tasks/*.js|*.py (subfolders like host2play_dp/ are libraries, not task entries).
 // Optional: ?recursive=1 to include nested files (file manager / advanced).
 app.get('/api/scripts', (req, res) => {
-  const allowedExts = new Set(['.js', '.py']);
+  const allowedExts = new Set(['.js', '.py', '.php', '.sh']);
   const recursive = ['1', 'true', 'yes', 'on'].includes(
     String(req.query.recursive || '').trim().toLowerCase()
   );
@@ -1761,7 +1761,7 @@ app.get('/api/scripts', (req, res) => {
     out.push({
       name: rel,
       path: `tasks/${rel}`,
-      type: ext === '.py' ? 'python' : 'javascript',
+        type: ext === '.py' ? 'python' : ext === '.php' ? 'php' : ext === '.sh' ? 'shell' : 'javascript',
     });
   }
   function walk(dirAbs, relBase) {
@@ -2035,10 +2035,10 @@ app.post('/api/scripts/import', (req, res) => {
     const content = String(payload.content || '');
     const ext = path.extname(name).toLowerCase();
     if (!name) return res.status(400).json({ message: 'Script name is required' });
-    if (!['.js', '.py'].includes(ext)) return res.status(400).json({ message: 'Only .js and .py scripts are supported' });
+    if (!['.js', '.py', '.php', '.sh'].includes(ext)) return res.status(400).json({ message: 'Only .js, .py, .php and .sh scripts are supported' });
     if (!content.trim()) return res.status(400).json({ message: 'Script content is required' });
     fs.mkdirSync(config.paths.tasksDir, { recursive: true });
-    const fileType = ext === '.py' ? 'python' : 'javascript';
+    const fileType = ext === '.py' ? 'python' : ext === '.php' ? 'php' : ext === '.sh' ? 'shell' : 'javascript';
     const overwrite = payload.overwrite === false || payload.overwrite === 0 || payload.overwrite === '0'
       ? false
       : true;
@@ -2068,8 +2068,8 @@ app.delete('/api/scripts', (req, res) => {
     if (!raw) return res.status(400).json({ message: 'Script path is required' });
     const fileName = path.basename(raw.replace(/^tasks[\\/]/, ''));
     const ext = path.extname(fileName).toLowerCase();
-    if (!['.js', '.py'].includes(ext)) {
-      return res.status(400).json({ message: 'Only .js and .py scripts can be deleted' });
+    if (!['.js', '.py', '.php', '.sh'].includes(ext)) {
+      return res.status(400).json({ message: 'Only .js, .py, .php and .sh scripts can be deleted' });
     }
     const target = path.join(config.paths.tasksDir, fileName);
     if (!fs.existsSync(target)) {
