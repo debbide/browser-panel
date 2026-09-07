@@ -4961,7 +4961,14 @@ function deleteTask(id) {
 
 function fillTaskForm(task) {
   form.name.value = task.name;
-  form.type.value = String(task.script_path || '').toLowerCase().endsWith('.py') ? 'python' : task.type;
+  const scriptPathLower = String(task.script_path || '').toLowerCase();
+  form.type.value = scriptPathLower.endsWith('.py')
+    ? 'python'
+    : scriptPathLower.endsWith('.php')
+      ? 'php'
+      : scriptPathLower.endsWith('.sh')
+        ? 'shell'
+        : task.type;
   form.script_path.value = task.script_path;
   form.timeout_sec.value = task.timeout_sec;
   // host2play 默认至少 900；已保存的更大值（如 1200）原样保留
@@ -5037,12 +5044,19 @@ async function editTask(id) {
 function useScript(scriptPath, type) {
   selectedScriptPath = scriptPath;
   form.script_path.value = scriptPath;
-  const resolvedType = String(scriptPath || '').toLowerCase().endsWith('.py') ? 'python' : type;
+  const normalizedPath = String(scriptPath || '').toLowerCase();
+  const resolvedType = normalizedPath.endsWith('.py')
+    ? 'python'
+    : normalizedPath.endsWith('.php')
+      ? 'php'
+      : normalizedPath.endsWith('.sh')
+        ? 'shell'
+        : type;
   form.type.value = resolvedType;
   if (isHost2PlayScript(scriptPath) && Number(form.elements.timeout_sec?.value || 0) < 600) {
     form.elements.timeout_sec.value = '900';
   }
-  if (!form.name.value.trim()) form.name.value = scriptPath.split('/').pop().replace(/\.(js|py)$/i, '');
+  if (!form.name.value.trim()) form.name.value = scriptPath.split('/').pop().replace(/\.(js|py|php|sh)$/i, '');
   formHint.textContent = `已选脚本：${getScriptLabel(scriptPath)}`;
   // Must pass full env rows (array), not flat params — secrets have empty value in UI
   syncTaskParamsUI(scriptPath, collectSafeCurrentEnvRows());
@@ -5116,9 +5130,10 @@ form.addEventListener('submit', async (event) => {
   // FormData may stringify checkboxes; force boolean flags from builders
   payload.enabled = Boolean(schedule.enabled);
   payload.condition_enabled = Boolean(conditionPayload.condition_enabled);
-  if (String(payload.script_path || '').toLowerCase().endsWith('.py')) {
-    payload.type = 'python';
-  }
+  const payloadScriptPath = String(payload.script_path || '').toLowerCase();
+  if (payloadScriptPath.endsWith('.py')) payload.type = 'python';
+  else if (payloadScriptPath.endsWith('.php')) payload.type = 'php';
+  else if (payloadScriptPath.endsWith('.sh')) payload.type = 'shell';
   payload.use_browser = true;
   // 默认临时；仅当用户明确选「持久配置」才写 use_persistent=1
   const wantPersistent = !isTaskTempProfileMode();
@@ -5214,12 +5229,16 @@ async function saveScriptFromForm(sourceForm) {
     if (!taskName) throw new Error('请先填写任务名，或先选中要覆盖的脚本');
     const baseName = slugifyName(taskName);
     name = baseName;
-    if (type === 'python' && !name.endsWith('.py')) name += '.py';
-    if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
+  if (type === 'python' && !name.endsWith('.py')) name += '.py';
+  if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
+  if (type === 'php' && !name.endsWith('.php')) name += '.php';
+  if (type === 'shell' && !name.endsWith('.sh')) name += '.sh';
   }
   // Force extension to match type if user switched type
-  if (type === 'python' && !name.endsWith('.py')) name = name.replace(/\.(js)?$/i, '') + '.py';
-  if (type === 'javascript' && !name.endsWith('.js')) name = name.replace(/\.(py)?$/i, '') + '.js';
+  if (type === 'python' && !name.endsWith('.py')) name = name.replace(/\.(js|php|sh)?$/i, '') + '.py';
+  if (type === 'javascript' && !name.endsWith('.js')) name = name.replace(/\.(py|php|sh)?$/i, '') + '.js';
+  if (type === 'php' && !name.endsWith('.php')) name = name.replace(/\.(js|py|sh)?$/i, '') + '.php';
+  if (type === 'shell' && !name.endsWith('.sh')) name = name.replace(/\.(js|py|php)?$/i, '') + '.sh';
   return fetchJson('/api/scripts/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5271,7 +5290,7 @@ modalImportForm.addEventListener('submit', async (event) => {
     // always '' in the UI, so entriesFromParamsObject dropped PASSWORD_* etc. Then Save
     // called replaceEnvEntries and deleted those keys from DB. Keep full env rows instead.
     syncTaskParamsUI(result.data.path, collectSafeCurrentEnvRows());
-    if (!form.name.value.trim()) form.name.value = result.data.name.replace(/\.(js|py)$/i, '');
+    if (!form.name.value.trim()) form.name.value = result.data.name.replace(/\.(js|py|php|sh)$/i, '');
     updateTaskFormSummary();
     openModal(editingId ? 'edit' : 'create');
     formHint.textContent = result.data.overwritten
@@ -6487,7 +6506,7 @@ function wireTasksFsUi() {
   }
   if (newFile) {
     newFile.addEventListener('click', async () => {
-      const name = await promptFsName('新建文件', 'script.py');
+      const name = await promptFsName('新建文件', 'script.js');
       if (!name) return;
       try {
         const created = await fetchJson('/api/tasks-fs/create-file', {
