@@ -1,0 +1,48 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
+const { evaluateFunctions, read } = require('./helpers');
+
+test('HTML, status, unit and time formatting remain stable', () => {
+  const source = read('public/app.js');
+  const { prettyStatus, prettyUnit, shortTime } = evaluateFunctions(['prettyStatus', 'prettyUnit', 'shortTime']);
+  assert.match(source, /function escapeHtml\(input\)/);
+  assert.match(source, /\.replace\(\/&\/g, '&amp;'\)/);
+  assert.match(source, /\.replace\(\/'\/g, '&#39;'\)/);
+  assert.equal(prettyStatus('success'), '成功');
+  assert.equal(prettyUnit('minutes'), '分钟');
+  assert.equal(shortTime('2026-09-07T12:34:56Z').length > 0, true);
+});
+
+test('task list and modal selectors remain present', () => {
+  const dom = new JSDOM(read('public/index.html'));
+  const document = dom.window.document;
+  assert.ok(document.querySelector('#tasks'));
+  assert.ok(document.querySelector('#task-form'));
+  assert.ok(document.querySelector('#task-modal'));
+  assert.ok(document.querySelector('#task-group-select'));
+});
+
+test('task edit flow preserves explicit script path', () => {
+  const source = read('public/app.js');
+  assert.match(source, /selectedScriptPath = task\.script_path;/);
+  assert.match(source, /loadScriptIntoEditor\(task\.script_path, \{ preserveHint: true, reopenModal: false \}\)/);
+  assert.match(source, /form\.script_path\.value = scriptPath;/);
+});
+
+test('task create and update payloads retain task type and script path', () => {
+  const source = read('public/app.js');
+  assert.match(source, /const formData = new FormData\(form\)/);
+  assert.match(source, /const payload = Object\.fromEntries\(formData\.entries\(\)\)/);
+  assert.match(source, /const payloadScriptPath = String\(payload\.script_path \|\| ''\)\.toLowerCase\(\)/);
+  assert.match(source, /payloadScriptPath\.endsWith\('\.py'\)\) payload\.type = 'python'/);
+  assert.match(source, /editingId\s*\?\s*`\/api\/tasks\/\$\{editingId\}`\s*:\s*'\/api\/tasks'/);
+});
+
+test('settings save keeps JSON endpoint and payload contract', () => {
+  const source = read('public/app.js');
+  assert.match(source, /fetchJson\('\/api\/settings\/scheduler'/);
+  assert.match(source, /method:\s*'POST'/);
+  assert.match(source, /headers:\s*\{ 'Content-Type': 'application\/json' \}/);
+  assert.match(source, /body:\s*JSON\.stringify/);
+});
