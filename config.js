@@ -4,6 +4,7 @@ const path = require('path');
 const browserUser = process.env.BROWSER_USER || 'browser';
 const browserHome = process.env.BROWSER_HOME || path.join('/home', browserUser);
 const browserWork = process.env.BROWSER_WORK_DIR || path.join(browserHome, 'browser-work');
+const runtimeRoot = process.env.PANEL_RUNTIME_ROOT || __dirname;
 
 module.exports = {
   server: {
@@ -32,11 +33,11 @@ module.exports = {
   },
   paths: {
     root: __dirname,
-    dataDir: path.join(__dirname, 'data'),
-    dbFile: path.join(__dirname, 'data', 'app.db'),
-    logsDir: path.join(__dirname, 'logs'),
-    screenshotsDir: path.join(__dirname, 'screenshots'),
-    tasksDir: path.join(__dirname, 'tasks'),
+    dataDir: path.join(runtimeRoot, 'data'),
+    dbFile: path.join(runtimeRoot, 'data', 'app.db'),
+    logsDir: path.join(runtimeRoot, 'logs'),
+    screenshotsDir: path.join(runtimeRoot, 'screenshots'),
+    tasksDir: path.join(runtimeRoot, 'tasks'),
     publicDir: path.join(__dirname, 'public'),
     extensionsDir: process.env.BROWSER_EXTENSIONS_DIR || browserWork,
     profilesDir: process.env.BROWSER_PROFILES_DIR || path.join(browserWork, 'profiles'),

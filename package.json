@@ -6,7 +6,12 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js",
+    "test:warp": "node --test server/warp/registerer.test.js server/warp/probe.test.js",
+    "test:recorder": "npm --prefix automa-recorder test",
+    "test": "npm run test:unit && npm run test:integration && npm run test:warp && npm run test:recorder",
+    "check": "bash scripts/check-code.sh && npm test"
   },
   "keywords": [],
   "author": "",

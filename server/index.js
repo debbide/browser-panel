@@ -2534,40 +2534,46 @@ app.use((req, res) => {
   res.sendFile(path.join(config.paths.publicDir, 'index.html'));
 });
 
-const httpServer = app.listen(config.server.port, config.server.host, () => {
-  reloadJobs(executeTask);
-  void ensureTelegramWebhook();
-  void warpManager.restore();
-  // 云端备份定时器：启动时先把 next_at 算好（若缺失），再挂 60s 的轮询。
-  try {
-    cloudBackup.ensureScheduled();
-  } catch (err) {
-    console.error('[boot] cloud backup schedule init failed:', err.message || err);
-  }
-  cloudBackup.startTicker();
-  try {
-    prepareBrowserWorkspace();
-  } catch (err) {
-    console.error('[boot] browser workspace not ready:', err.message || err);
-  }
-  try {
-    db.purgeExpiredSessions();
-  } catch (err) {
-    console.error('[boot] purge sessions failed:', err.message || err);
-  }
-  // 异步补一次 tag,不等它 —— 拉到之前面板显示的是旧标签,拉完自动刷新
-  refreshTags();
-  console.log(`Panel running on http://${config.server.host}:${config.server.port}`);
-  if (!db.hasAnyUser()) {
-    console.log('[auth] 尚未设置管理员账号 — 首次打开面板会进入引导页');
-  }
-  if (config.server.host === '0.0.0.0') {
-    console.warn(
-      '[auth] 警告：面板监听 0.0.0.0 且为明文 HTTP，密码在链路上可被嗅探。'
-      + '建议改绑 127.0.0.1 走 SSH 隧道，或前置 nginx + TLS。',
-    );
-  }
-});
+let httpServer = null;
+
+function startServer() {
+  if (httpServer) return httpServer;
+  httpServer = app.listen(config.server.port, config.server.host, () => {
+    reloadJobs(executeTask);
+    void ensureTelegramWebhook();
+    void warpManager.restore();
+    // 云端备份定时器：启动时先把 next_at 算好（若缺失），再挂 60s 的轮询。
+    try {
+      cloudBackup.ensureScheduled();
+    } catch (err) {
+      console.error('[boot] cloud backup schedule init failed:', err.message || err);
+    }
+    cloudBackup.startTicker();
+    try {
+      prepareBrowserWorkspace();
+    } catch (err) {
+      console.error('[boot] browser workspace not ready:', err.message || err);
+    }
+    try {
+      db.purgeExpiredSessions();
+    } catch (err) {
+      console.error('[boot] purge sessions failed:', err.message || err);
+    }
+    // 异步补一次 tag,不等它 —— 拉到之前面板显示的是旧标签,拉完自动刷新
+    refreshTags();
+    console.log(`Panel running on http://${config.server.host}:${config.server.port}`);
+    if (!db.hasAnyUser()) {
+      console.log('[auth] 尚未设置管理员账号 — 首次打开面板会进入引导页');
+    }
+    if (config.server.host === '0.0.0.0') {
+      console.warn(
+        '[auth] 警告：面板监听 0.0.0.0 且为明文 HTTP，密码在链路上可被嗅探。'
+        + '建议改绑 127.0.0.1 走 SSH 隧道，或前置 nginx + TLS。',
+      );
+    }
+  });
+  return httpServer;
+}
 
 // 可复用的停机序列：停调度 → 断 SSE → 停 WARP → 关库。
 // SIGTERM 路径之外，云端备份的恢复流程也要用它（关库后才能动 app.db）。
@@ -2586,7 +2592,10 @@ function shutdown(signal) {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     await closeCoreServices(`received ${signal}`);
-    await new Promise((resolve) => httpServer.close(resolve));
+    if (httpServer) {
+      await new Promise((resolve) => httpServer.close(resolve));
+      httpServer = null;
+    }
   })().catch((error) => {
     console.error('[shutdown] failed:', error);
     process.exitCode = 1;
@@ -2602,8 +2611,18 @@ cloudBackup.setPerformRestoreSwap(async (stagingDir) => {
   return cloudBackup.swapDataDir(stagingDir);
 });
 
-for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.once(signal, () => {
-    void shutdown(signal).finally(() => process.exit());
-  });
+if (require.main === module) {
+  startServer();
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.once(signal, () => {
+      void shutdown(signal).finally(() => process.exit());
+    });
+  }
 }
+
+module.exports = {
+  app,
+  startServer,
+  closeCoreServices,
+  shutdown,
+};
