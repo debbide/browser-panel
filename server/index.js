@@ -54,6 +54,7 @@ const { createResourceRouter } = require('./resources/router');
 const { createTaskGroupRouter } = require('./tasks/group-routes');
 const { createTaskService } = require('./tasks/task-service');
 const { createTaskRouter } = require('./tasks/task-routes');
+const { createRuntimeRouter } = require('./routes/runtime-routes');
 const {
   normalizeTaskType,
   slugifyScriptName,
@@ -1890,24 +1891,12 @@ app.delete('/api/scripts', (req, res) => {
   }
 });
 
-app.post('/api/tasks/:id/run', async (req, res) => {
-  try {
-    const profileId = req.body && req.body.profile_id ? Number(req.body.profile_id) : null;
-    const response = await triggerTaskExecution(Number(req.params.id), { profileId });
-    res.status(response.status).json(response.payload);
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
-});
-
-app.post('/api/tasks/:id/stop', (req, res) => {
-  const id = Number(req.params.id);
-  const stopped = stopTask(id);
-  if (!stopped) {
-    return res.status(404).json({ message: 'No running task can be stopped right now' });
-  }
-  res.json({ ok: true, stopped: true });
-});
+app.use('/api', createRuntimeRouter({
+  triggerTaskExecution,
+  stopTask,
+  listRunsByTask: (taskId) => db.listRunsByTask(taskId),
+  listRuns: (limit) => db.listRuns(limit),
+}));
 
 
 function classifyScreenshotName(name) {
@@ -2169,14 +2158,6 @@ app.get('/api/runs/:id/log/stream', (req, res) => {
     logStream.endClient(run.log_path, res, { status: latestRun.status });
   }
   res.on('close', cleanup);
-});
-
-app.get('/api/tasks/:id/runs', (req, res) => {
-  res.json({ data: db.listRunsByTask(Number(req.params.id)) });
-});
-
-app.get('/api/runs', (req, res) => {
-  res.json({ data: db.listRuns(100) });
 });
 
 app.get('/api/storage/cleanup/preview', (req, res) => {
