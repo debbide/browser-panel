@@ -1885,6 +1885,19 @@ function createEnvEditor(container) {
 const taskEnvUI = createEnvEditor(taskEnvEditor);
 const globalEnvUI = createEnvEditor(globalEnvEditor);
 
+const settingsController = SettingsController.create({
+  api: SettingsApi,
+  view: SettingsView,
+  actions: {
+    mount() {},
+    load() {
+      loadVisionSettings();
+      loadGlobalEnvSettings();
+      loadTelegramSettings();
+    },
+  },
+});
+
 function entriesFromParamsObject(params = {}) {
   return Object.entries(params || {})
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
@@ -7138,6 +7151,7 @@ async function bootPanel() {
 
   wireTasksFsUi();
   wireResourceManagers();
+  settingsController.mount();
 
   resetAllModalState();
   closeModal();
@@ -7146,9 +7160,7 @@ async function bootPanel() {
   loadSchedulerSettings();
   loadSuccessHeuristicsSettings();
   loadBrowserRuntimeSettings();
-  loadVisionSettings();
-  loadGlobalEnvSettings();
-  loadTelegramSettings();
+  settingsController.load();
   loadCloudBackupSettings();
   loadCloudBackupList();
   loadTasksFs(fsCurrentPath);
