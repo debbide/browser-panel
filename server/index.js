@@ -3,6 +3,8 @@ const path = require('path');
 const express = require('express');
 const { createApp } = require('./app');
 const { createLifecycle, registerSignalHandlers } = require('./lifecycle');
+const { createSettingsRouter } = require('./routes/settings-routes');
+const { createEnvRouter } = require('./routes/env-routes');
 const { spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
@@ -998,31 +1000,7 @@ app.post('/api/settings/telegram/test', async (req, res) => {
   }
 });
 
-app.get('/api/settings/scheduler', (req, res) => {
-  res.json({
-    data: {
-      allowParallel: db.isTaskParallelAllowed(),
-      runningTaskIds: getRunningTaskIds(),
-    },
-  });
-});
-
-app.post('/api/settings/scheduler', (req, res) => {
-  try {
-    const body = req.body || {};
-    const allowParallel = Boolean(body.allowParallel);
-    const updated = db.setTaskParallelAllowed(allowParallel);
-    console.log(`[scheduler] allowParallel=${updated ? '1' : '0'}`);
-    res.json({
-      data: {
-        allowParallel: updated,
-        runningTaskIds: getRunningTaskIds(),
-      },
-    });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to save scheduler settings' });
-  }
-});
+app.use('/api/settings', createSettingsRouter({ db, getRunningTaskIds }));
 
 app.get('/api/settings/success-heuristics', (req, res) => {
   const { getSuccessHeuristicSettings } = require('./runtime/success-heuristics');
@@ -1320,38 +1298,7 @@ app.post('/api/browser/close', async (req, res) => {
   }
 });
 
-app.get('/api/env', (req, res) => {
-  try {
-    const scope = String(req.query.scope || 'global');
-    const ownerId = req.query.owner_id !== undefined ? Number(req.query.owner_id) : null;
-    const data = db.listEnvEntriesPublic(scope, ownerId);
-    res.json({
-      data,
-      githubCompat: db.isGithubCompatEnabled(),
-    });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to list env' });
-  }
-});
-
-app.put('/api/env', (req, res) => {
-  try {
-    const payload = req.body || {};
-    const scope = String(payload.scope || 'global');
-    const ownerId = payload.owner_id !== undefined ? payload.owner_id : null;
-    const entries = normalizeEnvEntriesPayload(payload.env || payload.entries || []);
-    const data = db.replaceEnvEntries(scope, ownerId, entries);
-    if (scope === 'task' && ownerId) {
-      db.syncTaskParamsJsonFromEnv(Number(ownerId));
-    }
-    if (payload.githubCompat !== undefined) {
-      db.setGithubCompatEnabled(Boolean(payload.githubCompat));
-    }
-    res.json({ data, githubCompat: db.isGithubCompatEnabled() });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to save env' });
-  }
-});
+app.use('/api/env', createEnvRouter({ db, normalizeEnvEntriesPayload }));
 
 app.get('/api/settings/github-compat', (req, res) => {
   res.json({ data: { enabled: db.isGithubCompatEnabled() } });
