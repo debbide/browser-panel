@@ -3667,7 +3667,7 @@ function renderTasks() {
 }
 
 async function loadTasks() {
-  const data = await fetchJson('/api/tasks');
+  const data = await TasksApi.listTasks();
   tasksCache = data.data;
   // 服务端已经确认不在跑了，本地的"停止中"覆盖就该退场，交回服务端状态。
   // 放在渲染前统一清，避免 taskCard 边遍历边改集合。
@@ -4786,11 +4786,7 @@ async function runTask(id) {
     const profileId = task && task.browser_profile_id
       ? Number(task.browser_profile_id)
       : null;
-    await fetchJson(`/api/tasks/${id}/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile_id: profileId || null }),
-    });
+    await TasksApi.runTask(id, profileId);
     toast(`任务 #${id} 已触发运行`, 'success');
   } catch (error) {
     toast(error.message || '启动失败', 'error');
@@ -4813,7 +4809,7 @@ async function stopTask(id) {
   runningTaskIds.delete(id);
   renderTasks();
   try {
-    await fetchJson(`/api/tasks/${id}/stop`, { method: 'POST' });
+    await TasksApi.stopTask(id);
     toast(`停止指令已发送至任务 #${id}`, 'success');
   } catch (error) {
     // 失败：撤销乐观更新，按钮变回运行中
@@ -4828,7 +4824,7 @@ async function stopTask(id) {
 function deleteTask(id) {
   dialogConfirm('确定要删除这个任务及其所有运行记录吗？', async () => {
     try {
-      await fetchJson(`/api/tasks/${id}`, { method: 'DELETE' });
+      await TasksApi.deleteTask(id);
       toast('任务已删除', 'success');
       if (editingId === id) {
         resetAllModalState();
@@ -5070,9 +5066,7 @@ form.addEventListener('submit', async (event) => {
   if (taskBrowserProxy.runtimeStack) payload.params.BROWSER_RUNTIME_STACK = taskBrowserProxy.runtimeStack;
   if (taskBrowserProxy.mode) payload.params.BROWSER_PROXY_MODE = taskBrowserProxy.mode;
   if (taskBrowserProxy.value) payload.params.BROWSER_PROXY_VALUE = taskBrowserProxy.value;
-  const url = editingId ? `/api/tasks/${editingId}` : '/api/tasks';
-  const method = editingId ? 'PUT' : 'POST';
-  await fetchJson(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  await TasksApi.saveTask(editingId, payload);
   toast(editingId ? '任务已更新' : '任务已成功添加', 'success');
   resetAllModalState();
   closeModal();
@@ -5288,12 +5282,7 @@ if (conditionTestBtn) {
       const body = { condition: conditionPayload.condition };
       let result;
       if (editingId) {
-        const res = await fetchJson(`/api/tasks/${editingId}/condition/test`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        result = res.data;
+        result = await TasksApi.testCondition(editingId, body.condition);
       } else {
         // create mode: temporary evaluate via a lightweight path — call types not available;
         // reuse test endpoint requires id; fall back to fetch probe message

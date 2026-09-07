@@ -51,7 +51,7 @@ test('task create and update payloads retain task type and script path', () => {
   assert.match(source, /const formData = new FormData\(form\)/);
   assert.match(source, /const payload = Object\.fromEntries\(formData\.entries\(\)\)/);
   assert.match(source, /payload\.type = TasksModel\.resolveTaskType\(payload\.script_path, payload\.type\)/);
-  assert.match(source, /editingId\s*\?\s*`\/api\/tasks\/\$\{editingId\}`\s*:\s*'\/api\/tasks'/);
+  assert.match(source, /TasksApi\.saveTask\(editingId, payload\)/);
 });
 
 test('settings save keeps JSON endpoint and payload contract', () => {
