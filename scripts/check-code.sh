@@ -27,7 +27,13 @@ else
 fi
 
 echo "== 3. server 模块加载 =="
-if node -e "
+check_runtime_root=$(mktemp -d "${TMPDIR:-/tmp}/browser-panel-check.XXXXXX")
+trap 'rm -rf "$check_runtime_root"' EXIT
+if PANEL_RUNTIME_ROOT="${PANEL_RUNTIME_ROOT:-$check_runtime_root}" \
+  BROWSER_WORK_DIR="${BROWSER_WORK_DIR:-$check_runtime_root/browser-work}" \
+  BROWSER_EXTENSIONS_DIR="${BROWSER_EXTENSIONS_DIR:-$check_runtime_root/extensions}" \
+  BROWSER_PROFILES_DIR="${BROWSER_PROFILES_DIR:-$check_runtime_root/profiles}" \
+  node -e "
 const fs=require('fs'),path=require('path');
 const files=[];
 (function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())walk(p);else if(e.name.endsWith('.js'))files.push(p);}})('server');

@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -75,4 +77,44 @@ test('browser paths retain production defaults without PANEL_RUNTIME_ROOT', () =
   assert.equal(config.browser.workDir, browserWork);
   assert.equal(config.paths.extensionsDir, browserWork);
   assert.equal(config.paths.profilesDir, path.join(browserWork, 'profiles'));
+});
+
+test('module check uses and cleans an isolated runtime root', () => {
+  const repoRoot = path.resolve(__dirname, '../..');
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-panel-check-test-'));
+  const guardPath = path.join(tempRoot, 'guard-home-browser-work.js');
+  fs.writeFileSync(guardPath, `
+    const fs = require('node:fs');
+    const originalMkdirSync = fs.mkdirSync;
+    fs.mkdirSync = function guardedMkdirSync(target, options) {
+      if (String(target).startsWith('/home/browser/browser-work')) {
+        const error = new Error('blocked production browser work path');
+        error.code = 'EACCES';
+        throw error;
+      }
+      return originalMkdirSync.call(this, target, options);
+    };
+  `);
+
+  try {
+    const result = spawnSync('bash', ['scripts/check-code.sh'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        TMPDIR: tempRoot,
+        NODE_OPTIONS: `--require=${guardPath}`,
+        BROWSER_USER: 'browser',
+        PANEL_RUNTIME_ROOT: '',
+        BROWSER_WORK_DIR: '',
+        BROWSER_EXTENSIONS_DIR: '',
+        BROWSER_PROFILES_DIR: '',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(fs.readdirSync(tempRoot).sort(), [path.basename(guardPath)]);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
