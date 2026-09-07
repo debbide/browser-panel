@@ -2046,7 +2046,11 @@ app.post('/api/scripts/import', (req, res) => {
       name = name.replace(/\.[^./]+$/i, '') + requestedExt;
     }
     const ext = path.extname(name).toLowerCase();
-    if (!['.js', '.py', '.php', '.sh'].includes(ext)) return res.status(400).json({ message: 'Only .js, .py, .php and .sh scripts are supported' });
+    if (!['.js', '.py', '.php', '.sh'].includes(ext)) {
+      return res.status(400).json({
+        message: `Only .js, .py, .php and .sh scripts are supported (received name=${JSON.stringify(name)}, type=${JSON.stringify(requestedType)})`,
+      });
+    }
     if (!content.trim()) return res.status(400).json({ message: 'Script content is required' });
     fs.mkdirSync(config.paths.tasksDir, { recursive: true });
     const fileType = ext === '.py' ? 'python' : ext === '.php' ? 'php' : ext === '.sh' ? 'shell' : 'javascript';
