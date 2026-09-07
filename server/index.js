@@ -54,6 +54,8 @@ const { createResourceRouter } = require('./resources/router');
 const { createTaskGroupRouter } = require('./tasks/group-routes');
 const { createTaskService } = require('./tasks/task-service');
 const { createTaskRouter } = require('./tasks/task-routes');
+const { createScriptService } = require('./tasks/script-service');
+const { createImportRouter } = require('./tasks/import-routes');
 const { createRuntimeRouter } = require('./routes/runtime-routes');
 const {
   normalizeTaskType,
@@ -1440,6 +1442,12 @@ const taskService = createTaskService({
   executeTask,
   isTaskRunning,
 });
+const scriptService = createScriptService({
+  tasksDir: config.paths.tasksDir,
+  listTasks: () => db.listTasks(),
+  scanTaskDependencies: (scriptPath) => backup.scanTaskDependencies(scriptPath),
+  normalizeExtraPaths: (value) => backup.normalizeExtraPaths(value),
+});
 app.use('/api/tasks', createTaskRouter(taskService));
 
 app.get('/api/conditions/types', (req, res) => {
@@ -1809,59 +1817,7 @@ app.delete('/api/tasks-fs', (req, res) => {
   }
 });
 
-app.post('/api/scripts/import', (req, res) => {
-  try {
-    const payload = req.body || {};
-    let name = path.basename(String(payload.name || '')).trim();
-    const content = String(payload.content || '');
-    if (!name) return res.status(400).json({ message: 'Script name is required' });
-    let requestedType = String(payload.type || '').trim().toLowerCase();
-    const extensionByType = {
-      javascript: '.js',
-      python: '.py',
-      php: '.php',
-      shell: '.sh',
-    };
-    // Recover extensionless PHP imports sent by older cached clients that
-    // omitted both the selected type and the generated filename suffix.
-    if (!requestedType && !path.extname(name) && /^\s*<\?php\b/i.test(content)) {
-      requestedType = 'php';
-    }
-    const requestedExt = extensionByType[requestedType];
-    if (requestedExt) {
-      name = name.replace(/\.[^./]+$/i, '') + requestedExt;
-    }
-    const ext = path.extname(name).toLowerCase();
-    if (!['.js', '.py', '.php', '.sh'].includes(ext)) {
-      return res.status(400).json({
-        message: `Only .js, .py, .php and .sh scripts are supported (received name=${JSON.stringify(name)}, type=${JSON.stringify(requestedType)})`,
-      });
-    }
-    if (!content.trim()) return res.status(400).json({ message: 'Script content is required' });
-    fs.mkdirSync(config.paths.tasksDir, { recursive: true });
-    const fileType = ext === '.py' ? 'python' : ext === '.php' ? 'php' : ext === '.sh' ? 'shell' : 'javascript';
-    const overwrite = payload.overwrite === false || payload.overwrite === 0 || payload.overwrite === '0'
-      ? false
-      : true;
-    let finalName = name;
-    if (!overwrite) {
-      finalName = reserveUniqueScriptFilename(name.slice(0, -ext.length), fileType);
-    }
-    const target = path.join(config.paths.tasksDir, finalName);
-    const existed = fs.existsSync(target);
-    fs.writeFileSync(target, content, 'utf8');
-    res.json({
-      data: {
-        name: finalName,
-        path: `tasks/${finalName}`,
-        type: fileType,
-        overwritten: Boolean(existed),
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message || 'Failed to save script' });
-  }
-});
+app.use('/api', createImportRouter({ scriptService }));
 
 app.delete('/api/scripts', (req, res) => {
   try {
