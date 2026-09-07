@@ -582,6 +582,12 @@ function getCommand(task) {
   if (task.type === 'python') {
     return { cmd: path.join(config.paths.root, '.venv', 'bin', 'python'), args: [task.script_path] };
   }
+  if (task.type === 'php') {
+    return { cmd: 'php', args: [task.script_path] };
+  }
+  if (task.type === 'shell') {
+    return { cmd: 'bash', args: [task.script_path] };
+  }
   return { cmd: 'node', args: [task.script_path] };
 }
 

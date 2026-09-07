@@ -41,8 +41,8 @@ function resolveProxyContract({ task = null, profile = null, global = null, lega
 }
 
 function assertRuntimeSupportsTask(runtimeStack, taskType) {
-  if (normalizeRuntimeStack(runtimeStack) === 'ruyipage' && String(taskType) !== 'python') {
-    const error = new Error('RuyiPage runtime only supports Python browser tasks');
+  if (normalizeRuntimeStack(runtimeStack) === 'ruyipage' && !['python','php','shell'].includes(String(taskType))) {
+    const error = new Error('RuyiPage runtime only supports Python/PHP/Shell browser tasks');
     error.code = 'ruyipage_python_only';
     throw error;
   }

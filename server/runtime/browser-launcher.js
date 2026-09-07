@@ -884,7 +884,11 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   // Leave creation to the worker process so ownership stays writable for browser user.
   const runner = task.type === 'python'
     ? `${shellEscape('/usr/bin/python3')} ${shellEscape(taskFile)}`
-    : `${shellEscape('/tmp/node-openclaw')} ${shellEscape(wrapperFile)} ${shellEscape(taskFile)}`;
+    : task.type === 'php'
+      ? `php ${shellEscape(taskFile)}`
+      : task.type === 'shell'
+        ? `bash ${shellEscape(taskFile)}`
+        : `${shellEscape('/tmp/node-openclaw')} ${shellEscape(wrapperFile)} ${shellEscape(taskFile)}`;
   const profile = task && task._profile ? task._profile : null;
   const taskParams = parseTaskParams(task);
   const useTempProfile = resolveUseTempProfile(task, taskParams);
