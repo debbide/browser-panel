@@ -52,6 +52,8 @@ const cloudBackup = require('./cloud/backup-service');
 const { createCloudBackupRouter } = require('./cloud/routes');
 const { createResourceRouter } = require('./resources/router');
 const { createTaskGroupRouter } = require('./tasks/group-routes');
+const { createTaskService } = require('./tasks/task-service');
+const { createTaskRouter } = require('./tasks/task-routes');
 const {
   normalizeTaskType,
   slugifyScriptName,
@@ -1425,117 +1427,19 @@ app.post('/api/backup/save-assets', (req, res) => {
   }
 });
 
-app.get('/api/tasks', (req, res) => {
-  // Latest run is looked up per task, not sliced out of the global recent-runs
-  // window — otherwise an infrequent task drops off the list and its card
-  // regresses to "未运行" while its history is still intact.
-  const latestByTask = new Map();
-  for (const run of db.listLatestRunPerTask()) latestByTask.set(run.task_id, run);
-  const tasks = db.listTasks().map((task) => ({
-    ...decorateTaskForApi(task),
-    is_running: isTaskRunning(task.id),
-    latest_run: latestByTask.get(task.id) || null,
-  }));
-  res.json({ data: tasks });
+const taskService = createTaskService({
+  db,
+  normalizeTaskEnvPayload,
+  applyTaskEnvPayload,
+  decorateTaskForApi,
+  buildConditionFieldsFromPayload,
+  resolveTaskGroupId,
+  normalizeExtraPathsPayload,
+  reloadJobs,
+  executeTask,
+  isTaskRunning,
 });
-
-app.post('/api/tasks', (req, res) => {
-  try {
-    const payload = req.body || {};
-    normalizeTaskEnvPayload(payload);
-    const type = normalizeTaskType(payload.type);
-    const name = String(payload.name || 'Untitled Task');
-    const conditionFields = buildConditionFieldsFromPayload(payload, null);
-    let task = db.createTask({
-      name,
-      type,
-      script_path: resolveTaskScriptPath(name, type, String(payload.script_path || '')),
-      cron_expr: String(payload.cron_expr || ''),
-      schedule_mode: payload.schedule_mode === 'daily_window' ? 'daily_window' : (payload.schedule_mode === 'interval' ? 'interval' : 'fixed'),
-      interval_min: payload.interval_min ? Number(payload.interval_min) : null,
-      interval_max: payload.interval_max ? Number(payload.interval_max) : null,
-      interval_unit: payload.interval_unit ? String(payload.interval_unit) : null,
-      daily_time_start: payload.daily_time_start ? String(payload.daily_time_start) : null,
-      daily_time_end: payload.daily_time_end ? String(payload.daily_time_end) : null,
-      daily_day_min: payload.daily_day_min ? Number(payload.daily_day_min) : null,
-      daily_day_max: payload.daily_day_max ? Number(payload.daily_day_max) : null,
-      next_run_at: payload.next_run_at ? String(payload.next_run_at) : null,
-      enabled: payload.enabled ? 1 : 0,
-      use_browser: payload.use_browser === false ? 0 : 1,
-      use_persistent: parseUsePersistentFlag(payload.use_persistent, 0),
-      timeout_sec: Number(payload.timeout_sec || 300),
-      params_json: '{}',
-      browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
-      group_id: resolveTaskGroupId(payload.group_id),
-      extra_paths: normalizeExtraPathsPayload(payload.extra_paths) || '[]',
-      ...conditionFields,
-    });
-    task = applyTaskEnvPayload(task.id, payload) || task;
-    reloadJobs(executeTask);
-    res.json({ data: decorateTaskForApi(task) });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to save task' });
-  }
-});
-
-app.put('/api/tasks/:id', (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const payload = req.body || {};
-    normalizeTaskEnvPayload(payload);
-    const existing = db.getTask(id);
-    if (!existing) return res.status(404).json({ message: 'Task not found' });
-    const type = normalizeTaskType(payload.type);
-    const name = String(payload.name || 'Untitled Task');
-    const requestedScriptPath = String(payload.script_path || existing?.script_path || '');
-    const conditionFields = buildConditionFieldsFromPayload(payload, existing);
-    let task = db.updateTask(id, {
-      name,
-      type,
-      script_path: resolveTaskScriptPath(name, type, requestedScriptPath, id),
-      cron_expr: String(payload.cron_expr || ''),
-      schedule_mode: payload.schedule_mode === 'daily_window' ? 'daily_window' : (payload.schedule_mode === 'interval' ? 'interval' : 'fixed'),
-      interval_min: payload.interval_min ? Number(payload.interval_min) : null,
-      interval_max: payload.interval_max ? Number(payload.interval_max) : null,
-      interval_unit: payload.interval_unit ? String(payload.interval_unit) : null,
-      daily_time_start: payload.daily_time_start ? String(payload.daily_time_start) : null,
-      daily_time_end: payload.daily_time_end ? String(payload.daily_time_end) : null,
-      daily_day_min: payload.daily_day_min ? Number(payload.daily_day_min) : null,
-      daily_day_max: payload.daily_day_max ? Number(payload.daily_day_max) : null,
-      next_run_at: payload.next_run_at ? String(payload.next_run_at) : existing?.next_run_at || null,
-      enabled: payload.enabled ? 1 : 0,
-      use_browser: payload.use_browser === false ? 0 : 1,
-      use_persistent: parseUsePersistentFlag(
-        payload.use_persistent,
-        Number(existing.use_persistent) ? 1 : 0
-      ),
-      timeout_sec: Number(payload.timeout_sec || 300),
-      params_json: existing.params_json || '{}',
-      browser_profile_id: payload.browser_profile_id ? Number(payload.browser_profile_id) : null,
-      group_id: Object.prototype.hasOwnProperty.call(payload, 'group_id')
-        ? resolveTaskGroupId(payload.group_id)
-        : existing.group_id,
-      extra_paths: Object.prototype.hasOwnProperty.call(payload, 'extra_paths')
-        ? (normalizeExtraPathsPayload(payload.extra_paths) || '[]')
-        : existing.extra_paths,
-      // preserve script callback state across form saves
-      callback_remaining_sec: existing.callback_remaining_sec ?? null,
-      callback_reported_at: existing.callback_reported_at || null,
-      callback_trigger_at: existing.callback_trigger_at || null,
-      callback_threshold_sec: existing.callback_threshold_sec ?? null,
-      callback_valid_until: existing.callback_valid_until || null,
-      callback_action: existing.callback_action || null,
-      ...conditionFields,
-    });
-    if (payload.env !== undefined || payload.params !== undefined || payload.params_json !== undefined) {
-      task = applyTaskEnvPayload(id, payload) || task;
-    }
-    reloadJobs(executeTask);
-    res.json({ data: decorateTaskForApi(task) });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to update task' });
-  }
-});
+app.use('/api/tasks', createTaskRouter(taskService));
 
 app.get('/api/conditions/types', (req, res) => {
   res.json({ data: listConditionTypes() });
@@ -1577,19 +1481,6 @@ app.post('/api/tasks/:id/condition/test', async (req, res) => {
     res.json({ data: result });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Condition test failed' });
-  }
-});
-
-app.delete('/api/tasks/:id', (req, res) => {
-  try {
-    const result = db.deleteTask(Number(req.params.id));
-    if (!result.changes) {
-      return res.status(404).json({ message: 'Task not found or already deleted' });
-    }
-    reloadJobs(executeTask);
-    res.json({ ok: true });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to delete task' });
   }
 });
 
