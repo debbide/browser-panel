@@ -22,6 +22,14 @@ test('DOM utilities load before the application entry', () => {
   assert.ok(appIndex > domIndex);
 });
 
+test('task model loads before the application entry', () => {
+  const html = read('public/index.html');
+  const modelIndex = html.indexOf('/features/tasks/model.js?v=20260907a');
+  const appIndex = html.indexOf('/app.js?v=20260814c');
+  assert.ok(modelIndex >= 0);
+  assert.ok(appIndex > modelIndex);
+});
+
 test('task list and modal selectors remain present', () => {
   const dom = new JSDOM(read('public/index.html'));
   const document = dom.window.document;
