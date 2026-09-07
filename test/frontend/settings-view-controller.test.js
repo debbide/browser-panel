@@ -102,3 +102,43 @@ test('settings static scripts preserve api view controller runtime app order', (
   assert.ok(positions.every((position) => position >= 0));
   assert.deepEqual([...positions].sort((left, right) => left - right), positions);
 });
+
+test('vision settings freeze card, dropdown and modal DOM contracts before extraction', () => {
+  const source = read('public/panel-runtime.js');
+  for (const selector of [
+    'vision-channel-card',
+    'vision-channel-row',
+    'vision-channel-badge',
+    'vision-ch-base',
+    'vision-ch-key',
+    'vision-ch-model',
+    'vision-ch-model-toggle',
+    'vision-channel-test',
+    'vision-channel-make-primary',
+    'vision-channel-remove',
+    'vision-model-dropdown',
+    'vision-test-modal',
+  ]) {
+    assert.match(source, new RegExp(selector));
+  }
+  assert.match(source, /data-vision-channel/);
+  assert.match(source, /data-close-vision-test/);
+  assert.match(source, /至少保留一个通道/);
+  assert.match(source, /请至少配置一个视觉通道/);
+  assert.match(source, /需要填写 Base URL 和 Model/);
+  assert.match(source, /测试完成 · 可用/);
+  assert.match(source, /测试完成 · 存在问题/);
+  assert.match(source, /Vision 测试失败/);
+});
+
+test('vision settings freeze selection state and event binding contracts before extraction', () => {
+  const source = read('public/panel-runtime.js');
+  assert.match(source, /const visionModelCache = new Map\(\)/);
+  assert.match(source, /document\.addEventListener\('mousedown', visionDropdownOutsideHandler, true\)/);
+  assert.match(source, /document\.addEventListener\('keydown', visionDropdownKeyHandler, true\)/);
+  assert.equal((source.match(/visionForm\.addEventListener\('submit'/g) || []).length, 1);
+  assert.equal((source.match(/visionTestBtn\.addEventListener\('click'/g) || []).length, 1);
+  assert.match(source, /visionChannelsList\.insertBefore\(card, first\)/);
+  assert.match(source, /runTest\(\{ testImage: true \}\)/);
+  assert.match(source, /mask\.addEventListener\('click', close\)/);
+});

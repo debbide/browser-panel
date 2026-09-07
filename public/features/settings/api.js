@@ -25,6 +25,22 @@
     return global.fetchJson('/api/settings/telegram/test', { method: 'POST' });
   }
 
+  function loadVision() {
+    return global.fetchJson('/api/settings/vision');
+  }
+
+  function saveVision(payload) {
+    return post('/api/settings/vision', payload);
+  }
+
+  function updateVisionModel(payload) {
+    return post('/api/settings/vision/model', payload);
+  }
+
+  function testVision(payload) {
+    return post('/api/settings/vision/test', payload);
+  }
+
   function saveScheduler(payload) {
     return post('/api/settings/scheduler', payload);
   }
@@ -49,6 +65,10 @@
     loadTelegram,
     saveTelegram,
     testTelegram,
+    loadVision,
+    saveVision,
+    updateVisionModel,
+    testVision,
     loadScheduler,
     saveScheduler,
     loadSuccessHeuristics,

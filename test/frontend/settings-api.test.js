@@ -41,6 +41,39 @@ test('telegram settings preserve load, save and test request contracts', async (
   ]);
 });
 
+test('vision settings preserve load, save, model update and test contracts', async () => {
+  const calls = [];
+  const api = loadApi(async (path, options) => {
+    calls.push([path, options]);
+    return { data: {} };
+  });
+  const channelList = [{ id: 'primary', baseUrl: 'https://vision.example', apiKey: '', model: 'vision-model' }];
+
+  await api.loadVision();
+  await api.saveVision({ channelList });
+  await api.updateVisionModel({ id: 'primary', model: 'vision-model' });
+  await api.testVision({ baseUrl: 'https://vision.example', apiKey: 'secret', model: 'vision-model', fetchModels: true, testImage: false });
+
+  assert.deepEqual(calls.map(([path, options]) => [path, options && JSON.parse(JSON.stringify(options))]), [
+    ['/api/settings/vision', undefined],
+    ['/api/settings/vision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channelList }),
+    }],
+    ['/api/settings/vision/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'primary', model: 'vision-model' }),
+    }],
+    ['/api/settings/vision/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://vision.example', apiKey: 'secret', model: 'vision-model', fetchModels: true, testImage: false }),
+    }],
+  ]);
+});
+
 test('scheduler settings preserve paths, method, headers, and payload', async () => {
   const calls = [];
   const api = loadApi(async (...args) => { calls.push(args); return { data: {} }; });

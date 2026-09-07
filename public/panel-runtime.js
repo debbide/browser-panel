@@ -2268,7 +2268,7 @@ function collectVisionChannels() {
 async function loadVisionSettings() {
   if (!visionForm) return;
   try {
-    const res = await fetchJson('/api/settings/vision');
+    const res = await SettingsApi.loadVision();
     const data = res.data || {};
     renderVisionChannels(data.channelList);
     updateVisionStatusText(data);
@@ -2347,11 +2347,7 @@ async function openModelDropdown(card) {
       return;
     }
     try {
-      const res = await fetchJson('/api/settings/vision/model', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: channelId, model: id }),
-      });
+      const res = await SettingsApi.updateVisionModel({ id: channelId, model: id });
       card.dataset.initialModel = id;
       updateVisionStatusText(res.data || {});
       toast(`已切换到 ${id}`, 'success');
@@ -2394,17 +2390,13 @@ async function openModelDropdown(card) {
     listEl.innerHTML = '<div class="vision-model-empty">加载中…</div>';
     if (refreshBtn) refreshBtn.disabled = true;
     try {
-      const res = await fetchJson('/api/settings/vision/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: card.dataset.channelId || '',
-          baseUrl,
-          apiKey: card.querySelector('.vision-ch-key')?.value?.trim() || '',
-          model: modelInput.value.trim(),
-          fetchModels: true,
-          testImage: false, // 只要列表，不跑识图探测
-        }),
+      const res = await SettingsApi.testVision({
+        id: card.dataset.channelId || '',
+        baseUrl,
+        apiKey: card.querySelector('.vision-ch-key')?.value?.trim() || '',
+        model: modelInput.value.trim(),
+        fetchModels: true,
+        testImage: false, // 只要列表，不跑识图探测
       });
       const ids = (res.data && res.data.models && res.data.models.ids) || [];
       allIds = Array.isArray(ids) ? ids : [];
@@ -5403,17 +5395,13 @@ function openVisionTestModalForCard(cardEl) {
     if (runBtn) runBtn.disabled = true;
     if (modelsOnlyBtn) modelsOnlyBtn.disabled = true;
     try {
-      const res = await fetchJson('/api/settings/vision/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: live.id || '',
-          baseUrl: live.baseUrl,
-          apiKey: live.apiKey || '',
-          model: live.model || '',
-          fetchModels: true,
-          testImage: Boolean(testImage),
-        }),
+      const res = await SettingsApi.testVision({
+        id: live.id || '',
+        baseUrl: live.baseUrl,
+        apiKey: live.apiKey || '',
+        model: live.model || '',
+        fetchModels: true,
+        testImage: Boolean(testImage),
       });
       const data = res.data || {};
       if (statusEl) {
@@ -5531,11 +5519,7 @@ if (visionForm) {
       visionSaveBtn.textContent = 'Saving...';
     }
     try {
-      await fetchJson('/api/settings/vision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelList }),
-      });
+      await SettingsApi.saveVision({ channelList });
       toast('Vision settings saved', 'success');
       await loadVisionSettings();
     } catch (error) {
