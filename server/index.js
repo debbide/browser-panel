@@ -47,6 +47,12 @@ const { createWarpRouter } = require('./warp/routes');
 const cloudBackup = require('./cloud/backup-service');
 const { createCloudBackupRouter } = require('./cloud/routes');
 const { createResourceRouter } = require('./resources/router');
+const {
+  normalizeTaskType,
+  slugifyScriptName,
+  buildTaskScriptFilename,
+  resolveTaskScriptPath,
+} = require('./tasks/task-payload');
 
 fs.mkdirSync(config.paths.tasksDir, { recursive: true });
 fs.mkdirSync(config.paths.publicDir, { recursive: true });
@@ -516,15 +522,6 @@ function normalizeVisionSettingsPayload(payload = {}) {
   return out;
 }
 
-function slugifyScriptName(input) {
-  return String(input || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-}
-
 function isValidTimeZone(value) {
   try {
     Intl.DateTimeFormat('en-US', { timeZone: String(value || '') });
@@ -680,12 +677,6 @@ function runBashCommand(command, timeout = 10 * 60 * 1000) {
   });
 }
 
-function buildTaskScriptFilename(taskName, type) {
-  const ext = type === 'python' ? '.py' : type === 'php' ? '.php' : type === 'shell' ? '.sh' : '.js';
-  const base = slugifyScriptName(taskName) || 'task-script';
-  return `${base}${ext}`;
-}
-
 function reserveUniqueScriptFilename(taskName, type, ignoreTaskId = null, preferredCurrentPath = '') {
   const desiredFileName = buildTaskScriptFilename(taskName, type);
   const ext = path.extname(desiredFileName);
@@ -705,17 +696,6 @@ function reserveUniqueScriptFilename(taskName, type, ignoreTaskId = null, prefer
   }
 
   throw new Error('Unable to allocate an available script filename');
-}
-
-function resolveTaskScriptPath(taskName, type, currentScriptPath = '', existingTaskId = null) {
-  const normalizedCurrent = String(currentScriptPath || '').replace(/\\/g, '/');
-  if (!normalizedCurrent.startsWith('tasks/')) return normalizedCurrent;
-
-  // Task names are labels only. Binding a task to an existing script must never
-  // rename that script; otherwise editing/saving a task can unexpectedly move
-  // shared files such as tasks/agentrouter_checkin.py to tasks/<task-name>.py.
-  // Filename allocation belongs to /api/scripts/import.
-  return normalizedCurrent;
 }
 
 const app = express();
@@ -1554,7 +1534,7 @@ app.post('/api/tasks', (req, res) => {
   try {
     const payload = req.body || {};
     normalizeTaskEnvPayload(payload);
-    const type = ['javascript','python','php','shell'].includes(String(payload.type)) ? String(payload.type) : 'javascript';
+    const type = normalizeTaskType(payload.type);
     const name = String(payload.name || 'Untitled Task');
     const conditionFields = buildConditionFieldsFromPayload(payload, null);
     let task = db.createTask({
@@ -1596,7 +1576,7 @@ app.put('/api/tasks/:id', (req, res) => {
     normalizeTaskEnvPayload(payload);
     const existing = db.getTask(id);
     if (!existing) return res.status(404).json({ message: 'Task not found' });
-    const type = ['javascript','python','php','shell'].includes(String(payload.type)) ? String(payload.type) : 'javascript';
+    const type = normalizeTaskType(payload.type);
     const name = String(payload.name || 'Untitled Task');
     const requestedScriptPath = String(payload.script_path || existing?.script_path || '');
     const conditionFields = buildConditionFieldsFromPayload(payload, existing);
