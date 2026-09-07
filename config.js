@@ -3,8 +3,9 @@ const path = require('path');
 // Generic defaults only — override with env on real hosts (do not put personal usernames here).
 const browserUser = process.env.BROWSER_USER || 'browser';
 const browserHome = process.env.BROWSER_HOME || path.join('/home', browserUser);
-const browserWork = process.env.BROWSER_WORK_DIR || path.join(browserHome, 'browser-work');
 const runtimeRoot = process.env.PANEL_RUNTIME_ROOT || __dirname;
+const browserWork = process.env.BROWSER_WORK_DIR
+  || (process.env.PANEL_RUNTIME_ROOT ? path.join(runtimeRoot, 'browser-work') : path.join(browserHome, 'browser-work'));
 
 module.exports = {
   server: {
@@ -39,7 +40,9 @@ module.exports = {
     screenshotsDir: path.join(runtimeRoot, 'screenshots'),
     tasksDir: path.join(runtimeRoot, 'tasks'),
     publicDir: path.join(__dirname, 'public'),
-    extensionsDir: process.env.BROWSER_EXTENSIONS_DIR || browserWork,
-    profilesDir: process.env.BROWSER_PROFILES_DIR || path.join(browserWork, 'profiles'),
+    extensionsDir: process.env.BROWSER_EXTENSIONS_DIR
+      || (process.env.PANEL_RUNTIME_ROOT ? path.join(runtimeRoot, 'extensions') : browserWork),
+    profilesDir: process.env.BROWSER_PROFILES_DIR
+      || (process.env.PANEL_RUNTIME_ROOT ? path.join(runtimeRoot, 'profiles') : path.join(browserWork, 'profiles')),
   },
 };
