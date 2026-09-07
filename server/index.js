@@ -57,6 +57,7 @@ const { createTaskRouter } = require('./tasks/task-routes');
 const { createScriptService } = require('./tasks/script-service');
 const { createImportRouter } = require('./tasks/import-routes');
 const { createRuntimeRouter } = require('./routes/runtime-routes');
+const { createMaintenanceRouter } = require('./routes/maintenance-routes');
 const {
   normalizeTaskType,
   slugifyScriptName,
@@ -2116,39 +2117,6 @@ app.get('/api/runs/:id/log/stream', (req, res) => {
   res.on('close', cleanup);
 });
 
-app.get('/api/storage/cleanup/preview', (req, res) => {
-  try {
-    const categories = req.query.categories
-      ? normalizeCategories(String(req.query.categories).split(',').filter(Boolean))
-      : undefined;
-    const data = cleanupStorage(db, {
-      dryRun: true,
-      retentionDays: normalizeRetentionDays(req.query.retentionDays),
-      categories,
-      runningTaskIds: getRunningTaskIds(),
-    });
-    res.json({ data });
-  } catch (error) {
-    res.status(400).json({ message: error.message || '生成存储清理预览失败' });
-  }
-});
-
-app.post('/api/storage/cleanup', (req, res) => {
-  try {
-    const body = req.body || {};
-    const data = cleanupStorage(db, {
-      dryRun: body.dryRun === true,
-      retentionDays: normalizeRetentionDays(body.retentionDays),
-      categories: normalizeCategories(body.categories),
-      runningTaskIds: getRunningTaskIds(),
-    });
-    events.emit('runs', { cleanup: true });
-    res.json({ data });
-  } catch (error) {
-    res.status(400).json({ message: error.message || '存储清理失败' });
-  }
-});
-
 app.post('/api/runs/cleanup', (req, res) => {
   try {
     const data = cleanupStorage(db, {
@@ -2165,87 +2133,26 @@ app.post('/api/runs/cleanup', (req, res) => {
   }
 });
 
-// 备份导出/导入。挂在 requireAuth 下方——导出文件含任务脚本源码,
-// 且在加密模式下含密钥(虽已加密,但密码是用户自己给的,强度不由我们保证)。
-//
-// 导出用 POST 不用 GET:密码走 body。放 query 会进 access log、浏览器历史
-// 和 Referer,那等于把密码明文写了三份。
-app.post('/api/backup/export', (req, res) => {
-  try {
-    const body = req.body || {};
-    // 空串 / 只有空白 一律当作"不加密"。别让用户以为按了空格就加密了。
-    const passphrase = typeof body.passphrase === 'string' && body.passphrase.trim().length
-      ? body.passphrase
-      : null;
-    const result = backup.exportBackup({
-      taskIds: backup.normalizeTaskIds(body.task_ids),
-      passphrase,
-    });
-    const exportDate = new Date();
-    const filename = backup.buildExportFilename(exportDate, result.header);
-    const fallbackFilename = backup.buildExportFilename(exportDate, {
-      ...result.header,
-      taskName: result.header.taskName ? 'task' : '',
-    });
-    res.setHeader('Content-Type', result.header.encrypted
-      ? 'application/octet-stream'
-      : 'application/json; charset=utf-8');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-    );
-    res.send(result.data);
-  } catch (error) {
-    res.status(400).json({ message: error.message || '导出备份失败' });
-  }
-});
-
-app.post('/api/backup/preview', (req, res) => {
-  try {
-    const body = req.body || {};
-    const parsed = backup.parseBackup(
-      body.backup !== undefined ? body.backup : body,
-      { passphrase: body.passphrase },
-    );
-    const plan = backup.analyze(parsed, {
-      script_strategy: body.script_strategy,
-      task_strategy: body.task_strategy,
-    });
-    res.json({ data: backup.toPreview(plan) });
-  } catch (error) {
-    res.status(400).json({ message: error.message || '解析备份文件失败' });
-  }
-});
-
-app.post('/api/backup/import', (req, res) => {
-  try {
-    const body = req.body || {};
-    const data = backup.importBackup(body.backup !== undefined ? body.backup : body, {
-      script_strategy: body.script_strategy,
-      task_strategy: body.task_strategy,
-      passphrase: body.passphrase,
-    });
-    reloadJobs(executeTask);
-    events.emit('tasks', { imported: true });
-    res.json({ data });
-  } catch (error) {
-    res.status(400).json({ message: error.message || '导入备份失败' });
-  }
-});
-
-app.get('/api/meta', (req, res) => {
-  res.json({
-    data: {
-      browser: config.browser,
-      paths: {
-        tasksDir: config.paths.tasksDir,
-        logsDir: config.paths.logsDir,
-        screenshotsDir: config.paths.screenshotsDir,
-        runtimeDataDir: path.join(config.paths.root, 'runtime-data'),
-      },
+app.use('/api', createMaintenanceRouter({
+  backup,
+  cleanupStorage,
+  normalizeRetentionDays,
+  normalizeCategories,
+  db,
+  getRunningTaskIds,
+  reloadJobs,
+  executeTask,
+  emit: (...args) => events.emit(...args),
+  meta: {
+    browser: config.browser,
+    paths: {
+      tasksDir: config.paths.tasksDir,
+      logsDir: config.paths.logsDir,
+      screenshotsDir: config.paths.screenshotsDir,
+      runtimeDataDir: path.join(config.paths.root, 'runtime-data'),
     },
-  });
-});
+  },
+}));
 
 app.use((req, res) => {
   res.sendFile(path.join(config.paths.publicDir, 'index.html'));
