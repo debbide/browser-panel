@@ -349,7 +349,6 @@ const taskProxyFromProfileBtn = document.getElementById('task-proxy-from-profile
 const taskProxyHint = document.getElementById('task-proxy-hint');
 const addProfileBtn = document.getElementById('add-profile-btn');
 const profilesList = document.getElementById('profiles-list');
-let profilesCache = [];
 const closeBrowserBtn = document.getElementById('close-browser-btn');
 const scriptSelectEl = document.getElementById('script-select');
 const useScriptBtn = document.getElementById('use-script-btn');
@@ -758,18 +757,10 @@ function setupConfigSubnav() {
 
 setupConfigSubnav();
 
-let editingId = null;
-let tasksCache = [];
-let backupSelectionMode = false;
-let selectedBackupTaskIds = new Set();
-let pendingBackupPayload = null;
-let runsCache = [];
-let runningTaskIds = new Set();
 // 点了停止、但服务端还没报 is_running=false 的任务。
 // runningTaskIds 是 OR 进 isRunning 的，只能强制点亮不能强制熄灭：停止真正生效前
 // 服务端仍回 is_running=true，光从 runningTaskIds 删掉按钮还是灰的。所以熄灭方向
 // 需要这个独立的覆盖标记，优先级高于服务端状态。
-let stoppingTaskIds = new Set();
 // 停止覆盖不退场，直到服务端确认 is_running=false（loadTasks 里统一清）。
 // 原来有个 10 秒自动过期兜底：优雅停止一慢（SIGTERM 后要等 1.5 秒才 SIGKILL），
 // 覆盖先过期、服务端还在报 running，按钮就会在停止确认前弹回"运行中"再落回"启动"。
@@ -781,12 +772,6 @@ function markStopping(id) {
 function clearStopping(id) {
   return stoppingTaskIds.delete(id);
 }
-let scriptsCache = [];
-let lastRunsByTask = new Map();
-let selectedScriptPath = '';
-let browserSessionOpen = false;
-let browserOpenedAt = null;
-
 function prettyErrorCode(code) {
   const map = {
     timeout: '超时',
@@ -4748,19 +4733,8 @@ async function refreshAll() {
 //
 // 刻意不刷 refreshAll()：状态推送只需拉运行记录、浏览器状态与任务，
 // 避免额外刷新脚本选择项和浏览器配置，更不能覆盖用户正在编辑的设置表单。
-const SSE_URL = '/api/events';
-// 事件到刷新之间的合并窗口。一个任务结束会连着触发 task + 后续状态变化，
-// 200ms 内的多条事件合并成一次拉取。
-const REFRESH_DEBOUNCE_MS = 200;
-// 降级轮询间隔。只在 SSE 没连上时才跑 —— 有的中间层会掐掉长连接或不支持
-// text/event-stream，那种环境下总不能完全不刷新。
-const FALLBACK_POLL_MS = 15000;
-
-let eventSource = null;
-let refreshTimer = null;
 let refreshInFlight = false;
 let refreshQueued = false;
-let fallbackTimer = null;
 
 async function refreshStatus() {
   if (redirectingToLogin) return;
@@ -4787,79 +4761,18 @@ async function refreshStatus() {
   }
 }
 
+const statusStream = createEventStream({
+  refreshStatus,
+  loadWarpStatus,
+  isRedirecting: () => redirectingToLogin,
+});
+
 function scheduleRefresh() {
-  if (refreshTimer) return;
-  refreshTimer = setTimeout(() => {
-    refreshTimer = null;
-    refreshStatus();
-  }, REFRESH_DEBOUNCE_MS);
+  statusStream.scheduleRefresh();
 }
-
-// SSE 断了才轮询，连上就停。两者不会同时跑。
-function startFallbackPolling() {
-  if (fallbackTimer) return;
-  fallbackTimer = setInterval(() => {
-    if (document.hidden || redirectingToLogin) return;
-    refreshStatus();
-  }, FALLBACK_POLL_MS);
-}
-
-function stopFallbackPolling() {
-  if (!fallbackTimer) return;
-  clearInterval(fallbackTimer);
-  fallbackTimer = null;
-}
-
-let streamStarted = false;
 
 function startStatusStream() {
-  // 只允许启动一次。onerror 里会把 eventSource 置空（浏览器放弃重连时），
-  // 不能拿它当"启没启动过"的判据，否则会重复注册 visibilitychange 监听。
-  if (streamStarted) return;
-  streamStarted = true;
-
-  // 切回前台补一次：SSE 理论上不会漏，但标签页在后台被浏览器冻结时连接可能被掐，
-  // 这一下能盖住"切回来发现状态是旧的"。注册一次，与连接生命周期无关。
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) scheduleRefresh();
-  });
-
-  if (typeof EventSource === 'undefined') {
-    // 浏览器太老没有 EventSource：直接降级轮询
-    startFallbackPolling();
-    return;
-  }
-
-  eventSource = new EventSource(SSE_URL);
-
-  // 连上了（含浏览器自动重连成功）。断线期间的变化没收到，所以补一次拉取。
-  eventSource.onopen = () => {
-    stopFallbackPolling();
-    scheduleRefresh();
-  };
-
-  const onStateEvent = () => scheduleRefresh();
-  eventSource.addEventListener('state', onStateEvent);
-  eventSource.addEventListener('task', onStateEvent);
-  eventSource.addEventListener('browser', onStateEvent);
-  eventSource.addEventListener('warp', () => {
-    if (!document.getElementById('warp-tab')?.hidden) loadWarpStatus();
-  });
-
-  eventSource.onerror = () => {
-    // EventSource 自带重连，不用手动重建，这里只负责断开期间兜底轮询，
-    // 等 onopen 再把轮询停掉。
-    //
-    // 会话失效时连接会以 401 失败落到这里。不在这里判断状态码 —— EventSource
-    // 拿不到 —— 而是靠随后的降级轮询走 fetchJson，由它的 401 分支跳登录页。
-    if (eventSource && eventSource.readyState === EventSource.CLOSED) {
-      // CLOSED = 浏览器已放弃重连，之后只能靠轮询。显式 close 一下，避免留个
-      // 半死的对象。
-      eventSource.close();
-      eventSource = null;
-    }
-    startFallbackPolling();
-  };
+  statusStream.start();
 }
 
 async function runTask(id) {
