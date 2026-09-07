@@ -13,6 +13,18 @@
     return global.fetchJson('/api/settings/scheduler');
   }
 
+  function loadTelegram() {
+    return global.fetchJson('/api/settings/telegram');
+  }
+
+  function saveTelegram(payload) {
+    return post('/api/settings/telegram', payload);
+  }
+
+  function testTelegram() {
+    return global.fetchJson('/api/settings/telegram/test', { method: 'POST' });
+  }
+
   function saveScheduler(payload) {
     return post('/api/settings/scheduler', payload);
   }
@@ -34,6 +46,9 @@
   }
 
   global.SettingsApi = {
+    loadTelegram,
+    saveTelegram,
+    testTelegram,
     loadScheduler,
     saveScheduler,
     loadSuccessHeuristics,

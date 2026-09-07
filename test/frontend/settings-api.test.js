@@ -13,11 +13,32 @@ function loadApi(fetchJson) {
 test('settings API module is exposed without changing static delivery', () => {
   const api = loadApi(async () => ({}));
   assert.equal(typeof api.loadScheduler, 'function');
+  assert.equal(typeof api.loadTelegram, 'function');
+  assert.equal(typeof api.saveTelegram, 'function');
+  assert.equal(typeof api.testTelegram, 'function');
   assert.equal(typeof api.saveScheduler, 'function');
   assert.equal(typeof api.loadSuccessHeuristics, 'function');
   assert.equal(typeof api.saveSuccessHeuristics, 'function');
   assert.equal(typeof api.loadBrowserRuntime, 'function');
   assert.equal(typeof api.saveBrowserRuntime, 'function');
+});
+
+test('telegram settings preserve load, save and test request contracts', async () => {
+  const calls = [];
+  const api = loadApi(async (...args) => { calls.push(args); return { data: {} }; });
+  const payload = { botToken: 'token', chatId: '42', proxy: '', webhookUrl: 'https://example.test' };
+  await api.loadTelegram();
+  await api.saveTelegram(payload);
+  await api.testTelegram();
+  assert.deepEqual(calls.map(([path, options]) => [path, options && JSON.parse(JSON.stringify(options))]), [
+    ['/api/settings/telegram', undefined],
+    ['/api/settings/telegram', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }],
+    ['/api/settings/telegram/test', { method: 'POST' }],
+  ]);
 });
 
 test('scheduler settings preserve paths, method, headers, and payload', async () => {

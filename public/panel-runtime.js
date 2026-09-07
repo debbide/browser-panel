@@ -1888,12 +1888,26 @@ const globalEnvUI = createEnvEditor(globalEnvEditor);
 const settingsController = SettingsController.create({
   api: SettingsApi,
   view: SettingsView,
+  toast,
+  elements: {
+    telegram: {
+      form: tgForm,
+      status: tgStatusText,
+      botToken: tgBotToken,
+      chatId: tgChatId,
+      proxy: tgProxy,
+      webhookUrl: tgWebhookUrl,
+      tokenHelp: tgTokenHelp,
+      webhookHelp: tgWebhookHelp,
+      saveButton: tgSaveBtn,
+      testButton: tgTestBtn,
+    },
+  },
   actions: {
     mount() {},
     load() {
       loadVisionSettings();
       loadGlobalEnvSettings();
-      loadTelegramSettings();
     },
   },
 });
@@ -3603,61 +3617,6 @@ async function loadRuns() {
   groupLastRuns(runsCache);
 }
 
-async function loadTelegramSettings() {
-  try {
-    const res = await fetchJson('/api/settings/telegram');
-    const {
-      configured,
-      chatId,
-      botTokenMasked,
-      proxy,
-      webhookUrl,
-      webhookStatus,
-      webhookError,
-    } = res.data;
-
-    const webhookRegistered = webhookStatus === 'registered';
-    if (!configured) {
-      tgStatusText.textContent = '状态：未配置';
-      tgStatusText.style.color = '#94a3b8';
-    } else if (webhookRegistered) {
-      tgStatusText.textContent = '状态：已配置，Webhook 已注册';
-      tgStatusText.style.color = '#86efac';
-    } else {
-      tgStatusText.textContent = '状态：已配置，Webhook 未就绪';
-      tgStatusText.style.color = '#fbbf24';
-    }
-
-    tgChatId.value = chatId || '';
-    if (tgProxy) tgProxy.value = proxy || '';
-    if (tgWebhookUrl) {
-      const suggestedOrigin = window.location.protocol === 'https:' ? window.location.origin : '';
-      tgWebhookUrl.value = webhookUrl || suggestedOrigin;
-    }
-    tgBotToken.value = '';
-    tgBotToken.setAttribute('aria-describedby', 'tg-token-help');
-
-    if (botTokenMasked) {
-      tgTokenHelp.textContent = `当前 Token: ${botTokenMasked}`;
-    } else {
-      tgTokenHelp.textContent = '未设置 Token';
-    }
-
-    if (tgWebhookHelp) {
-      if (webhookRegistered) {
-        tgWebhookHelp.textContent = '已向 Telegram 注册。更换域名、Tunnel 或 Token 后请重新保存。';
-      } else if (webhookError) {
-        tgWebhookHelp.textContent = `Webhook 未就绪：${webhookError}`;
-      } else {
-        tgWebhookHelp.textContent = '保存后自动注册 Telegram 重试按钮的回调地址。';
-      }
-    }
-  } catch (error) {
-    tgStatusText.textContent = '状态：加载失败';
-    console.error('Failed to load Telegram settings:', error);
-  }
-}
-
 function normalizePluginPackagesForUi(value) {
   return String(value || '')
     .split(/[\r\n,;]+/g)
@@ -5244,56 +5203,6 @@ window.useScript = useScript;
 window.loadScriptIntoEditor = loadScriptIntoEditor;
 window.showTaskRuns = showTaskRuns;
 window.openRunScreenshots = openRunScreenshots;
-
-if (tgForm) {
-  tgForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const botToken = tgBotToken.value.trim();
-    const chatId = tgChatId.value.trim();
-    const proxy = tgProxy ? tgProxy.value.trim() : '';
-    const webhookUrl = tgWebhookUrl ? tgWebhookUrl.value.trim() : '';
-
-    tgSaveBtn.disabled = true;
-    tgSaveBtn.textContent = '保存中...';
-
-    try {
-      const response = await fetchJson('/api/settings/telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ botToken, chatId, proxy, webhookUrl }),
-      });
-      const settings = response.data || {};
-      if (settings.webhookStatus === 'registered') {
-        toast('Telegram \u8bbe\u7f6e\u5df2\u4fdd\u5b58\uff0cWebhook \u5df2\u6ce8\u518c', 'success');
-      } else {
-        toast(`Telegram \u8bbe\u7f6e\u5df2\u4fdd\u5b58\uff0cWebhook \u672a\u5c31\u7eea\uff1a${settings.webhookError || '\u8bf7\u68c0\u67e5\u516c\u7f51 HTTPS \u5730\u5740'}`, 'error');
-      }
-      await loadTelegramSettings();
-    } catch (error) {
-      toast(error.message || '\u4fdd\u5b58\u8bbe\u7f6e\u9047\u5230\u4e86\u9519\u8bef', 'error');
-    } finally {
-      tgSaveBtn.disabled = false;
-      tgSaveBtn.textContent = '\u4fdd\u5b58\u8bbe\u7f6e';
-    }
-  });
-}
-
-if (tgTestBtn) {
-  tgTestBtn.addEventListener('click', async () => {
-    tgTestBtn.disabled = true;
-    tgTestBtn.textContent = '\u53d1\u9001\u4e2d...';
-
-    try {
-      await fetchJson('/api/settings/telegram/test', { method: 'POST' });
-      toast('\u4e00\u6761\u6d4b\u8bd5\u7528\u63a8\u9001\u5df2\u53d1\u5f80\u4f60\u7684 Telegram', 'success');
-    } catch (error) {
-      toast(error.message || '\u53d1\u9001\u63a8\u9001\u5230 Telegram \u5931\u8d25', 'error');
-    } finally {
-      tgTestBtn.disabled = false;
-      tgTestBtn.textContent = '\u53d1\u9001\u6d4b\u8bd5\u6d88\u606f';
-    }
-  });
-}
 
 if (visionAddChannelBtn) {
   visionAddChannelBtn.addEventListener('click', () => {
