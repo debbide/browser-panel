@@ -5218,6 +5218,13 @@ async function saveScriptFromForm(sourceForm) {
   const formData = new FormData(sourceForm);
   const type = String(formData.get('type') || 'javascript');
   const content = String(formData.get('content') || '');
+  const extensionByType = {
+    javascript: '.js',
+    python: '.py',
+    php: '.php',
+    shell: '.sh',
+  };
+  const extension = extensionByType[type] || '.js';
   // Prefer currently selected/bound script name so re-import overwrites the same file
   const currentBound = String(form.elements.script_path?.value || selectedScriptPath || '').replace(/\\/g, '/');
   let name = '';
@@ -5229,20 +5236,14 @@ async function saveScriptFromForm(sourceForm) {
     if (!taskName) throw new Error('请先填写任务名，或先选中要覆盖的脚本');
     const baseName = slugifyName(taskName);
     name = baseName;
-  if (type === 'python' && !name.endsWith('.py')) name += '.py';
-  if (type === 'javascript' && !name.endsWith('.js')) name += '.js';
-  if (type === 'php' && !name.endsWith('.php')) name += '.php';
-  if (type === 'shell' && !name.endsWith('.sh')) name += '.sh';
   }
-  // Force extension to match type if user switched type
-  if (type === 'python' && !name.endsWith('.py')) name = name.replace(/\.(js|php|sh)?$/i, '') + '.py';
-  if (type === 'javascript' && !name.endsWith('.js')) name = name.replace(/\.(py|php|sh)?$/i, '') + '.js';
-  if (type === 'php' && !name.endsWith('.php')) name = name.replace(/\.(js|py|sh)?$/i, '') + '.php';
-  if (type === 'shell' && !name.endsWith('.sh')) name = name.replace(/\.(js|py|php)?$/i, '') + '.sh';
+  // Always replace the existing suffix so a bound file with any extension can
+  // be converted to the selected interpreter without sending an invalid name.
+  name = name.replace(/\.[^./]+$/i, '') + extension;
   return fetchJson('/api/scripts/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, content, overwrite: true }),
+    body: JSON.stringify({ name, type, content, overwrite: true }),
   });
 }
 
