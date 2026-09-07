@@ -57,6 +57,7 @@ const { createTaskRouter } = require('./tasks/task-routes');
 const { createScriptService } = require('./tasks/script-service');
 const { createImportRouter } = require('./tasks/import-routes');
 const { createRuntimeRouter } = require('./routes/runtime-routes');
+const { createConditionRouter } = require('./routes/condition-routes');
 const { createMaintenanceRouter } = require('./routes/maintenance-routes');
 const {
   normalizeTaskType,
@@ -1451,48 +1452,13 @@ const scriptService = createScriptService({
 });
 app.use('/api/tasks', createTaskRouter(taskService));
 
-app.get('/api/conditions/types', (req, res) => {
-  res.json({ data: listConditionTypes() });
-});
-
-app.post('/api/tasks/:id/condition/test', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const task = db.getTask(id);
-    if (!task) return res.status(404).json({ message: 'Task not found' });
-
-    // Optional body.condition overrides stored config for dry-run without save
-    let evalTask = task;
-    if (req.body && (req.body.condition || req.body.condition_json)) {
-      const raw = req.body.condition || req.body.condition_json;
-      const normalized = normalizeConditionPayload(
-        typeof raw === 'string' ? parseConditionJson(raw) : raw
-      );
-      evalTask = { ...task, condition_enabled: 1, condition_json: JSON.stringify(normalized) };
-    } else if (!Number(task.condition_enabled)) {
-      // allow test using form draft even if not yet enabled — require condition in body
-      if (req.body && req.body.condition) {
-        const normalized = normalizeConditionPayload(req.body.condition);
-        evalTask = { ...task, condition_enabled: 1, condition_json: JSON.stringify(normalized) };
-      }
-    }
-
-    const result = await evaluateTaskCondition(evalTask);
-    // Persist last_* only when testing the task's currently saved condition
-    const testingSaved = !req.body?.condition && !req.body?.condition_json;
-    if (testingSaved && Number(task.condition_enabled)) {
-      db.updateTask(id, {
-        ...task,
-        condition_last_status: result.status || null,
-        condition_last_detail: String(result.detail || '').slice(0, 500) || null,
-        condition_last_checked_at: new Date().toISOString(),
-      });
-    }
-    res.json({ data: result });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Condition test failed' });
-  }
-});
+app.use('/api', createConditionRouter({
+  db,
+  listConditionTypes,
+  parseConditionJson,
+  normalizeConditionPayload,
+  evaluateTaskCondition,
+}));
 
 const TASKS_TEXT_EXTS = new Set([
   '.js', '.py', '.php', '.json', '.txt', '.md', '.env', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.sh', '.css', '.html', '.xml', '.csv',
