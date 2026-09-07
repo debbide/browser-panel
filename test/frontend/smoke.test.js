@@ -23,7 +23,7 @@ test('authenticated startup request sequence remains stable', () => {
     'wireResourceManagers();',
     'refreshAll();',
     'startStatusStream();',
-    'loadSchedulerSettings();',
+    'schedulerController.load();',
     'loadSuccessHeuristicsSettings();',
     'loadBrowserRuntimeSettings();',
     'settingsController.load();',

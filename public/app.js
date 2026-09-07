@@ -1916,6 +1916,14 @@ const backupStorageController = BackupStorageController.create({
   },
 });
 
+const schedulerController = SchedulerController.create({
+  api: SchedulerApi,
+  view: SchedulerView,
+  actions: {
+    load: loadSchedulerSettings,
+  },
+});
+
 function entriesFromParamsObject(params = {}) {
   return Object.entries(params || {})
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
@@ -7171,12 +7179,13 @@ async function bootPanel() {
   wireResourceManagers();
   settingsController.mount();
   backupStorageController.mount();
+  schedulerController.mount();
 
   resetAllModalState();
   closeModal();
   refreshAll();
   startStatusStream();
-  loadSchedulerSettings();
+  schedulerController.load();
   loadSuccessHeuristicsSettings();
   loadBrowserRuntimeSettings();
   settingsController.load();
