@@ -1,0 +1,38 @@
+name: root-ci
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "tasks/woiden_yolo/**"
+      - ".hermes/**"
+  pull_request:
+    paths-ignore:
+      - "tasks/woiden_yolo/**"
+      - ".hermes/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            automa-recorder/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install recorder dependencies
+        run: npm --prefix automa-recorder ci
+
+      - name: Run syntax checks and complete offline suite
+        run: npm run check
