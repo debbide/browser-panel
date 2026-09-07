@@ -19,7 +19,7 @@ test('authenticated startup request sequence remains stable', () => {
   const source = read('public/app.js');
   const order = [
     'wireAuthUi(state.username);',
-    'wireTasksFsUi();',
+    'fileBrowserController.mount();',
     'wireResourceManagers();',
     'refreshAll();',
     'startStatusStream();',
@@ -29,7 +29,7 @@ test('authenticated startup request sequence remains stable', () => {
     'settingsController.load();',
     'loadCloudBackupSettings();',
     'loadCloudBackupList();',
-    'loadTasksFs(fsCurrentPath);',
+    'fileBrowserController.load(fsCurrentPath);',
   ];
   let cursor = source.indexOf('async function bootPanel()');
   for (const statement of order) {

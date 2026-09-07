@@ -1898,6 +1898,15 @@ const settingsController = SettingsController.create({
   },
 });
 
+const fileBrowserController = FileBrowserController.create({
+  api: FileBrowserApi,
+  view: FileBrowserView,
+  actions: {
+    mount: wireTasksFsUi,
+    load: loadTasksFs,
+  },
+});
+
 function entriesFromParamsObject(params = {}) {
   return Object.entries(params || {})
     .filter(([, v]) => v !== null && v !== undefined && v !== '')
@@ -7149,7 +7158,7 @@ async function bootPanel() {
 
   wireAuthUi(state.username);
 
-  wireTasksFsUi();
+  fileBrowserController.mount();
   wireResourceManagers();
   settingsController.mount();
 
@@ -7163,7 +7172,7 @@ async function bootPanel() {
   settingsController.load();
   loadCloudBackupSettings();
   loadCloudBackupList();
-  loadTasksFs(fsCurrentPath);
+  fileBrowserController.load(fsCurrentPath);
 }
 
 bootPanel();
