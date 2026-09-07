@@ -2582,6 +2582,7 @@ function startServer() {
 async function closeCoreServices(reason) {
   console.log(`[shutdown] ${reason}`);
   stopAllJobs();
+  cloudBackup.stopTicker();
   events.closeAll();
   await warpManager.shutdown();
   db.db.close();
