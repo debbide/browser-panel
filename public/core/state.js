@@ -31,5 +31,3 @@ let stoppingTaskIds = new Set();
 let scriptsCache = [];
 let lastRunsByTask = new Map();
 let selectedScriptPath = '';
-let browserSessionOpen = false;
-let browserOpenedAt = null;

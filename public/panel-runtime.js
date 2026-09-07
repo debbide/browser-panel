@@ -786,65 +786,6 @@ function prettyErrorCode(code) {
   return map[code] || code || '';
 }
 
-function renderBrowserControls() {
-  if (openBrowserBtn) {
-    openBrowserBtn.disabled = browserSessionOpen;
-    openBrowserBtn.innerHTML = browserSessionOpen
-      ? '<i data-lucide="monitor-check" class="icon-sm"></i> 已启动'
-      : '<i data-lucide="monitor-play" class="icon-sm"></i> 启动';
-    if (window.lucide) window.lucide.createIcons({ root: openBrowserBtn });
-  }
-  if (closeBrowserBtn) {
-    closeBrowserBtn.disabled = !browserSessionOpen;
-    closeBrowserBtn.innerHTML = browserSessionOpen
-      ? '<i data-lucide="monitor-stop" class="icon-sm"></i> 关闭浏览器'
-      : '<i data-lucide="monitor-off" class="icon-sm"></i> 未启动';
-    if (window.lucide) window.lucide.createIcons({ root: closeBrowserBtn });
-  }
-  if (browserSessionOpen && browserOpenedAt) {
-    addTaskBtn.title = `浏览器已打开：${shortTime(browserOpenedAt)}`;
-  } else {
-    addTaskBtn.title = '';
-  }
-}
-
-async function loadBrowserStatus() {
-  const data = await fetchJson('/api/browser');
-  browserSessionOpen = Boolean(data.data?.open);
-  browserOpenedAt = data.data?.openedAt || null;
-  renderBrowserControls();
-}
-
-async function openBrowserSession() {
-  if (openBrowserBtn) openBrowserBtn.disabled = true;
-  try {
-    const profileId = browserProfileSelect ? browserProfileSelect.value : '';
-    toast('正在启动浏览器…', 'info');
-    await fetchJson('/api/browser/open', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile_id: profileId || null }),
-    });
-    await loadBrowserStatus();
-    toast('浏览器已成功启动（常驻，手动关闭或点「关闭浏览器」）', 'success');
-  } catch (error) {
-    await loadBrowserStatus().catch(() => {});
-    toast(error.message || '浏览器启动失败', 'error');
-  } finally {
-    renderBrowserControls();
-  }
-}
-
-async function closeBrowserSession() {
-  try {
-    await fetchJson('/api/browser/close', { method: 'POST' });
-    await loadBrowserStatus();
-    toast('浏览器会话已安全关闭', 'success');
-  } catch (error) {
-    toast(error.message || '浏览器关闭失败', 'error');
-  }
-}
-
 function openModal(mode = 'create') {
   modal.classList.add('open');
   modalMask.hidden = false;
@@ -2034,8 +1975,19 @@ const schedulerController = SchedulerController.create({
 const browserResourcesController = BrowserResourcesController.create({
   api: BrowserResourcesApi,
   view: BrowserResourcesView,
+  elements: {
+    openBrowserBtn,
+    closeBrowserBtn,
+    addTaskBtn,
+    browserProfileSelect,
+  },
   actions: {
     mount: wireResourceManagers,
+    toast,
+    shortTime,
+    createIcons: (root) => {
+      if (window.lucide) window.lucide.createIcons({ root });
+    },
   },
 });
 
@@ -3999,7 +3951,7 @@ async function refreshAll() {
   await Promise.all([
     loadScripts(),
     loadRuns(),
-    loadBrowserStatus(),
+    browserResourcesController.loadBrowserStatus(),
     loadProfiles(),
     loadTaskGroups(),
   ]);
@@ -4032,7 +3984,7 @@ async function refreshStatus() {
   refreshInFlight = true;
   try {
     // loadRuns 要排在 loadTasks 前面：任务卡片上的"最近一次运行"读的是 runsCache
-    await Promise.all([loadRuns(), loadBrowserStatus()]);
+    await Promise.all([loadRuns(), browserResourcesController.loadBrowserStatus()]);
     await loadTasks();
   } catch {
     // 拉取失败不弹 toast —— 网络抖动会把屏幕刷满。
@@ -4466,9 +4418,7 @@ modalCloseBtn.addEventListener('click', closeModal);
 modalMask.addEventListener('click', closeModal);
 refreshScriptsModalBtn.addEventListener('click', loadScripts);
 addTaskBtn.addEventListener('click', () => { resetAllModalState(); renderScripts(); openModal('create'); });
-openBrowserBtn.addEventListener('click', openBrowserSession);
 if (addProfileBtn) addProfileBtn.addEventListener('click', () => openProfileModal(null));
-closeBrowserBtn.addEventListener('click', closeBrowserSession);
 useScriptBtn.addEventListener('click', () => {
   const script = getSelectedScript();
   if (!script) return;
