@@ -47,6 +47,7 @@ const { createWarpRouter } = require('./warp/routes');
 const cloudBackup = require('./cloud/backup-service');
 const { createCloudBackupRouter } = require('./cloud/routes');
 const { createResourceRouter } = require('./resources/router');
+const { createTaskGroupRouter } = require('./tasks/group-routes');
 const {
   normalizeTaskType,
   slugifyScriptName,
@@ -727,6 +728,7 @@ app.use('/api/profiles-fs', createResourceRouter({
 app.use('/api/warp', createWarpRouter(warpManager));
 // 云端备份快照里含全部密钥（代理凭据、面板账号、WARP），必须挂在 requireAuth 之后。
 app.use('/api/cloud-backup', createCloudBackupRouter(cloudBackup));
+app.use('/api/task-groups', createTaskGroupRouter(db));
 // --- 以下全部需要登录 -------------------------------------------------------
 
 // 状态推送（SSE）。放在鉴权之后，所以未登录连不上；放在 express.static 之前，
@@ -1473,46 +1475,6 @@ app.post('/api/backup/save-assets', (req, res) => {
     res.json({ data: { saved } });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to save assets' });
-  }
-});
-
-app.get('/api/task-groups', (req, res) => {
-  res.json({ data: db.listTaskGroups() });
-});
-
-app.post('/api/task-groups', (req, res) => {
-  try {
-    res.json({ data: db.createTaskGroup((req.body || {}).name) });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to create task group' });
-  }
-});
-
-app.put('/api/task-groups/order', (req, res) => {
-  try {
-    res.json({ data: db.updateTaskGroupOrder((req.body || {}).ids) });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to reorder task groups' });
-  }
-});
-
-app.put('/api/task-groups/:id', (req, res) => {
-  try {
-    const group = db.updateTaskGroup(Number(req.params.id), (req.body || {}).name);
-    if (!group) return res.status(404).json({ message: 'Task group not found' });
-    res.json({ data: group });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to update task group' });
-  }
-});
-
-app.delete('/api/task-groups/:id', (req, res) => {
-  try {
-    const group = db.deleteTaskGroup(Number(req.params.id));
-    if (!group) return res.status(404).json({ message: 'Task group not found' });
-    res.json({ ok: true });
-  } catch (error) {
-    res.status(400).json({ message: error.message || 'Failed to delete task group' });
   }
 });
 
