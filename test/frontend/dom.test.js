@@ -55,7 +55,7 @@ test('task create and update payloads retain task type and script path', () => {
 });
 
 test('settings save keeps JSON endpoint and payload contract', () => {
-  const source = read('public/panel-runtime.js');
+  const source = `${read('public/features/scheduler/api.js')}\n${read('public/panel-runtime.js')}`;
   assert.match(source, /fetchJson\('\/api\/settings\/scheduler'/);
   assert.match(source, /method:\s*'POST'/);
   assert.match(source, /headers:\s*\{ 'Content-Type': 'application\/json' \}/);
