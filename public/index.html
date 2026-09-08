@@ -885,6 +885,14 @@
                 <h4 class="task-section-title">浏览器</h4>
                 <div class="grid single-col">
                   <div>
+                    <label class="field-label" for="task-runtime-kind">任务类型</label>
+                    <select id="task-runtime-kind" name="use_browser" style="width:100%;">
+                      <option value="1" selected>浏览器任务</option>
+                      <option value="0">请求任务</option>
+                    </select>
+                    <p class="schedule-note" style="margin-top:4px;">浏览器任务受全局并行开关限制；请求任务不受浏览器互斥限制。</p>
+                  </div>
+                  <div>
                     <label class="field-label" for="task-profile-mode">数据模式</label>
                     <select id="task-profile-mode" name="profile_mode" style="width:100%;">
                       <option value="temp" selected>临时（推荐）— 每次全新，跑完删除</option>
