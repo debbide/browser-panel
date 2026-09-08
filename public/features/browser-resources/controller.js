@@ -71,8 +71,8 @@
               <div class="profile-card-id">#${p.id}</div>
             </div>
             <div class="row profile-card-actions" style="gap:8px;">
-              <button class="alt btn-with-icon" onclick="editProfile(${p.id})"><i data-lucide="pencil" class="icon-sm"></i> \u7f16\u8f91</button>
-              <button class="alt btn-with-icon profile-btn-danger" onclick="deleteProfile(${p.id})"><i data-lucide="trash-2" class="icon-sm"></i> \u5220\u9664</button>
+              <button type="button" class="alt btn-with-icon" data-profile-edit="${p.id}"><i data-lucide="pencil" class="icon-sm"></i> \u7f16\u8f91</button>
+              <button type="button" class="alt btn-with-icon profile-btn-danger" data-profile-delete="${p.id}"><i data-lucide="trash-2" class="icon-sm"></i> \u5220\u9664</button>
             </div>
           </div>
           <div class="profile-kv-grid">
@@ -99,6 +99,12 @@
           </div>
         </article>
       `).join('');
+      elements.profilesList.querySelectorAll('[data-profile-edit]').forEach((button) => {
+        button.addEventListener('click', () => editProfile(Number(button.dataset.profileEdit)));
+      });
+      elements.profilesList.querySelectorAll('[data-profile-delete]').forEach((button) => {
+        button.addEventListener('click', () => deleteProfile(Number(button.dataset.profileDelete)));
+      });
       if (window.lucide) window.lucide.createIcons({ root: elements.profilesList });
     }
 
@@ -444,7 +450,7 @@
             <div class="files-meta">${entry.type === 'dir' ? '文件夹' : actions.formatBytes(entry.size)}</div>
             <div class="files-mtime">${actions.escapeHtml(actions.formatFsMtime(entry.mtime))}</div>
             <div class="files-actions"></div>`;
-          const actions = row.querySelector('.files-actions');
+          const rowActions = row.querySelector('.files-actions');
           if (entry.type === 'dir') {
             row.addEventListener('click', (event) => {
               if (!event.target.closest('button')) loadResourceManager(kind, entry.path);
@@ -465,7 +471,7 @@
                   actions.toast(error.message || '解压失败', 'error');
                 }
               });
-              actions.appendChild(button);
+              rowActions.appendChild(button);
             }
           }
           const renameButton = global.document.createElement('button');
@@ -483,7 +489,7 @@
               actions.toast(error.message || '重命名失败', 'error');
             }
           });
-          actions.appendChild(renameButton);
+          rowActions.appendChild(renameButton);
           const deleteButton = global.document.createElement('button');
           deleteButton.type = 'button';
           deleteButton.className = 'alt danger';
@@ -500,7 +506,7 @@
               }
             });
           });
-          actions.appendChild(deleteButton);
+          rowActions.appendChild(deleteButton);
           list.appendChild(row);
         }
         if (global.lucide) global.lucide.createIcons({ root: list });

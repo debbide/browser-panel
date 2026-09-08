@@ -52,3 +52,12 @@ test('application entry delegates resource manager startup', () => {
   assert.match(source, /BrowserResourcesController\.create\(/);
   assert.match(source, /browserResourcesController\.mount\(\)/);
 });
+
+test('browser resources bind profile controls locally and avoid action shadowing', () => {
+  const source = read('public/features/browser-resources/controller.js');
+  assert.doesNotMatch(source, /onclick="(?:editProfile|deleteProfile)/);
+  assert.match(source, /data-profile-edit=/);
+  assert.match(source, /data-profile-delete=/);
+  assert.doesNotMatch(source, /const actions = row\.querySelector/);
+  assert.match(source, /const rowActions = row\.querySelector/);
+});

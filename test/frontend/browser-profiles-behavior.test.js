@@ -177,8 +177,8 @@ test('current runtime renders profile options, active selections, cards, and vis
   assert.match(harness.globals.profilesList.textContent, /Firefox/);
   assert.match(harness.globals.profilesList.textContent, /手动代理/);
   assert.match(harness.globals.profilesList.textContent, /Asia\/Shanghai/);
-  assert.match(harness.globals.profilesList.innerHTML, /editProfile\(7\)/);
-  assert.match(harness.globals.profilesList.innerHTML, /deleteProfile\(7\)/);
+  assert.match(harness.globals.profilesList.innerHTML, /data-profile-edit="7"/);
+  assert.match(harness.globals.profilesList.innerHTML, /data-profile-delete="7"/);
 });
 
 test('current runtime loads profiles through the exact API and preserves matching selection', async () => {
