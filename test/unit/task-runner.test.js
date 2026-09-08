@@ -78,3 +78,41 @@ test('runTask contains foreground spawn failures without terminating the panel',
     process.env.PATH = originalPath;
   }
 });
+
+test('runTask falls back to system python when the virtual environment is absent', async () => {
+  const scriptPath = path.join(config.paths.tasksDir, 'runtime-python-fallback.py');
+  const logPath = path.join(config.paths.logsDir, 'runtime-python-fallback.log');
+  fs.writeFileSync(scriptPath, 'print("python-fallback-ok")\n');
+
+  const result = await runTask({
+    id: 9104,
+    name: 'runtime python fallback test',
+    type: 'python',
+    script_path: scriptPath,
+    use_browser: 0,
+    timeout_sec: 30,
+  }, { logPath });
+
+  assert.equal(result.status, 'success');
+  assert.equal(result.exitCode, 0);
+  assert.match(fs.readFileSync(logPath, 'utf8'), /python-fallback-ok/);
+});
+
+test('runTask bounds captured request output while preserving the full log', async () => {
+  const scriptPath = path.join(config.paths.tasksDir, 'runtime-large-output-test.sh');
+  const logPath = path.join(config.paths.logsDir, 'runtime-large-output-test.log');
+  fs.writeFileSync(scriptPath, '#!/bin/sh\nyes x | head -c 2097152\nprintf "request-complete\\n"\n');
+
+  const result = await runTask({
+    id: 9104,
+    name: 'runtime large output test',
+    type: 'shell',
+    script_path: scriptPath,
+    use_browser: 0,
+    timeout_sec: 30,
+  }, { logPath });
+
+  assert.equal(result.status, 'success');
+  assert.ok(fs.statSync(logPath).size > 2 * 1024 * 1024);
+  assert.match(fs.readFileSync(logPath, 'utf8'), /request-complete/);
+});

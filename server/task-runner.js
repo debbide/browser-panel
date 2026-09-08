@@ -18,6 +18,7 @@ const { ingestTaskResultCallback } = require('./runtime/callback-report');
 const logStream = require('./log-stream');
 
 const activeChildren = new Map();
+const FOREGROUND_OUTPUT_MEMORY_LIMIT = 1024 * 1024;
 
 fs.mkdirSync(config.paths.logsDir, { recursive: true });
 fs.mkdirSync(config.paths.screenshotsDir, { recursive: true });
@@ -580,7 +581,8 @@ function buildEnv(task, screenshotPath) {
 
 function getCommand(task) {
   if (task.type === 'python') {
-    return { cmd: path.join(config.paths.root, '.venv', 'bin', 'python'), args: [task.script_path] };
+    const virtualEnvPython = path.join(config.paths.root, '.venv', 'bin', 'python');
+    return { cmd: fs.existsSync(virtualEnvPython) ? virtualEnvPython : 'python3', args: [task.script_path] };
   }
   if (task.type === 'php') {
     return { cmd: 'php', args: [task.script_path] };
@@ -589,6 +591,11 @@ function getCommand(task) {
     return { cmd: 'bash', args: [task.script_path] };
   }
   return { cmd: 'node', args: [task.script_path] };
+}
+
+function appendOutputTail(current, chunk, limit = FOREGROUND_OUTPUT_MEMORY_LIMIT) {
+  const combined = current + chunk;
+  return combined.length > limit ? combined.slice(-limit) : combined;
 }
 
 function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
@@ -628,13 +635,13 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
 
     child.stdout.on('data', chunk => {
       const text = chunk.toString();
-      stdoutText += text;
+      stdoutText = appendOutputTail(stdoutText, text);
       tracker.ingest('stdout', text);
       lineWriter.write(text);
     });
     child.stderr.on('data', chunk => {
       const text = chunk.toString();
-      stderrText += text;
+      stderrText = appendOutputTail(stderrText, text);
       tracker.ingest('stderr', text);
       lineWriter.write(text);
     });
@@ -645,7 +652,10 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
       clearTimeout(timer);
       activeChildren.delete(task.id);
       if (spawnError) {
-        stderrText += `${stderrText ? '\n' : ''}${spawnError.message}`;
+        stderrText = appendOutputTail(
+          stderrText,
+          `${stderrText ? '\n' : ''}${spawnError.message}`
+        );
         lineWriter.write(`${spawnError.message}\n`);
       }
       lineWriter.flush();
