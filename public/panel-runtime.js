@@ -207,40 +207,8 @@ const TIMEZONE_PRESETS = [
   'UTC', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin',
 ];
 
-function setupPresetCustomControl(selectEl, inputEl, value = '', onChange) {
-  if (!selectEl || !inputEl) return;
-  const raw = String(value || '').trim();
-  const known = Array.from(selectEl.options).some((option) => option.value === raw);
-  selectEl.value = raw && known ? raw : (raw ? '__custom__' : '');
-  inputEl.value = raw && !known ? raw : '';
-  inputEl.hidden = selectEl.value !== '__custom__';
-  inputEl.disabled = selectEl.value !== '__custom__';
-  if (onChange !== undefined) selectEl._presetCustomOnChange = onChange;
-  if (!selectEl.dataset.presetCustomBound) {
-    selectEl.addEventListener('change', () => {
-      const custom = selectEl.value === '__custom__';
-      inputEl.hidden = !custom;
-      inputEl.disabled = !custom;
-      if (!custom) inputEl.value = '';
-      if (typeof selectEl._presetCustomOnChange === 'function') {
-        selectEl._presetCustomOnChange();
-      }
-    });
-    inputEl.addEventListener('input', () => {
-      if (typeof selectEl._presetCustomOnChange === 'function') {
-        selectEl._presetCustomOnChange();
-      }
-    });
-    selectEl.dataset.presetCustomBound = '1';
-  }
-}
-
-function getPresetCustomValue(selectEl, inputEl) {
-  if (!selectEl) return '';
-  return selectEl.value === '__custom__'
-    ? String(inputEl?.value || '').trim()
-    : String(selectEl.value || '').trim();
-}
+const setupPresetCustomControl = PresetCustomControl.setup;
+const getPresetCustomValue = PresetCustomControl.getValue;
 
 const {
   PROXY_ENV_ALIAS_KEYS,
