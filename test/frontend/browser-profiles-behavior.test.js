@@ -108,6 +108,10 @@ function createHarness({ responses = [] } = {}) {
   context.window.window = context.window;
   vm.runInContext(read('public/features/browser-resources/controller.js'), context);
   const api = {
+    resourceFilesystems: {
+      extensions: { api: '/api/extensions-fs', rootLabel: '/home/browser/browser-work/' },
+      profiles: { api: '/api/profiles-fs', rootLabel: 'profiles/' },
+    },
     listProfiles: () => globals.fetchJson('/api/browser-profiles'),
     loadProfileEnv: (id) => globals.fetchJson(`/api/browser-profiles/${id}/env`),
     createProfile: (body) => globals.fetchJson('/api/browser-profiles', {

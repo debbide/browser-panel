@@ -26,6 +26,30 @@
       ...json(body),
     }),
     deleteProfile: (id) => global.fetchJson(`/api/browser-profiles/${id}`, { method: 'DELETE' }),
+    listResourceEntries(kind, dir = '') {
+      const config = this.resourceFilesystems[kind];
+      if (!config) return Promise.resolve({ data: { entries: [] } });
+      const suffix = dir ? `?path=${encodeURIComponent(dir)}` : '';
+      return global.fetchJson(`${config.api}${suffix}`);
+    },
+    resourceAction(kind, path, action, extra = {}) {
+      const config = this.resourceFilesystems[kind];
+      return global.fetchJson(`${config.api}/${action}`, {
+        method: 'POST',
+        ...json({ path, ...extra }),
+      });
+    },
+    deleteResourceEntry(kind, path) {
+      const config = this.resourceFilesystems[kind];
+      return global.fetchJson(config.api, { method: 'DELETE', ...json({ path }) });
+    },
+    createResourceDirectory(kind, parent, name) {
+      const config = this.resourceFilesystems[kind];
+      return global.fetchJson(`${config.api}/mkdir`, {
+        method: 'POST',
+        ...json({ parent, name }),
+      });
+    },
     resourceFilesystems: {
       extensions: { api: '/api/extensions-fs', rootLabel: '/home/browser/browser-work/' },
       profiles: { api: '/api/profiles-fs', rootLabel: 'profiles/' },

@@ -567,8 +567,8 @@ function activateAppTab(targetId, { focus = false } = {}) {
   if (focus) btn.focus();
 
   if (targetId === 'scripts-tab') fileBrowserController.load();
-  if (targetId === 'extensions-tab') loadResourceManager('extensions');
-  if (targetId === 'profile-files-tab') loadResourceManager('profiles');
+  if (targetId === 'extensions-tab') browserResourcesController.loadResourceManager('extensions');
+  if (targetId === 'profile-files-tab') browserResourcesController.loadResourceManager('profiles');
   if (targetId === 'warp-tab') loadWarpStatus();
   if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
     window.__onConfigTabShow();
@@ -1930,6 +1930,10 @@ const backupStorageController = BackupStorageController.create({
     },
     createIcons: (root) => window.lucide?.createIcons(root ? { root } : undefined),
     toast,
+    goLogin,
+    formatBytes,
+    formatFsMtime,
+    promptFsName,
     dialogPassphrase,
     dialogPassphraseOnce,
     fetch: window.fetch.bind(window),
@@ -1986,7 +1990,6 @@ const browserResourcesController = BrowserResourcesController.create({
     addProfileBtn,
   },
   actions: {
-    mount: wireResourceManagers,
     toast,
     shortTime,
     escapeHtml,
@@ -4767,263 +4770,6 @@ if (globalEnvSaveBtn) {
       toast(error.message || '保存失败', 'error');
     }
   });
-}
-
-/* ========== 插件与用户目录文件管理 ========== */
-const resourceManagerState = {
-  extensions: { path: '', api: '/api/extensions-fs', rootLabel: '/home/browser/browser-work/' },
-  profiles: { path: '', api: '/api/profiles-fs', rootLabel: 'profiles/' },
-};
-
-function getResourceManager(kind) {
-  const root = document.querySelector(`.resource-manager[data-resource="${kind}"]`);
-  const state = resourceManagerState[kind];
-  return root && state ? { root, state } : null;
-}
-
-function uploadResourceChunk(url, chunk, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', url);
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    xhr.responseType = 'json';
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable && typeof onProgress === 'function') {
-        onProgress(event.loaded, event.total);
-      }
-    });
-    xhr.addEventListener('load', () => {
-      const data = xhr.response || {};
-      if (xhr.status === 401) {
-        goLogin();
-        reject(new Error('会话已失效，正在跳转登录页'));
-        return;
-      }
-      if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(data.message || `上传失败（HTTP ${xhr.status}）`));
-        return;
-      }
-      resolve(data);
-    });
-    xhr.addEventListener('error', () => reject(new Error('网络错误，上传失败')));
-    xhr.addEventListener('abort', () => reject(new Error('上传已取消')));
-    xhr.send(chunk);
-  });
-}
-
-async function uploadResourceFile(url, file, onProgress) {
-  const chunkSize = 5 * 1024 * 1024;
-  const chunkCount = Math.max(1, Math.ceil(file.size / chunkSize));
-  const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  let result = null;
-
-  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-    const start = chunkIndex * chunkSize;
-    const end = Math.min(file.size, start + chunkSize);
-    const chunk = file.slice(start, end);
-    const query = new URLSearchParams({
-      uploadId,
-      chunkIndex: String(chunkIndex),
-      chunkCount: String(chunkCount),
-    });
-    const chunkUrl = `${url}&${query}`;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        result = await uploadResourceChunk(chunkUrl, chunk, (loaded) => {
-          if (typeof onProgress === 'function') onProgress(start + loaded, file.size);
-        });
-        lastError = null;
-        break;
-      } catch (error) {
-        lastError = error;
-        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
-      }
-    }
-    if (lastError) throw lastError;
-    if (typeof onProgress === 'function') onProgress(end, file.size);
-  }
-  return result;
-}
-
-async function resourceAction(kind, path, action, extra = {}) {
-  const manager = getResourceManager(kind);
-  if (!manager) return;
-  await fetchJson(`${manager.state.api}/${action}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, ...extra }),
-  });
-  await loadResourceManager(kind);
-}
-
-async function loadResourceManager(kind, dir) {
-  const manager = getResourceManager(kind);
-  if (!manager) return;
-  const { root, state } = manager;
-  if (dir !== undefined) state.path = String(dir || '').replace(/^\/+|\/+$/g, '');
-  const list = root.querySelector('.resource-list');
-  const breadcrumb = root.querySelector('.resource-breadcrumb');
-  breadcrumb.innerHTML = `<code>${escapeHtml(state.rootLabel)}${escapeHtml(state.path)}${state.path ? '/' : ''}</code>`;
-  list.innerHTML = '<div class="files-list-empty">加载中…</div>';
-  try {
-    const suffix = state.path ? `?path=${encodeURIComponent(state.path)}` : '';
-    const response = await fetchJson(`${state.api}${suffix}`);
-    const entries = response.data?.entries || [];
-    if (!entries.length) {
-      list.innerHTML = '<div class="files-list-empty">空目录</div>';
-      return;
-    }
-    list.innerHTML = `<div class="files-row files-row-head"><span></span><div class="files-name">名称</div><div class="files-meta">大小</div><div class="files-mtime">修改时间</div><div class="files-actions"></div></div>`;
-    for (const entry of entries) {
-      const row = document.createElement('div');
-      row.className = `files-row ${entry.type === 'dir' ? 'is-dir' : ''}`;
-      row.innerHTML = `
-        <i data-lucide="${entry.type === 'dir' ? 'folder' : (entry.archive ? 'file-archive' : 'file')}" class="icon-sm"></i>
-        <div class="files-name" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</div>
-        <div class="files-meta">${entry.type === 'dir' ? '文件夹' : formatBytes(entry.size)}</div>
-        <div class="files-mtime">${escapeHtml(formatFsMtime(entry.mtime))}</div>
-        <div class="files-actions"></div>`;
-      const actions = row.querySelector('.files-actions');
-      if (entry.type === 'dir') {
-        row.addEventListener('click', (event) => {
-          if (!event.target.closest('button')) loadResourceManager(kind, entry.path);
-        });
-      }
-      if (entry.archive) {
-        for (const [label, mode] of [['解压到当前目录', 'current'], ['解压到同名目录', 'folder']]) {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'alt';
-          button.textContent = label;
-          button.addEventListener('click', async (event) => {
-            event.stopPropagation();
-            try {
-              await resourceAction(kind, entry.path, 'extract', { mode, overwrite: false });
-              toast('解压完成', 'success');
-            } catch (error) {
-              toast(error.message || '解压失败', 'error');
-            }
-          });
-          actions.appendChild(button);
-        }
-      }
-      const renameButton = document.createElement('button');
-      renameButton.type = 'button';
-      renameButton.className = 'alt';
-      renameButton.textContent = '重命名';
-      renameButton.addEventListener('click', async (event) => {
-        event.stopPropagation();
-        const newName = await promptFsName('重命名', entry.name);
-        if (!newName || newName === entry.name) return;
-        try {
-          await resourceAction(kind, entry.path, 'rename', { newName });
-          toast('已重命名', 'success');
-        } catch (error) {
-          toast(error.message || '重命名失败', 'error');
-        }
-      });
-      actions.appendChild(renameButton);
-      const deleteButton = document.createElement('button');
-      deleteButton.type = 'button';
-      deleteButton.className = 'alt danger';
-      deleteButton.textContent = '删除';
-      deleteButton.addEventListener('click', (event) => {
-        event.stopPropagation();
-        dialogConfirm(`确定删除「${entry.name}」？${entry.type === 'dir' ? ' 文件夹内容也会一并删除。' : ''}`, async () => {
-          try {
-            await fetchJson(state.api, {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ path: entry.path }),
-            });
-            toast('已删除', 'success');
-            await loadResourceManager(kind);
-          } catch (error) {
-            toast(error.message || '删除失败', 'error');
-          }
-        });
-      });
-      actions.appendChild(deleteButton);
-      list.appendChild(row);
-    }
-    if (window.lucide) window.lucide.createIcons({ root: list });
-  } catch (error) {
-    list.innerHTML = `<div class="files-list-empty">${escapeHtml(error.message || '加载失败')}</div>`;
-  }
-}
-
-function wireResourceManagers() {
-  for (const kind of Object.keys(resourceManagerState)) {
-    const manager = getResourceManager(kind);
-    if (!manager) continue;
-    const { root, state } = manager;
-    root.querySelector('.resource-up')?.addEventListener('click', () => {
-      const parts = state.path.split('/').filter(Boolean);
-      parts.pop();
-      loadResourceManager(kind, parts.join('/'));
-    });
-    root.querySelector('.resource-refresh')?.addEventListener('click', () => loadResourceManager(kind));
-    root.querySelector('.resource-mkdir')?.addEventListener('click', async () => {
-      const name = await promptFsName('新建文件夹', 'folder-name');
-      if (!name) return;
-      try {
-        await fetchJson(`${state.api}/mkdir`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ parent: state.path, name }),
-        });
-        toast('文件夹已创建', 'success');
-        await loadResourceManager(kind);
-      } catch (error) {
-        toast(error.message || '创建失败', 'error');
-      }
-    });
-    const uploadButton = root.querySelector('.resource-upload');
-    const uploadInput = root.querySelector('.resource-upload-input');
-    const progressBox = root.querySelector('.resource-upload-progress');
-    const progressText = root.querySelector('.resource-upload-progress-text');
-    const progressPercent = root.querySelector('.resource-upload-progress-percent');
-    const progressMeter = root.querySelector('.resource-upload-progress-meter');
-    uploadButton?.addEventListener('click', () => uploadInput?.click());
-    uploadInput?.addEventListener('change', async () => {
-      const file = uploadInput.files?.[0];
-      uploadInput.value = '';
-      if (!file) return;
-      try {
-        uploadButton.disabled = true;
-        if (progressBox) progressBox.hidden = false;
-        if (progressMeter) progressMeter.value = 0;
-        if (progressPercent) progressPercent.textContent = '0%';
-        if (progressText) progressText.textContent = `${file.name} · 0 B / ${formatBytes(file.size)}`;
-        const query = new URLSearchParams({
-          parent: state.path,
-          name: file.name,
-          overwrite: 'false',
-        });
-        await uploadResourceFile(`${state.api}/upload?${query}`, file, (loaded, total) => {
-          const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
-          if (progressMeter) progressMeter.value = percent;
-          if (progressPercent) progressPercent.textContent = `${percent}%`;
-          if (progressText) progressText.textContent = `${file.name} · ${formatBytes(loaded)} / ${formatBytes(total)}`;
-        });
-        if (progressMeter) progressMeter.value = 100;
-        if (progressPercent) progressPercent.textContent = '100%';
-        if (progressText) progressText.textContent = `${file.name} · 上传完成`;
-        toast('上传完成', 'success');
-        await loadResourceManager(kind);
-      } catch (error) {
-        if (progressText) progressText.textContent = `${file.name} · ${error.message || '上传失败'}`;
-        toast(error.message || '上传失败', 'error');
-      } finally {
-        uploadButton.disabled = false;
-        window.setTimeout(() => {
-          if (progressBox) progressBox.hidden = true;
-        }, 2500);
-      }
-    });
-  }
 }
 
 // ---------------------------------------------------------------------------

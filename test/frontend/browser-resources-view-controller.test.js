@@ -20,7 +20,16 @@ test('browser resources view exposes stable rendering boundaries', () => {
 test('browser resources controller exposes idempotent lifecycle and load', () => {
   const controller = loadModule('public/features/browser-resources/controller.js', 'BrowserResourcesController');
   assert.equal(typeof controller.create, 'function');
-  const instance = controller.create({ api: {}, view: {}, actions: {} });
+  const instance = controller.create({
+    api: {
+      resourceFilesystems: {
+        extensions: { api: '/api/extensions-fs', rootLabel: '/home/browser/browser-work/' },
+        profiles: { api: '/api/profiles-fs', rootLabel: 'profiles/' },
+      },
+    },
+    view: {},
+    actions: {},
+  });
   assert.equal(typeof instance.mount, 'function');
   assert.equal(typeof instance.unmount, 'function');
   assert.equal(typeof instance.load, 'function');
