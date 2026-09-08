@@ -18,7 +18,7 @@ test('boot checks authentication before panel requests', () => {
 test('authenticated startup request sequence remains stable', () => {
   const source = read('public/panel-runtime.js');
   const order = [
-    'wireAuthUi(state.username);',
+    'authUi.wire(state.username);',
     'fileBrowserController.mount();',
     'browserResourcesController.mount();',
     'refreshAll();',

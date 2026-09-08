@@ -361,7 +361,20 @@ test('legacy task edit restores profile mode and selected profile with missing-p
   };
   const globals = {
     form,
-    TasksModel: { resolveTaskType: (_path, type) => type },
+    TasksModel: {
+      parseParamsJson(raw) {
+        if (!raw) return {};
+        if (typeof raw === 'object' && !Array.isArray(raw)) return { ...raw };
+        try {
+          const parsed = JSON.parse(String(raw));
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+          return {};
+        }
+      },
+      resolveTaskType: (_path, type) => type,
+    },
+    window: {},
     isHost2PlayScript: () => false,
     parseTaskSchedule: () => ({
       enabled: true, mode: '', fixedDays: '', fixedHours: '', fixedMinutes: '',
@@ -384,6 +397,7 @@ test('legacy task edit restores profile mode and selected profile with missing-p
     findManagedParamValue: loadManagedEnvironment().findManagedParamValue,
     taskEnvEditor: { setRows() {} },
   };
+  globals.window.TasksModel = globals.TasksModel;
   const { fillTaskForm } = evaluateFunctions([
     'parseParamsJson',
     'syncTaskParamsUI',

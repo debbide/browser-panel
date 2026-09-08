@@ -104,7 +104,7 @@ test('settings static scripts preserve api view controller runtime app order', (
 });
 
 test('vision settings freeze card, dropdown and modal DOM contracts before extraction', () => {
-  const source = `${read('public/features/settings/controller.js')}\n${read('public/panel-runtime.js')}`;
+  const source = `${read('public/features/settings/controller.js')}\n${read('public/features/vision-settings/ui.js')}\n${read('public/panel-runtime.js')}`;
   for (const selector of [
     'vision-channel-card',
     'vision-channel-row',
@@ -134,7 +134,8 @@ test('vision settings freeze card, dropdown and modal DOM contracts before extra
 test('vision settings freeze selection state and event binding contracts before extraction', () => {
   const runtime = read('public/panel-runtime.js');
   const controller = read('public/features/settings/controller.js');
-  const source = `${controller}\n${runtime}`;
+  const visionUi = read('public/features/vision-settings/ui.js');
+  const source = `${controller}\n${visionUi}\n${runtime}`;
   assert.match(source, /const visionModelCache = new Map\(\)/);
   assert.match(source, /document\.addEventListener\('mousedown', visionDropdownOutsideHandler, true\)/);
   assert.match(source, /document\.addEventListener\('keydown', visionDropdownKeyHandler, true\)/);

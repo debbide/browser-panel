@@ -52,5 +52,5 @@ test('filesystem presentation helpers have one implementation boundary', () => {
   const source = files.map(read).join('\n');
   assert.equal((source.match(/function formatFsMtime\(/g) || []).length, 1);
   assert.equal((source.match(/function promptFsName\(/g) || []).length, 1);
-  assert.equal((source.match(/function formatBytes\(/g) || []).length, 2);
+  assert.equal((source.match(/function formatBytes\(/g) || []).length, 1);
 });

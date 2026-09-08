@@ -57,11 +57,13 @@ test('resource manager state belongs only to browser-resources controller', () =
 
 test('resource navigation has one controller-owned binding path and static scripts load in order', () => {
   const runtime = read('public/panel-runtime.js');
+  const navigation = read('public/core/app-navigation.js');
   const controller = read('public/features/browser-resources/controller.js');
   const html = read('public/index.html');
 
   assert.equal((runtime.match(/function loadResourceManager\s*\(/g) || []).length, 0);
-  assert.equal((runtime.match(/browserResourcesController\.loadResourceManager\(/g) || []).length, 2);
+  assert.equal((runtime.match(/browserResourcesController\.loadResourceManager\(/g) || []).length, 1);
+  assert.equal((navigation.match(/loadBrowserResource\(/g) || []).length, 2);
   assert.equal((controller.match(/querySelector\('\.resource-refresh'\)\?\.addEventListener\('click'/g) || []).length, 1);
   assert.equal((controller.match(/querySelector\('\.resource-up'\)\?\.addEventListener\('click'/g) || []).length, 1);
   assert.equal((controller.match(/querySelector\('\.resource-mkdir'\)\?\.addEventListener\('click'/g) || []).length, 1);

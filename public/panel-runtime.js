@@ -1,205 +1,10 @@
-// 会话失效时统一跳登录页。用一个标记挡住并发请求 —— 面板启动时会同时打十几个
-// 接口，401 一起回来的话会连着 replace 十几次，浏览器历史被塞满。
-let redirectingToLogin = false;
+const { fetchJson, goLogin } = SessionApi;
 
-function goLogin() {
-  if (redirectingToLogin) return;
-  redirectingToLogin = true;
-  const next = location.pathname + location.search;
-  const suffix = next && next !== '/' ? `?next=${encodeURIComponent(next)}` : '';
-  location.replace(`/login.html${suffix}`);
-}
+const { dialogPassphrase, dialogPassphraseOnce } = UiFeedback;
+const { copyText } = Clipboard;
+const { classifyShotKind, formatBytes, indexLatestRunsByTask, logLineClass, prettyErrorCode } = RunPresentation;
+const { toast, dialogConfirm } = window;
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
-  // 401 一律跳登录页。这里必须在 content-type 检查之前拦 —— 服务端给 /api/* 回的是
-  // JSON，但真要漏到下面就会被当成普通业务错误弹 toast，用户看不出是掉登录了。
-  if (res.status === 401) {
-    goLogin();
-    throw new Error('会话已失效，正在跳转登录页');
-  }
-  const contentType = res.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    const text = await res.text();
-    const looksLikeHtml = /^\s*<!doctype html/i.test(text) || /^\s*<html/i.test(text);
-    if (looksLikeHtml) {
-      throw new Error(`接口 ${url} 返回了页面内容，后端路由可能异常`);
-    }
-    throw new Error(`接口 ${url} 返回了非 JSON 响应`);
-  }
-
-  const data = await res.json();
-  if (!res.ok) {
-    const message = String(data.message || '请求失败');
-    const output = data.output ? `\n${String(data.output).slice(-1200)}` : '';
-    throw new Error(`${message}${output}`);
-  }
-  return data;
-}
-
-window.toast = function(msg, type = 'info') {
-  let container = document.getElementById('toast-container');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'toast-container';
-    document.body.appendChild(container);
-  }
-
-  const el = document.createElement('div');
-  el.className = `toast toast-${type}`;
-  let icon = 'info';
-  if (type === 'success') icon = 'check-circle';
-  if (type === 'error') icon = 'alert-triangle';
-  if (type === 'warn') icon = 'alert-circle';
-
-  el.innerHTML = `<i data-lucide="${icon}" class="icon-sm"></i> <span>${escapeHtml(msg)}</span>`;
-  container.appendChild(el);
-  if (window.lucide) window.lucide.createIcons({ root: el });
-
-  setTimeout(() => {
-    el.classList.add('toast-fade-out');
-    el.addEventListener('animationend', () => el.remove());
-  }, 4000);
-};
-
-window.dialogConfirm = function(msg, onConfirm) {
-  const mask = document.createElement('div');
-  mask.className = 'modal-mask open';
-  mask.style.zIndex = '9999';
-
-  const dialog = document.createElement('div');
-  dialog.className = 'modal open';
-  dialog.style.alignItems = 'center';
-  dialog.style.justifyContent = 'center';
-  dialog.style.zIndex = '10000';
-  dialog.innerHTML = `
-    <div class="modal-panel" style="max-width: 320px; width: 100%; text-align: center; padding: 24px;">
-      <div style="color: var(--accent-color); margin-bottom: 16px;"><i data-lucide="help-circle" style="width: 48px; height: 48px;"></i></div>
-      <h3 style="margin-bottom: 8px;">操作确认</h3>
-      <p class="muted" style="margin-bottom: 24px;">${escapeHtml(msg)}</p>
-      <div class="row" style="justify-content: center;">
-        <button id="cd-cancel" class="alt">取消</button>
-        <button id="cd-confirm" style="background: #ef4444; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);">确定</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(mask);
-  document.body.appendChild(dialog);
-  if (window.lucide) window.lucide.createIcons({ root: dialog });
-
-  const close = () => { mask.remove(); dialog.remove(); };
-  dialog.querySelector('#cd-cancel').addEventListener('click', close);
-  dialog.querySelector('#cd-confirm').addEventListener('click', () => { close(); onConfirm(); });
-};
-
-function dialogPassphrase(msg, onConfirm, allowEmpty = false) {
-  const mask = document.createElement('div');
-  mask.className = 'modal-mask open';
-  mask.style.zIndex = '9999';
-
-  const dialog = document.createElement('div');
-  dialog.className = 'modal open';
-  dialog.style.alignItems = 'center';
-  dialog.style.justifyContent = 'center';
-  dialog.style.zIndex = '10000';
-  dialog.innerHTML = `
-    <div class="modal-panel" style="max-width: 360px; width: 100%; padding: 24px;">
-      <h3 style="margin-bottom: 8px;">设置密码</h3>
-      <p class="muted" style="margin-bottom: 16px;">${escapeHtml(msg)}</p>
-      <label style="display:block; margin-bottom:4px; font-size:0.85em; font-weight:600;">密码</label>
-      <input id="bp-pp-input" type="password" autocomplete="off" placeholder="输入密码" style="width:100%; box-sizing:border-box; margin-bottom:8px;" />
-      <label style="display:block; margin-bottom:4px; font-size:0.85em; font-weight:600;">确认密码</label>
-      <input id="bp-pp-confirm" type="password" autocomplete="off" placeholder="再次输入" style="width:100%; box-sizing:border-box; margin-bottom:18px;" />
-      <p id="bp-pp-error" class="muted" style="color:#ef4444; margin-bottom:12px; display:none;"></p>
-      <div class="row" style="justify-content: flex-end;">
-        <button id="bp-pp-cancel" class="alt">取消</button>
-        <button id="bp-pp-confirm-btn">确定</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(mask);
-  document.body.appendChild(dialog);
-  if (window.lucide) window.lucide.createIcons({ root: dialog });
-
-  const input = dialog.querySelector('#bp-pp-input');
-  const confirm = dialog.querySelector('#bp-pp-confirm');
-  const error = dialog.querySelector('#bp-pp-error');
-  const close = () => { mask.remove(); dialog.remove(); };
-
-  const validate = () => {
-    const pw = input.value;
-    const pw2 = confirm.value;
-    if (!allowEmpty && !pw.trim()) return '密码不能为空';
-    if (!allowEmpty && pw.length < 8) return '密码至少需要 8 个字符';
-    if (pw !== pw2) return '两次输入的密码不一致';
-    return null;
-  };
-
-  dialog.querySelector('#bp-pp-cancel').addEventListener('click', close);
-  dialog.querySelector('#bp-pp-confirm-btn').addEventListener('click', () => {
-    const err = validate();
-    if (err) { error.textContent = err; error.style.display = 'block'; return; }
-    close();
-    onConfirm(input.value || null);
-  });
-
-  // Enter in either field submits
-  const submit = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const err = validate();
-      if (err) { error.textContent = err; error.style.display = 'block'; return; }
-      close();
-      onConfirm(input.value || null);
-    }
-  };
-  input.addEventListener('keydown', submit);
-  confirm.addEventListener('keydown', submit);
-  // Focus first input
-  setTimeout(() => input.focus(), 100);
-}
-
-window.dialogPassphrase = dialogPassphrase;
-
-/** 导入用：只问一次密码，不需要确认输入（错了会被解密直接顶回来）。 */
-function dialogPassphraseOnce(msg, onConfirm) {
-  const mask = document.createElement('div');
-  mask.className = 'modal-mask open';
-  mask.style.zIndex = '9999';
-
-  const dialog = document.createElement('div');
-  dialog.className = 'modal open';
-  dialog.style.alignItems = 'center';
-  dialog.style.justifyContent = 'center';
-  dialog.style.zIndex = '10000';
-  dialog.innerHTML = `
-    <div class="modal-panel" style="max-width: 360px; width: 100%; padding: 24px;">
-      <h3 style="margin-bottom: 8px;">输入密码</h3>
-      <p class="muted" style="margin-bottom: 16px;">${escapeHtml(msg)}</p>
-      <input id="bp-pp1-input" type="password" autocomplete="off" placeholder="导出时设置的密码" style="width:100%; box-sizing:border-box; margin-bottom:18px;" />
-      <p id="bp-pp1-error" class="muted" style="color:#ef4444; margin-bottom:12px; display:none;"></p>
-      <div class="row" style="justify-content: flex-end;">
-        <button id="bp-pp1-cancel" class="alt">取消</button>
-        <button id="bp-pp1-ok">确定</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(mask);
-  document.body.appendChild(dialog);
-
-  const input = dialog.querySelector('#bp-pp1-input');
-  const error = dialog.querySelector('#bp-pp1-error');
-  const close = () => { mask.remove(); dialog.remove(); };
-  const go = () => {
-    if (!input.value) { error.textContent = '密码不能为空'; error.style.display = 'block'; return; }
-    close();
-    onConfirm(input.value);
-  };
-  dialog.querySelector('#bp-pp1-cancel').addEventListener('click', close);
-  dialog.querySelector('#bp-pp1-ok').addEventListener('click', go);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
-  setTimeout(() => input.focus(), 100);
-}
 
 const LOCALE_PRESETS = ['zh-CN', 'zh-TW', 'en-US', 'en-GB', 'ja-JP', 'ko-KR'];
 const TIMEZONE_PRESETS = [
@@ -400,121 +205,11 @@ const conditionCallbackStatusText = document.getElementById('condition-callback-
 const conditionTestBtn = document.getElementById('condition-test-btn');
 const conditionLastStatusText = document.getElementById('condition-last-status-text');
 
-const tabBtns = Array.from(document.querySelectorAll('.tab-btn'));
-const tabContents = Array.from(document.querySelectorAll('.tab-content'));
-const appShell = document.getElementById('app-shell');
-const appSidebar = document.getElementById('app-sidebar');
-const appNavToggle = document.getElementById('app-nav-toggle');
-const appNavMask = document.getElementById('app-nav-mask');
-const workspaceTitle = document.getElementById('workspace-title');
-const workspaceSubtitle = document.getElementById('workspace-subtitle');
-const workspaceHeaderActions = Array.from(document.querySelectorAll('[data-header-actions-for]'));
-const mobileNavQuery = window.matchMedia('(max-width: 900px)');
-
-const tabMeta = {
-  'tasks-tab': ['Dashboard', '管理任务、运行状态与手动浏览器。'],
-  'profiles-tab': ['Browser Profiles', '维护独立的浏览器数据与代理配置。'],
-  'scripts-tab': ['Script Management', '管理任务脚本、目录与上传文件。'],
-  'extensions-tab': ['插件管理', '上传、解压和管理浏览器插件目录。'],
-  'profile-files-tab': ['用户目录', '管理浏览器用户数据目录与压缩包。'],
-  'warp-tab': ['Cloudflare WARP', '管理 WARP 连接与双栈出口。'],
-  'notifications-tab': ['TG Notifications', '配置 Telegram 通知与测试消息。'],
-  'config-tab': ['Global Settings', '查找并调整面板级运行设置。'],
-};
-
-function syncAppSidebarAccessibility() {
-  if (!appSidebar) return;
-  const drawerOpen = appShell?.classList.contains('is-nav-open');
-  appSidebar.inert = mobileNavQuery.matches && !drawerOpen;
-  appSidebar.setAttribute('aria-hidden', mobileNavQuery.matches && !drawerOpen ? 'true' : 'false');
-}
-
-function closeAppNav({ restoreFocus = false } = {}) {
-  if (!appShell || !appNavToggle || !appNavMask) return;
-  appShell.classList.remove('is-nav-open');
-  document.body.classList.remove('app-nav-open');
-  appNavMask.hidden = true;
-  appNavToggle.setAttribute('aria-expanded', 'false');
-  appNavToggle.setAttribute('aria-label', '打开主导航');
-  syncAppSidebarAccessibility();
-  if (restoreFocus) appNavToggle.focus();
-}
-
-function openAppNav() {
-  if (!appShell || !appNavToggle || !appNavMask) return;
-  appShell.classList.add('is-nav-open');
-  document.body.classList.add('app-nav-open');
-  appNavMask.hidden = false;
-  appNavToggle.setAttribute('aria-expanded', 'true');
-  appNavToggle.setAttribute('aria-label', '关闭主导航');
-  syncAppSidebarAccessibility();
-  const selected = tabBtns.find((btn) => btn.getAttribute('aria-selected') === 'true');
-  requestAnimationFrame(() => selected?.focus());
-}
-
-function activateAppTab(targetId, { focus = false } = {}) {
-  const btn = tabBtns.find((item) => item.getAttribute('data-tab') === targetId);
-  const panel = document.getElementById(targetId);
-  if (!btn || !panel) return;
-
-  tabBtns.forEach((item) => {
-    const selected = item === btn;
-    item.classList.toggle('active', selected);
-    item.setAttribute('aria-selected', selected ? 'true' : 'false');
-    item.tabIndex = selected ? 0 : -1;
-  });
-  tabContents.forEach((content) => {
-    const selected = content === panel;
-    content.classList.toggle('active', selected);
-    content.hidden = !selected;
-    content.setAttribute('aria-hidden', selected ? 'false' : 'true');
-  });
-
-  workspaceHeaderActions.forEach((actions) => {
-    actions.hidden = actions.getAttribute('data-header-actions-for') !== targetId;
-  });
-  closeTaskOverflow();
-
-  const meta = tabMeta[targetId] || ['', ''];
-  if (workspaceTitle) workspaceTitle.textContent = meta[0];
-  if (workspaceSubtitle) workspaceSubtitle.textContent = meta[1];
-  closeAppNav();
-  if (focus) btn.focus();
-
-  if (targetId === 'scripts-tab') fileBrowserController.load();
-  if (targetId === 'extensions-tab') browserResourcesController.loadResourceManager('extensions');
-  if (targetId === 'profile-files-tab') browserResourcesController.loadResourceManager('profiles');
-  if (targetId === 'warp-tab') loadWarpStatus();
-  if (targetId === 'config-tab' && typeof window.__onConfigTabShow === 'function') {
-    window.__onConfigTabShow();
-  }
-}
-
-tabBtns.forEach((btn, index) => {
-  btn.addEventListener('click', () => activateAppTab(btn.getAttribute('data-tab')));
-  btn.addEventListener('keydown', (event) => {
-    let nextIndex = null;
-    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (index + 1) % tabBtns.length;
-    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (index - 1 + tabBtns.length) % tabBtns.length;
-    if (event.key === 'Home') nextIndex = 0;
-    if (event.key === 'End') nextIndex = tabBtns.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    activateAppTab(tabBtns[nextIndex].getAttribute('data-tab'), { focus: true });
-  });
-});
-
-appNavToggle?.addEventListener('click', () => {
-  if (appShell?.classList.contains('is-nav-open')) closeAppNav({ restoreFocus: true });
-  else openAppNav();
-});
-appNavMask?.addEventListener('click', () => closeAppNav({ restoreFocus: true }));
-mobileNavQuery.addEventListener('change', () => closeAppNav());
-syncAppSidebarAccessibility();
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && appShell?.classList.contains('is-nav-open')) {
-    closeAppNav({ restoreFocus: true });
-  }
+const appNavigation = AppNavigation.create({
+  closeTaskOverflow: () => closeTaskOverflow(),
+  loadFileBrowser: () => fileBrowserController.load(),
+  loadBrowserResource: (kind) => browserResourcesController.loadResourceManager(kind),
+  loadWarpStatus: () => loadWarpStatus(),
 });
 
 /* ---------- Global config: searchable index + section scroll ---------- */
@@ -686,21 +381,6 @@ function markStopping(id) {
 function clearStopping(id) {
   return stoppingTaskIds.delete(id);
 }
-function prettyErrorCode(code) {
-  const map = {
-    timeout: '超时',
-    permission_error: '权限错误',
-    script_error: '脚本错误',
-    browser_task_error: '浏览器任务错误',
-    browser_launch_error: '浏览器启动错误',
-    missing_result: '缺少结果文件',
-    already_running: '任务已在运行',
-    stopped: '已停止',
-    browser_already_open: '浏览器已手动打开',
-  };
-  return map[code] || code || '';
-}
-
 function getScheduleMode() {
   return scheduleModeSelect.value || 'fixed';
 }
@@ -766,121 +446,28 @@ function updateScheduleModeUI() {
 }
 
 function buildSchedulePayloadFromForm() {
-  const enabled = form.elements.enabled.checked;
-  if (!enabled) {
-    return { enabled: false, cron_expr: '', schedule_mode: 'fixed', interval_min: null, interval_max: null, interval_unit: null, daily_time_start: null, daily_time_end: null, daily_day_min: null, daily_day_max: null, next_run_at: null };
-  }
-
-  if (getScheduleMode() === 'daily_window') {
-    const dayMin = Math.max(1, Number(dailyDayMinEl?.value || 1));
-    const dayMax = Math.max(dayMin, Number(dailyDayMaxEl?.value || dayMin));
-    return {
-      enabled: true,
-      cron_expr: '',
-      schedule_mode: 'daily_window',
-      interval_min: null,
-      interval_max: null,
-      interval_unit: null,
-      daily_time_start: dailyTimeStartEl?.value || '08:00',
-      daily_time_end: dailyTimeEndEl?.value || '12:00',
-      daily_day_min: dayMin,
-      daily_day_max: dayMax,
-      next_run_at: null,
-    };
-  }
-
-  if (getScheduleMode() === 'interval') {
-    const min = Math.max(1, Number(intervalMinEl.value || 1));
-    const max = Math.max(min, Number(intervalMaxEl.value || min));
-    return {
-      enabled: true,
-      cron_expr: '',
-      schedule_mode: 'interval',
-      interval_min: min,
-      interval_max: max,
-      interval_unit: intervalUnitEl.value || 'minutes',
-      next_run_at: null,
-    };
-  }
-
-  const days = Math.max(0, Number(fixedDaysEl.value || 0));
-  const hours = Math.max(0, Number(fixedHoursEl.value || 0));
-  const minutes = Math.max(0, Number(fixedMinutesEl.value || 0));
-  const totalMinutes = days * 24 * 60 + hours * 60 + minutes;
-  const safeMinutes = Math.max(1, totalMinutes);
-  if (safeMinutes % (24 * 60) === 0) {
-    return {
-      enabled: true,
-      cron_expr: '',
-      schedule_mode: 'fixed',
-      interval_min: safeMinutes / (24 * 60),
-      interval_max: safeMinutes / (24 * 60),
-      interval_unit: 'days',
-      next_run_at: null,
-    };
-  }
-  if (safeMinutes % 60 === 0) {
-    return {
-      enabled: true,
-      cron_expr: '',
-      schedule_mode: 'fixed',
-      interval_min: safeMinutes / 60,
-      interval_max: safeMinutes / 60,
-      interval_unit: 'hours',
-      next_run_at: null,
-    };
-  }
-  return {
-    enabled: true,
-    cron_expr: '',
-    schedule_mode: 'fixed',
-    interval_min: safeMinutes,
-    interval_max: safeMinutes,
-    interval_unit: 'minutes',
-    next_run_at: null,
-  };
+  return window.TaskScheduleModel.buildSchedulePayload({
+    enabled: form.elements.enabled.checked,
+    mode: getScheduleMode(),
+    fixedDays: fixedDaysEl.value,
+    fixedHours: fixedHoursEl.value,
+    fixedMinutes: fixedMinutesEl.value,
+    intervalMin: intervalMinEl.value,
+    intervalMax: intervalMaxEl.value,
+    intervalUnit: intervalUnitEl.value,
+    dailyTimeStart: dailyTimeStartEl?.value,
+    dailyTimeEnd: dailyTimeEndEl?.value,
+    dailyDayMin: dailyDayMinEl?.value,
+    dailyDayMax: dailyDayMaxEl?.value,
+  });
 }
 
-function parseTaskSchedule(task) {
-  if (!task || !task.enabled) {
-    return { enabled: false, mode: 'fixed', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00', dailyDayMin: 1, dailyDayMax: 1 };
-  }
-  if (task.schedule_mode === 'daily_window') {
-    return { enabled: true, mode: 'daily_window', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: task.daily_time_start || '08:00', dailyTimeEnd: task.daily_time_end || '12:00', dailyDayMin: Number(task.daily_day_min || 1), dailyDayMax: Number(task.daily_day_max || task.daily_day_min || 1) };
-  }
-  if (task.schedule_mode === 'interval') {
-    return { enabled: true, mode: 'interval', fixedDays: 0, fixedHours: 4, fixedMinutes: 0, intervalMin: Number(task.interval_min || 5), intervalMax: Number(task.interval_max || 10), intervalUnit: task.interval_unit || 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00', dailyDayMin: 1, dailyDayMax: 1 };
-  }
-  let totalMinutes = Number(task.interval_min || task.interval_max || 0);
-  if ((task.interval_unit || 'minutes') === 'days') totalMinutes *= 24 * 60;
-  else if ((task.interval_unit || 'minutes') === 'hours') totalMinutes *= 60;
-  const fixedDays = Math.floor(totalMinutes / (24 * 60));
-  totalMinutes -= fixedDays * 24 * 60;
-  const fixedHours = Math.floor(totalMinutes / 60);
-  totalMinutes -= fixedHours * 60;
-  return { enabled: true, mode: 'fixed', fixedDays, fixedHours, fixedMinutes: totalMinutes, intervalMin: 5, intervalMax: 10, intervalUnit: 'minutes', dailyTimeStart: '08:00', dailyTimeEnd: '12:00', dailyDayMin: 1, dailyDayMax: 1 };
-}
-
-function describeTaskSchedule(task) {
-  if (!task.enabled) return '未启用';
-  if (task.schedule_mode === 'daily_window') return `每天 ${task.daily_time_start || '00:00'}-${task.daily_time_end || '23:59'} 随机`;
-  if (task.schedule_mode === 'interval') return `${task.interval_min} - ${task.interval_max} ${prettyUnit(task.interval_unit)}之间`;
-  const parsed = parseTaskSchedule(task);
-  return `${parsed.fixedDays}天 ${parsed.fixedHours}小时 ${parsed.fixedMinutes}分`;
-}
-
-function intervalToUnitValue(sec) {
-  const s = Math.max(0, Number(sec) || 0);
-  if (s === 0) return { value: 0, unit: 'minutes' };
-  if (s >= 3600 && s % 3600 === 0) return { value: s / 3600, unit: 'hours' };
-  return { value: Math.max(1, Math.round(s / 60)), unit: 'minutes' };
-}
-
-function unitValueToSec(value, unit, minSec = 0) {
-  const n = Math.max(0, Number(value) || 0);
-  const sec = unit === 'hours' ? n * 3600 : n * 60;
-  return Math.max(minSec, sec);
-}
+const {
+  describeTaskSchedule,
+  intervalToUnitValue,
+  parseTaskSchedule,
+  unitValueToSec,
+} = window.TaskScheduleModel;
 
 function getConditionType() {
   return String(conditionTypeEl?.value || 'http_check').trim() || 'http_check';
@@ -925,167 +512,77 @@ function updateRemainingThresholdPreview() {
 }
 
 function buildConditionPayloadFromForm() {
-  const enabled = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
-  if (!enabled) {
-    return { condition_enabled: false };
-  }
-  const type = getConditionType();
-
-  if (type === 'remaining_callback') {
-    const windowValue = Number(conditionWindowValueEl?.value || 30);
-    const jitterMin = Number(conditionJitterMinEl?.value || 5);
-    const jitterMax = Number(conditionJitterMaxEl?.value || 10);
-    if (!Number.isFinite(windowValue) || windowValue <= 0) {
-      throw new Error('续期窗口必须大于 0');
-    }
-    if (!Number.isFinite(jitterMin) || jitterMin < 0 || !Number.isFinite(jitterMax) || jitterMax < 0) {
-      throw new Error('随机提前区间无效');
-    }
-    if (jitterMax < jitterMin) {
-      throw new Error('随机提前上限不能小于下限');
-    }
-    // No polling UI for callback mode: scheduler follows trigger_at from script reports.
-    // Keep small defaults so backend schema stays valid.
-    return {
-      condition_enabled: true,
-      condition: {
-        type: 'remaining_callback',
-        check_interval_sec: 60,
-        cooldown_sec: 600,
-        config: {
-          window_value: windowValue,
-          window_unit: conditionWindowUnitEl?.value || 'minutes',
-          jitter_min: jitterMin,
-          jitter_max: jitterMax,
-          jitter_unit: conditionJitterUnitEl?.value || 'minutes',
-          trigger_if_expired: Boolean(conditionTriggerIfExpiredEl?.checked),
-        },
-      },
-    };
-  }
-
-  const checkUnit = conditionCheckUnitEl?.value || 'minutes';
-  const coolUnit = conditionCooldownUnitEl?.value || 'minutes';
-  const checkSec = unitValueToSec(conditionCheckIntervalEl?.value || 5, checkUnit, 30);
-  const coolSec = unitValueToSec(conditionCooldownEl?.value || 10, coolUnit, 0);
-  const url = String(conditionUrlEl?.value || '').trim();
-  if (!url) {
-    throw new Error('启用 HTTP 条件时请填写检测 URL');
-  }
-  return {
-    condition_enabled: true,
-    condition: {
-      type: 'http_check',
-      check_interval_sec: checkSec,
-      cooldown_sec: coolSec,
-      config: {
-        url,
-        method: conditionMethodEl?.value || 'GET',
-        timeout_ms: Math.min(60000, Math.max(1000, (Number(conditionTimeoutEl?.value) || 10) * 1000)),
-        success_statuses: String(conditionSuccessStatusesEl?.value || '200-399').trim() || '200-399',
-        expect_body_includes: String(conditionExpectBodyEl?.value || '').trim(),
-        proxy: String(conditionProxyEl?.value || '').trim(),
-      },
-    },
-  };
+  return window.TaskConditionModel.buildConditionPayload({
+    enabled: Boolean(conditionEnabledEl?.checked),
+    type: getConditionType(),
+    checkInterval: conditionCheckIntervalEl?.value,
+    checkUnit: conditionCheckUnitEl?.value,
+    cooldown: conditionCooldownEl?.value,
+    cooldownUnit: conditionCooldownUnitEl?.value,
+    url: conditionUrlEl?.value,
+    proxy: conditionProxyEl?.value,
+    method: conditionMethodEl?.value,
+    timeout: conditionTimeoutEl?.value,
+    successStatuses: conditionSuccessStatusesEl?.value,
+    expectBody: conditionExpectBodyEl?.value,
+    windowValue: conditionWindowValueEl?.value,
+    windowUnit: conditionWindowUnitEl?.value,
+    jitterMin: conditionJitterMinEl?.value,
+    jitterMax: conditionJitterMaxEl?.value,
+    jitterUnit: conditionJitterUnitEl?.value,
+    triggerIfExpired: conditionTriggerIfExpiredEl?.checked,
+  }, unitValueToSec);
 }
 
 function fillConditionForm(task) {
-  const enabled = Boolean(Number(task && task.condition_enabled));
-  if (conditionEnabledEl) conditionEnabledEl.checked = enabled;
-  const cond = (task && task.condition) || {};
-  const cfg = cond.config || {};
-  const type = cond.type || 'http_check';
-  if (conditionTypeEl) conditionTypeEl.value = type;
-  const check = intervalToUnitValue(cond.check_interval_sec || 300);
-  const cool = intervalToUnitValue(cond.cooldown_sec || 600);
-  if (conditionCheckIntervalEl) conditionCheckIntervalEl.value = check.value;
-  if (conditionCheckUnitEl) conditionCheckUnitEl.value = check.unit;
-  if (conditionCooldownEl) conditionCooldownEl.value = cool.value;
-  if (conditionCooldownUnitEl) conditionCooldownUnitEl.value = cool.unit;
-  if (conditionUrlEl) conditionUrlEl.value = cfg.url || '';
-  if (conditionProxyEl) conditionProxyEl.value = cfg.proxy || '';
-  if (conditionMethodEl) conditionMethodEl.value = cfg.method || 'GET';
-  if (conditionTimeoutEl) conditionTimeoutEl.value = Math.round((Number(cfg.timeout_ms) || 10000) / 1000);
-  if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = cfg.success_statuses || '200-399';
-  if (conditionExpectBodyEl) conditionExpectBodyEl.value = cfg.expect_body_includes || '';
-  if (conditionWindowValueEl) conditionWindowValueEl.value = cfg.window_value ?? 30;
-  if (conditionWindowUnitEl) conditionWindowUnitEl.value = cfg.window_unit || 'minutes';
-  if (conditionJitterMinEl) conditionJitterMinEl.value = cfg.jitter_min ?? 5;
-  if (conditionJitterMaxEl) conditionJitterMaxEl.value = cfg.jitter_max ?? 10;
-  if (conditionJitterUnitEl) conditionJitterUnitEl.value = cfg.jitter_unit || cfg.window_unit || 'minutes';
-  if (conditionTriggerIfExpiredEl) conditionTriggerIfExpiredEl.checked = Boolean(cfg.trigger_if_expired);
+  applyConditionFormValues(window.TaskConditionModel.getFormValues(task, intervalToUnitValue));
   updateConditionLastStatusText(task);
   updateConditionCallbackStatusText(task);
   updateConditionFieldsUI();
 }
 
 function resetConditionForm() {
-  if (conditionEnabledEl) conditionEnabledEl.checked = false;
-  if (conditionTypeEl) conditionTypeEl.value = 'http_check';
-  if (conditionCheckIntervalEl) conditionCheckIntervalEl.value = 5;
-  if (conditionCheckUnitEl) conditionCheckUnitEl.value = 'minutes';
-  if (conditionCooldownEl) conditionCooldownEl.value = 10;
-  if (conditionCooldownUnitEl) conditionCooldownUnitEl.value = 'minutes';
-  if (conditionUrlEl) conditionUrlEl.value = '';
-  if (conditionProxyEl) conditionProxyEl.value = '';
-  if (conditionMethodEl) conditionMethodEl.value = 'GET';
-  if (conditionTimeoutEl) conditionTimeoutEl.value = 10;
-  if (conditionSuccessStatusesEl) conditionSuccessStatusesEl.value = '200-399';
-  if (conditionExpectBodyEl) conditionExpectBodyEl.value = '';
-  if (conditionWindowValueEl) conditionWindowValueEl.value = 30;
-  if (conditionWindowUnitEl) conditionWindowUnitEl.value = 'minutes';
-  if (conditionJitterMinEl) conditionJitterMinEl.value = 5;
-  if (conditionJitterMaxEl) conditionJitterMaxEl.value = 10;
-  if (conditionJitterUnitEl) conditionJitterUnitEl.value = 'minutes';
-  if (conditionTriggerIfExpiredEl) conditionTriggerIfExpiredEl.checked = false;
+  applyConditionFormValues(window.TaskConditionModel.getDefaultFormValues());
   updateConditionLastStatusText(null);
   updateConditionCallbackStatusText(null);
   updateConditionFieldsUI();
 }
 
-function setPanelVisible(el, visible) {
-  if (!el) return;
-  el.hidden = !visible;
-  // Belt-and-suspenders: some CSS display:grid rules can fight [hidden]
-  el.style.display = visible ? '' : 'none';
+function applyConditionFormValues(values) {
+  window.TaskConditionFormView.applyFormValues({
+    enabled: conditionEnabledEl,
+    type: conditionTypeEl,
+    checkInterval: conditionCheckIntervalEl,
+    checkUnit: conditionCheckUnitEl,
+    cooldown: conditionCooldownEl,
+    cooldownUnit: conditionCooldownUnitEl,
+    url: conditionUrlEl,
+    proxy: conditionProxyEl,
+    method: conditionMethodEl,
+    timeout: conditionTimeoutEl,
+    successStatuses: conditionSuccessStatusesEl,
+    expectBody: conditionExpectBodyEl,
+    windowValue: conditionWindowValueEl,
+    windowUnit: conditionWindowUnitEl,
+    jitterMin: conditionJitterMinEl,
+    jitterMax: conditionJitterMaxEl,
+    jitterUnit: conditionJitterUnitEl,
+    triggerIfExpired: conditionTriggerIfExpiredEl,
+  }, values);
 }
 
 function updateConditionFieldsUI() {
   const on = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
-  setPanelVisible(conditionFieldsEl, on);
-  if (conditionFieldsEl) conditionFieldsEl.style.opacity = '1';
-
-  const type = getConditionType();
-  const isRemaining = type === 'remaining_callback';
-
-  // Interval/cooldown are nested inside HTTP panel; remaining panel is exclusive.
-  setPanelVisible(conditionHttpFieldsEl, on && !isRemaining);
-  setPanelVisible(conditionRemainingFieldsEl, on && isRemaining);
-  if (on && isRemaining) updateRemainingThresholdPreview();
-
-  const hintEl = document.getElementById('condition-type-hint');
-  if (hintEl) {
-    hintEl.textContent = !on
-      ? '启用后选择类型，只显示该类型的配置。'
-      : (isRemaining
-        ? '当前：剩余时间回调。T=窗口−偏移（窗口内触发，不是窗口外提前）。'
-        : '当前：HTTP 检测。配置检测间隔、冷却与 URL。');
-  }
-
-  const testLabelEl = document.getElementById('condition-test-btn-label');
-  if (testLabelEl) {
-    testLabelEl.textContent = isRemaining ? '测试回调条件' : '测试 HTTP 检测';
-  } else if (conditionTestBtn) {
-    conditionTestBtn.disabled = false;
-    const icon = conditionTestBtn.querySelector('i');
-    const label = isRemaining ? '测试回调条件' : '测试 HTTP 检测';
-    conditionTestBtn.textContent = '';
-    if (icon) conditionTestBtn.appendChild(icon);
-    conditionTestBtn.append(` ${label}`);
-  }
-  if (conditionTestBtn) conditionTestBtn.disabled = false;
-
+  const state = window.TaskConditionModel.getFieldsState(on, getConditionType());
+  window.TaskConditionFormView.renderFieldsState({
+    fields: conditionFieldsEl,
+    httpFields: conditionHttpFieldsEl,
+    remainingFields: conditionRemainingFieldsEl,
+    hint: document.getElementById('condition-type-hint'),
+    testLabel: document.getElementById('condition-test-btn-label'),
+    testButton: conditionTestBtn,
+  }, state);
+  if (state.showRemainingPreview) updateRemainingThresholdPreview();
   updateTaskFormSummary();
 }
 
@@ -1103,34 +600,16 @@ function updateScheduleDetailsUI() {
 function updateTaskFormSummary() {
   const summaryEl = document.getElementById('task-form-summary');
   const scriptSummaryEl = document.getElementById('task-script-summary');
-  const scriptPath = String(form?.elements?.script_path?.value || '').trim();
-  const scriptLabel = scriptPath
-    ? scriptPath.split(/[/\\]/).filter(Boolean).pop() || scriptPath
-    : '';
-  const timeout = String(form?.elements?.timeout_sec?.value || '300').trim() || '300';
-  const schedOn = isScheduleEnabled();
-  const mode = getScheduleMode();
-  const modeLabel = mode === 'daily_window'
-    ? '每天时段'
-    : (mode === 'interval' ? '随机区间' : '固定周期');
-  const condOn = Boolean(conditionEnabledEl && conditionEnabledEl.checked);
-  const temp = isTaskTempProfileMode();
-
-  if (scriptSummaryEl) {
-    scriptSummaryEl.textContent = scriptPath
-      ? `脚本：${scriptLabel} · 超时 ${timeout}s`
-      : '脚本：未选择（右侧导入或选中）';
-  }
-  if (summaryEl) {
-    const bits = [
-      scriptPath ? `脚本 ${scriptLabel}` : '未选脚本',
-      `超时 ${timeout}s`,
-      temp ? '临时（用完删除）' : '持久配置',
-      schedOn ? `定时·${modeLabel}` : '手动运行',
-      condOn ? '条件触发' : '无条件',
-    ];
-    summaryEl.textContent = bits.join(' · ');
-  }
+  const text = window.TasksModel.buildTaskFormSummary({
+    scriptPath: form?.elements?.script_path?.value,
+    timeout: form?.elements?.timeout_sec?.value,
+    scheduleEnabled: isScheduleEnabled(),
+    scheduleMode: getScheduleMode(),
+    conditionEnabled: Boolean(conditionEnabledEl && conditionEnabledEl.checked),
+    temporaryProfile: isTaskTempProfileMode(),
+  });
+  if (scriptSummaryEl) scriptSummaryEl.textContent = text.scriptSummary;
+  if (summaryEl) summaryEl.textContent = text.summary;
 }
 
 function setupTaskModalSubnav() {
@@ -1202,22 +681,13 @@ function updateConditionLastStatusText(task) {
   conditionLastStatusText.textContent = `最近：${task.condition_last_status}${detail ? ` · ${detail}` : ''}${when ? ` · ${when}` : ''}`;
 }
 
-function formatRemainingSec(sec) {
-  const s = Math.floor(Number(sec));
-  if (!Number.isFinite(s)) return '—';
-  const abs = Math.abs(s);
-  const sign = s < 0 ? '-' : '';
-  if (abs < 60) return `${sign}${abs}s`;
-  if (abs < 3600) return `${sign}${Math.floor(abs / 60)}m`;
-  if (abs < 86400) {
-    const h = Math.floor(abs / 3600);
-    const m = Math.floor((abs % 3600) / 60);
-    return m ? `${sign}${h}h${m}m` : `${sign}${h}h`;
-  }
-  const d = Math.floor(abs / 86400);
-  const h = Math.floor((abs % 86400) / 3600);
-  return h ? `${sign}${d}d${h}h` : `${sign}${d}d`;
-}
+const {
+  conditionStatusClass,
+  describeCondition,
+  describeConditionValue,
+  describeConditionValueFull,
+  formatRemainingSec,
+} = window.TaskConditionPresentation;
 
 function updateConditionCallbackStatusText(task) {
   if (!conditionCallbackStatusText) return;
@@ -1242,87 +712,6 @@ function updateConditionCallbackStatusText(task) {
   conditionCallbackStatusText.textContent = parts.join(' · ');
 }
 
-function describeCondition(task) {
-  if (!task || !Number(task.condition_enabled)) return '';
-  const cond = task.condition || {};
-  if (cond.type === 'remaining_callback') return '剩余时间回调';
-  if (cond.type === 'http_check') return 'HTTP 检测';
-  return cond.type || '条件';
-}
-
-function conditionStatusClass(task) {
-  // Prefer live callback data over a stale last_status string
-  if (task && task.condition?.type === 'remaining_callback' && task.callback_remaining_sec != null && task.callback_remaining_sec !== '') {
-    return 'active';
-  }
-  const s = task && task.condition_last_status;
-  if (s === 'ok' || s === 'waiting' || s === 'due') return 'active';
-  if (s === 'fail' || s === 'error' || s === 'expired') return 'failed';
-  return 'idle';
-}
-
-/** Condition value for task cards — only key next-action info. */
-function describeConditionValue(task) {
-  if (!task || !Number(task.condition_enabled)) return '—';
-  const cond = task.condition || {};
-  if (cond.type === 'remaining_callback') {
-    if (task.callback_trigger_at) {
-      return `下次触发 ${shortTime(task.callback_trigger_at)}`;
-    }
-    if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
-      return '等待上报';
-    }
-    // Have remaining but no trigger yet
-    const rem = Number(task.callback_remaining_sec);
-    const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
-    let est = rem;
-    if (Number.isFinite(reportedAt)) {
-      est = rem - (Date.now() - reportedAt) / 1000;
-    }
-    return `现余约 ${formatRemainingSec(est)}`;
-  }
-  // HTTP: show last status briefly, or next check time
-  if (task.condition_last_status === 'ok' || task.condition_last_status === 'fail' || task.condition_last_status === 'error') {
-    if (task.condition_next_check_at) {
-      return `${task.condition_last_status} · 下次 ${shortTime(task.condition_next_check_at)}`;
-    }
-    return String(task.condition_last_status);
-  }
-  if (task.condition_next_check_at) return `下次检测 ${shortTime(task.condition_next_check_at)}`;
-  return '等待检测';
-}
-
-function describeConditionValueFull(task) {
-  if (!task || !Number(task.condition_enabled)) return '';
-  const cond = task.condition || {};
-  if (cond.type === 'remaining_callback') {
-    if (task.callback_remaining_sec == null || task.callback_remaining_sec === '') {
-      return '等待脚本上报 remaining_sec（请先手动探测）';
-    }
-    const rem = Number(task.callback_remaining_sec);
-    const reportedAt = task.callback_reported_at ? new Date(task.callback_reported_at).getTime() : NaN;
-    let est = rem;
-    if (Number.isFinite(reportedAt)) {
-      est = rem - (Date.now() - reportedAt) / 1000;
-    }
-    const parts = [
-      `估算剩余 ${formatRemainingSec(est)}`,
-      `上报剩余 ${formatRemainingSec(rem)}`,
-    ];
-    if (task.callback_valid_until) parts.push(`Valid until ${task.callback_valid_until}`);
-    if (task.callback_trigger_at) parts.push(`预计触发 ${shortTime(task.callback_trigger_at)}`);
-    if (task.callback_threshold_sec != null) parts.push(`阈值 ${formatRemainingSec(task.callback_threshold_sec)}`);
-    if (task.callback_action) parts.push(`action=${task.callback_action}`);
-    if (task.condition_next_check_at) parts.push(`下次检查 ${shortTime(task.condition_next_check_at)}`);
-    return parts.join(' · ');
-  }
-  if (task.condition_last_status) {
-    return `${task.condition_last_status}${task.condition_last_detail ? ` · ${task.condition_last_detail}` : ''}`;
-  }
-  if (task.condition_next_check_at) return `下次检测 ${shortTime(task.condition_next_check_at)}`;
-  return '等待检测';
-}
-
 function describeNextRun(task) {
   if (!task.enabled) {
     if (Number(task.condition_enabled)) {
@@ -1336,26 +725,32 @@ function describeNextRun(task) {
 }
 
 function isHost2PlayScript(scriptPath) {
-  const value = String(scriptPath || '').toLowerCase();
-  return value.includes('host2play_renew_dp') || value.includes('host2play');
+  return window.TasksModel.isHost2PlayScript(scriptPath);
 }
 
 function parseParamsJson(raw) {
-  if (!raw) return {};
-  if (typeof raw === 'object' && !Array.isArray(raw)) return { ...raw };
-  try {
-    const parsed = JSON.parse(String(raw));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  } catch {
-    // ignore
-  }
-  return {};
+  return window.TasksModel.parseParamsJson(raw);
 }
 
 const { createEnvEditor, parseEnvText, looksLikeSecretName } = EnvironmentEditor;
 
 const taskEnvUI = createEnvEditor(taskEnvEditor);
 const globalEnvUI = createEnvEditor(globalEnvEditor);
+
+const visionSettingsUi = VisionSettingsUi.create({
+  api: SettingsApi,
+  elements: {
+    form: visionForm,
+    status: visionStatusText,
+    channelsList: visionChannelsList,
+    addButton: visionAddChannelBtn,
+  },
+  actions: {
+    toast,
+    escapeHtml,
+    openTestModalForCard: (card) => openVisionTestModalForCard(card),
+  },
+});
 
 const settingsController = SettingsController.create({
   api: SettingsApi,
@@ -1379,9 +774,9 @@ const settingsController = SettingsController.create({
       status: visionStatusText,
       saveButton: visionSaveBtn,
       testButton: visionTestBtn,
-      render: renderVisionChannels,
-      collect: collectVisionChannels,
-      updateStatus: updateVisionStatusText,
+      render: visionSettingsUi.render,
+      collect: visionSettingsUi.collect,
+      updateStatus: visionSettingsUi.updateStatus,
       openTestModal: openVisionTestModal,
     },
   },
@@ -1543,26 +938,11 @@ const browserResourcesController = BrowserResourcesController.create({
 });
 
 function entriesFromParamsObject(params = {}) {
-  return Object.entries(params || {})
-    .filter(([, v]) => v !== null && v !== undefined && v !== '')
-    .map(([name, value]) => ({
-      name,
-      value: typeof value === 'string' ? value : JSON.stringify(value),
-      is_secret: looksLikeSecretName(name) ? 1 : 0,
-      has_value: true,
-    }));
+  return window.TasksModel.entriesFromParamsObject(params, looksLikeSecretName);
 }
 
 function readUseGlobalTelegramFlag(paramsOrEnv) {
-  let raw;
-  if (Array.isArray(paramsOrEnv)) {
-    const hit = paramsOrEnv.find((e) => String(e?.name || '').toUpperCase() === 'USE_GLOBAL_TELEGRAM');
-    raw = hit ? hit.value : undefined;
-  } else if (paramsOrEnv && typeof paramsOrEnv === 'object') {
-    raw = paramsOrEnv.USE_GLOBAL_TELEGRAM ?? paramsOrEnv.use_global_telegram;
-  }
-  if (raw === undefined || raw === null || String(raw).trim() === '') return true;
-  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+  return window.TasksModel.readUseGlobalTelegramFlag(paramsOrEnv);
 }
 
 function syncTaskParamsUI(scriptPath, paramsOrEnv = {}) {
@@ -1601,18 +981,7 @@ function collectTaskParamsFromForm() {
   // Backward-compatible flat object (also used for USE_TEMP_PROFILE side effects)
   // NOTE: secret values are intentionally empty in the UI — do NOT use this object
   // to re-seed the env editor (empty secrets get filtered out and disappear).
-  const env = collectTaskEnvFromForm();
-  const params = {};
-  for (const item of env) {
-    if (!item.name) continue;
-    // Preserve secret keys even when value is blank so callers that iterate keys still see them
-    if (item.is_secret && !item.value && item.has_value) {
-      params[item.name] = item.value; // still '' — presence matters for some call sites
-      continue;
-    }
-    params[item.name] = item.value;
-  }
-  return params;
+  return window.TasksModel.paramsFromEnvRows(collectTaskEnvFromForm());
 }
 
 /** Full env rows for re-rendering the editor without dropping masked secrets. */
@@ -1626,18 +995,7 @@ function collectSafeCurrentEnvRows() {
 
 function applyHost2PlayTemplate() {
   const current = collectTaskEnvFromForm();
-  const byName = new Map(current.map((e) => [e.name, { ...e }]));
-  const defaults = [
-    { name: 'RENEW_URLS', value: '', is_secret: 0, has_value: false },
-    { name: 'VISION_CALL_BUDGET', value: '200', is_secret: 0, has_value: true },
-    { name: 'MAX_RETRIES', value: '8', is_secret: 0, has_value: true },
-    { name: 'MAX_RENEW_RETRIES_PER_URL', value: '8', is_secret: 0, has_value: true },
-    { name: 'VISION_DEBUG', value: '0', is_secret: 0, has_value: true },
-  ];
-  for (const item of defaults) {
-    if (!byName.has(item.name)) byName.set(item.name, item);
-  }
-  taskEnvUI.setRows([...byName.values()]);
+  taskEnvUI.setRows(window.TasksModel.mergeHost2PlayTemplate(current));
   if (form.elements.timeout_sec && Number(form.elements.timeout_sec.value || 0) < 600) {
     form.elements.timeout_sec.value = '900';
   }
@@ -1657,396 +1015,8 @@ async function loadGlobalEnvSettings() {
   }
 }
 
-function makeVisionChannelCard(channel = {}, index = 0) {
-  const isPrimary = index === 0;
-  const card = document.createElement('div');
-  card.className = 'vision-channel-card' + (isPrimary ? ' is-primary' : '');
-  card.dataset.visionChannel = '1';
-  card.dataset.channelId = channel.id || '';
-
-  const masked = channel.apiKeyMasked || '';
-  const keyPlaceholder = masked ? `已保存 ${masked}` : 'API Key';
-  const label = isPrimary ? '主' : String(index);
-
-  // 记录初始值，用于判断卡片是否干净（未编辑）
-  card.dataset.initialBase = channel.baseUrl || '';
-  card.dataset.initialModel = channel.model || '';
-  card.dataset.initialHasKey = channel.hasKey ? '1' : '0';
-
-  card.innerHTML = `
-    <div class="vision-channel-row">
-      <span class="vision-channel-badge">${label}</span>
-      <input type="text" class="vision-ch-base" placeholder="Base URL" value="${(channel.baseUrl || '').replace(/"/g, '&quot;')}" />
-      <input type="password" class="vision-ch-key" placeholder="${keyPlaceholder.replace(/"/g, '&quot;')}" autocomplete="new-password" />
-      <div class="vision-model-input-group">
-        <input type="text" class="vision-ch-model" placeholder="Model" value="${(channel.model || '').replace(/"/g, '&quot;')}" />
-        <button type="button" class="icon-btn vision-ch-model-toggle" title="选择模型">
-          <i data-lucide="chevron-down" class="icon-sm"></i>
-        </button>
-      </div>
-      <div class="vision-channel-actions">
-        <button type="button" class="alt btn-with-icon vision-channel-test" title="测试此通道">
-          <i data-lucide="radar" class="icon-sm"></i> 测试
-        </button>
-        <button type="button" class="alt btn-with-icon vision-channel-make-primary" title="设为主通道" ${isPrimary ? 'disabled' : ''}>
-          <i data-lucide="star" class="icon-sm"></i> 主通道
-        </button>
-        <button type="button" class="icon-btn vision-channel-remove" title="删除" ${isPrimary ? 'disabled' : ''}>
-          <i data-lucide="trash-2" class="icon-sm"></i>
-        </button>
-      </div>
-    </div>
-  `;
-
-  const removeBtn = card.querySelector('.vision-channel-remove');
-  if (removeBtn) {
-    removeBtn.addEventListener('click', () => {
-      const cards = visionChannelsList
-        ? visionChannelsList.querySelectorAll('[data-vision-channel]')
-        : [];
-      if (cards.length <= 1) {
-        toast('至少保留一个通道', 'warn');
-        return;
-      }
-      card.remove();
-      renumberVisionChannels();
-    });
-  }
-
-  const primaryBtn = card.querySelector('.vision-channel-make-primary');
-  if (primaryBtn) {
-    primaryBtn.addEventListener('click', () => {
-      promoteVisionChannelCard(card);
-    });
-  }
-
-  const testBtn = card.querySelector('.vision-channel-test');
-  if (testBtn) {
-    testBtn.addEventListener('click', () => {
-      openVisionTestModalForCard(card);
-    });
-  }
-
-  const modelToggle = card.querySelector('.vision-ch-model-toggle');
-  if (modelToggle) {
-    modelToggle.addEventListener('click', () => {
-      openModelDropdown(card);
-    });
-  }
-
-  return card;
-}
-
-function renumberVisionChannels() {
-  if (!visionChannelsList) return;
-  const cards = visionChannelsList.querySelectorAll('[data-vision-channel]');
-  cards.forEach((card, i) => {
-    const isPrimary = i === 0;
-    card.classList.toggle('is-primary', isPrimary);
-    const badge = card.querySelector('.vision-channel-badge');
-    if (badge) badge.textContent = isPrimary ? '主' : String(i);
-    const removeBtn = card.querySelector('.vision-channel-remove');
-    if (removeBtn) {
-      removeBtn.disabled = isPrimary;
-      removeBtn.style.visibility = isPrimary ? 'hidden' : 'visible';
-    }
-    const primaryBtn = card.querySelector('.vision-channel-make-primary');
-    if (primaryBtn) {
-      primaryBtn.disabled = isPrimary;
-      primaryBtn.title = isPrimary ? '当前已是主通道' : '设为主通道';
-    }
-  });
-}
-
-/** Move a channel card to index 0 (primary). Order is what save/failover uses. */
-function promoteVisionChannelCard(card) {
-  if (!visionChannelsList || !card) return;
-  const first = visionChannelsList.querySelector('[data-vision-channel]');
-  if (!first || first === card) {
-    toast('已是主通道', 'success');
-    return;
-  }
-  visionChannelsList.insertBefore(card, first);
-  renumberVisionChannels();
-  if (window.lucide) window.lucide.createIcons({ root: visionChannelsList });
-  toast('已设为主通道（记得保存）', 'success');
-}
-
-function readVisionChannelFromCard(card) {
-  if (!card) return null;
-  return {
-    id: card.dataset.channelId || '',
-    baseUrl: card.querySelector('.vision-ch-base')?.value?.trim() || '',
-    apiKey: card.querySelector('.vision-ch-key')?.value?.trim() || '',
-    model: card.querySelector('.vision-ch-model')?.value?.trim() || '',
-    card,
-  };
-}
-
-// 模型列表缓存：key = 规范化 baseUrl，value = string[]。首次拉取后再开秒出，
-// 底部「⟳ 刷新」强制重拉（换了供应商 / 新上了模型时用）。
-const visionModelCache = new Map();
-let visionDropdownOutsideHandler = null;
-let visionDropdownKeyHandler = null;
-
-function visionCacheKey(baseUrl) {
-  return String(baseUrl || '').trim().replace(/\/+$/, '').toLowerCase();
-}
-
-function updateVisionStatusText(data = {}) {
-  if (!visionStatusText) return;
-  const count = Number(data.channelCount || 0);
-  const base = data.configured ? 'Status: configured' : 'Status: not configured';
-  visionStatusText.textContent = count > 1 ? `${base} · ${count} 通道` : base;
-  visionStatusText.style.color = data.configured ? '#86efac' : '#94a3b8';
-}
-
-/**
- * 卡片是否「干净」——除 model 外没有未保存的改动。
- * model 自己不算脏：切模型就是要覆盖它。
- * 顺序只检查「主通道是否还在第 1 位」；ch1/ch2 互换不算脏，因为按 id 落库不会写错通道，
- * 那个待保存的顺序改动会原样留在表单里。
- */
-function isVisionCardClean(card) {
-  if (!card || !card.dataset.channelId) return false; // 新增通道：还没有身份，必须走保存
-  if (card.dataset.initialHasKey !== '1') return false; // 库里没 key，改 model 也存不下去
-  if (card.querySelector('.vision-ch-key')?.value) return false; // 填了新 key
-  const base = card.querySelector('.vision-ch-base')?.value?.trim() || '';
-  if (base !== (card.dataset.initialBase || '')) return false;
-  const cards = visionChannelsList
-    ? Array.from(visionChannelsList.querySelectorAll('[data-vision-channel]'))
-    : [];
-  const at = cards.indexOf(card);
-  const isPrimaryId = card.dataset.channelId === 'primary';
-  if (isPrimaryId !== (at === 0)) return false; // 有待保存的「设为主通道」
-  return true;
-}
-
-function closeVisionModelDropdown() {
-  document.querySelectorAll('.vision-model-dropdown').forEach((el) => el.remove());
-  document.querySelectorAll('.vision-model-input-group.is-open')
-    .forEach((el) => el.classList.remove('is-open'));
-  if (visionDropdownOutsideHandler) {
-    document.removeEventListener('mousedown', visionDropdownOutsideHandler, true);
-    visionDropdownOutsideHandler = null;
-  }
-  if (visionDropdownKeyHandler) {
-    document.removeEventListener('keydown', visionDropdownKeyHandler, true);
-    visionDropdownKeyHandler = null;
-  }
-}
-
-function renderVisionChannels(list) {
-  if (!visionChannelsList) return;
-  closeVisionModelDropdown();
-  visionChannelsList.innerHTML = '';
-  const channels = Array.isArray(list) && list.length ? list : [{}];
-  channels.forEach((ch, i) => visionChannelsList.appendChild(makeVisionChannelCard(ch, i)));
-  renumberVisionChannels();
-  if (window.lucide) window.lucide.createIcons();
-}
-
-function collectVisionChannels() {
-  if (!visionChannelsList) return [];
-  const cards = visionChannelsList.querySelectorAll('[data-vision-channel]');
-  const out = [];
-  cards.forEach((card) => {
-    const id = card.dataset.channelId || '';
-    const baseUrl = card.querySelector('.vision-ch-base')?.value?.trim() || '';
-    const apiKey = card.querySelector('.vision-ch-key')?.value?.trim() || '';
-    const model = card.querySelector('.vision-ch-model')?.value?.trim() || '';
-    if (!baseUrl && !apiKey && !model) return;
-    out.push({ id, baseUrl, apiKey, model });
-  });
-  return out;
-}
-
-async function loadVisionSettings() {
-  if (!visionForm) return;
-  try {
-    const res = await SettingsApi.loadVision();
-    const data = res.data || {};
-    renderVisionChannels(data.channelList);
-    updateVisionStatusText(data);
-  } catch (error) {
-    if (visionStatusText) {
-      visionStatusText.textContent = 'Status: load failed';
-      visionStatusText.style.color = '#ef4444';
-    }
-    console.error('Failed to load vision settings:', error);
-  }
-}
-
-/**
- * 模型下拉：拉列表 → 搜索过滤 → 点选切换。
- * 卡片干净时点选直接落库（只改 model，不碰 key）；卡片脏时只填输入框并提示去保存，
- * 避免把用户还在编辑、并不想提交的字段一并写进去。
- */
-async function openModelDropdown(card) {
-  if (!card) return;
-  const group = card.querySelector('.vision-model-input-group');
-  const modelInput = card.querySelector('.vision-ch-model');
-  if (!group || !modelInput) return;
-
-  // 再点一次 = 关闭
-  if (group.classList.contains('is-open')) {
-    closeVisionModelDropdown();
-    return;
-  }
-  closeVisionModelDropdown();
-
-  const baseUrl = card.querySelector('.vision-ch-base')?.value?.trim() || '';
-  if (!baseUrl) {
-    toast('请先填写该通道 Base URL', 'warn');
-    return;
-  }
-
-  group.classList.add('is-open');
-  const panel = document.createElement('div');
-  panel.className = 'vision-model-dropdown';
-  panel.innerHTML = ''
-    + '<input type="text" class="vision-model-search" placeholder="搜索模型…" autocomplete="off" />'
-    + '<div class="vision-model-list" data-model-list><div class="vision-model-empty">加载中…</div></div>'
-    + '<div class="vision-model-dropdown-foot">'
-    + '  <span data-model-count class="muted"></span>'
-    + '  <button type="button" class="vision-model-refresh" data-model-refresh>⟳ 刷新</button>'
-    + '</div>';
-  group.appendChild(panel);
-
-  const searchEl = panel.querySelector('.vision-model-search');
-  const listEl = panel.querySelector('[data-model-list]');
-  const countEl = panel.querySelector('[data-model-count]');
-  const refreshBtn = panel.querySelector('[data-model-refresh]');
-
-  visionDropdownOutsideHandler = (e) => {
-    if (!panel.contains(e.target) && !group.contains(e.target)) closeVisionModelDropdown();
-  };
-  visionDropdownKeyHandler = (e) => {
-    if (e.key === 'Escape') {
-      closeVisionModelDropdown();
-      modelInput.focus();
-    }
-  };
-  document.addEventListener('mousedown', visionDropdownOutsideHandler, true);
-  document.addEventListener('keydown', visionDropdownKeyHandler, true);
-
-  let allIds = [];
-  let visibleIds = [];
-
-  const applyModel = async (id) => {
-    const channelId = card.dataset.channelId || '';
-    const clean = isVisionCardClean(card);
-    modelInput.value = id;
-    closeVisionModelDropdown();
-    if (!clean) {
-      toast(`已填入 ${id} · 该通道有未保存的改动，请点「保存」生效`, 'warn');
-      return;
-    }
-    try {
-      const res = await SettingsApi.updateVisionModel({ id: channelId, model: id });
-      card.dataset.initialModel = id;
-      updateVisionStatusText(res.data || {});
-      toast(`已切换到 ${id}`, 'success');
-    } catch (error) {
-      modelInput.value = card.dataset.initialModel || '';
-      toast(error.message || '切换模型失败', 'error');
-    }
-  };
-
-  const renderList = () => {
-    const q = (searchEl?.value || '').trim().toLowerCase();
-    const current = modelInput.value.trim();
-    const shown = q ? allIds.filter((id) => id.toLowerCase().includes(q)) : allIds;
-    visibleIds = shown;
-    if (countEl) {
-      countEl.textContent = q
-        ? `${shown.length} / ${allIds.length}`
-        : `${allIds.length} 个模型`;
-    }
-    if (!shown.length) {
-      listEl.innerHTML = `<div class="vision-model-empty">${allIds.length ? '没有匹配的模型' : '未读到模型列表'}</div>`;
-      return;
-    }
-    listEl.innerHTML = shown.map((id) => {
-      const selected = id === current ? ' is-selected' : '';
-      return `<button type="button" class="vision-model-option${selected}" data-model-id="${escapeHtml(id)}">${escapeHtml(id)}</button>`;
-    }).join('');
-    listEl.querySelectorAll('[data-model-id]').forEach((btn) => {
-      btn.addEventListener('click', () => applyModel(btn.getAttribute('data-model-id') || ''));
-    });
-  };
-
-  const load = async (force) => {
-    const cacheKey = visionCacheKey(baseUrl);
-    if (!force && visionModelCache.has(cacheKey)) {
-      allIds = visionModelCache.get(cacheKey);
-      renderList();
-      return;
-    }
-    listEl.innerHTML = '<div class="vision-model-empty">加载中…</div>';
-    if (refreshBtn) refreshBtn.disabled = true;
-    try {
-      const res = await SettingsApi.testVision({
-        id: card.dataset.channelId || '',
-        baseUrl,
-        apiKey: card.querySelector('.vision-ch-key')?.value?.trim() || '',
-        model: modelInput.value.trim(),
-        fetchModels: true,
-        testImage: false, // 只要列表，不跑识图探测
-      });
-      const ids = (res.data && res.data.models && res.data.models.ids) || [];
-      allIds = Array.isArray(ids) ? ids : [];
-      visionModelCache.set(cacheKey, allIds);
-      renderList();
-    } catch (error) {
-      listEl.innerHTML = `<div class="vision-model-empty is-bad">${escapeHtml(error.message || '拉取模型失败')}</div>`;
-      if (countEl) countEl.textContent = '';
-    } finally {
-      if (refreshBtn) refreshBtn.disabled = false;
-    }
-  };
-
-  if (searchEl) {
-    searchEl.addEventListener('input', renderList);
-    // 搜索框在 <form id="vision-form"> 里，回车会误触发整表保存 —— 拦下来，
-    // 顺手让回车 = 选中唯一/第一个匹配项。
-    searchEl.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (visibleIds.length) applyModel(visibleIds[0]);
-    });
-  }
-  if (refreshBtn) refreshBtn.addEventListener('click', () => load(true));
-  await load(false);
-  if (searchEl) searchEl.focus();
-}
-
 function groupLastRuns(runs) {
-  lastRunsByTask = new Map();
-  for (const run of runs) if (!lastRunsByTask.has(run.task_id)) lastRunsByTask.set(run.task_id, run);
-}
-
-
-function classifyShotKind(name) {
-  const lower = String(name || '').toLowerCase().replace(/\\/g, '/');
-  if (lower.includes('yolo_hard/miss/') || /(^|\/)miss\//.test(lower)) return '漏选/未认出';
-  if (lower.includes('yolo_hard/wrong/') || /(^|\/)wrong\//.test(lower)) return '认错类';
-  if (lower.includes('yolo_hard/grids/')) return '难例整表';
-  if (lower.includes('yolo_hard/')) return '难例';
-  if (lower.includes('yolo_tile')) return '格子(全量)';
-  if (lower.startsWith('instr_')) return '题目';
-  if (lower.includes('_grid.png') || lower.includes('yolo_grid')) return '整表';
-  if (lower.startsWith('table_')) return '题图';
-  if (lower.includes('success') || lower.includes('fail') || lower.includes('host2play')) return '结果';
-  return '截图';
-}
-
-function formatBytes(size) {
-  const n = Number(size) || 0;
-  if (n < 1024) return n + 'B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
-  return (n / (1024 * 1024)).toFixed(1) + 'MB';
+  lastRunsByTask = indexLatestRunsByTask(runs);
 }
 
 async function openRunScreenshots(runId) {
@@ -2204,28 +1174,6 @@ function runCard(run) {
       </div>
       ${run.error_text ? `<pre>${escapeHtml(run.error_text)}</pre>` : ''}
     </div>`;
-}
-
-async function copyText(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  textarea.remove();
-}
-
-function logLineClass(line) {
-  if (/(ERROR|FAIL|\u5931\u8d25|\u5f02\u5e38)/i.test(line)) return 'is-error';
-  if (/(WARN|\u8b66\u544a)/i.test(line)) return 'is-warn';
-  if (/(SUCCESS|\u6210\u529f|\u5b8c\u6210)/i.test(line)) return 'is-success';
-  return '';
 }
 
 async function openRunLog(runId) {
@@ -3314,19 +2262,11 @@ window.stopTask = stopTask;
 window.showTaskRuns = showTaskRuns;
 window.openRunScreenshots = openRunScreenshots;
 
-if (visionAddChannelBtn) {
-  visionAddChannelBtn.addEventListener('click', () => {
-    if (!visionChannelsList) return;
-    const count = visionChannelsList.querySelectorAll('[data-vision-channel]').length;
-    visionChannelsList.appendChild(makeVisionChannelCard({}, count));
-    renumberVisionChannels();
-    if (window.lucide) window.lucide.createIcons();
-  });
-}
+visionSettingsUi.mountAddButton();
 
 /** Open modal: test a specific channel card (or primary if omitted). */
 function openVisionTestModalForCard(cardEl) {
-  const channel = readVisionChannelFromCard(cardEl) || collectVisionChannels()[0] || {};
+  const channel = visionSettingsUi.readCard(cardEl) || visionSettingsUi.collect()[0] || {};
   const targetCard = channel.card || cardEl || null;
   if (!channel.baseUrl) {
     toast('请先填写该通道 Base URL', 'warn');
@@ -3504,7 +2444,7 @@ function openVisionTestModalForCard(cardEl) {
 
   const runTest = async ({ testImage }) => {
     // Re-read form values in case user edited while modal open
-    const live = readVisionChannelFromCard(targetCard) || channel;
+    const live = visionSettingsUi.readCard(targetCard) || channel;
     if (!live.baseUrl) {
       toast('该通道 Base URL 为空', 'error');
       return;
@@ -3548,7 +2488,7 @@ function openVisionTestModalForCard(cardEl) {
   modelsOnlyBtn.addEventListener('click', () => runTest({ testImage: false }));
   if (makePrimaryBtn && targetCard) {
     makePrimaryBtn.addEventListener('click', () => {
-      promoteVisionChannelCard(targetCard);
+      visionSettingsUi.promote(targetCard);
       close();
     });
   }
@@ -3763,510 +2703,12 @@ if (globalEnvSaveBtn) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// 登录态 / 顶栏用户区
-// ---------------------------------------------------------------------------
-
-function openChangePasswordDialog() {
-  const mask = document.createElement('div');
-  mask.className = 'modal-mask open';
-  mask.style.zIndex = '10050';
-  const dialog = document.createElement('div');
-  dialog.className = 'modal open';
-  dialog.style.cssText = 'z-index:10051; max-width:420px; width:min(420px,92vw);';
-  dialog.innerHTML = `
-    <div class="modal-header">
-      <div>
-        <h2>修改密码</h2>
-        <p class="muted" style="margin:4px 0 0;font-size:13px;">改完会退出其他设备上的登录</p>
-      </div>
-      <button type="button" class="icon-btn cp-close" aria-label="关闭"><i data-lucide="x" class="icon-md"></i></button>
-    </div>
-    <div class="modal-body">
-      <form class="stack-form cp-form">
-        <div>
-          <label class="field-label" for="cp-current">当前密码</label>
-          <input id="cp-current" type="password" autocomplete="current-password" style="width:100%" />
-        </div>
-        <div>
-          <label class="field-label" for="cp-new">新密码（至少 8 位）</label>
-          <input id="cp-new" type="password" autocomplete="new-password" style="width:100%" />
-        </div>
-        <div>
-          <label class="field-label" for="cp-confirm">确认新密码</label>
-          <input id="cp-confirm" type="password" autocomplete="new-password" style="width:100%" />
-        </div>
-        <div class="row" style="margin-top:12px; gap:8px; justify-content:flex-end;">
-          <button type="button" class="alt cp-cancel">取消</button>
-          <button type="submit" class="btn-primary cp-ok">保存</button>
-        </div>
-      </form>
-    </div>
-  `;
-  document.body.appendChild(mask);
-  document.body.appendChild(dialog);
-  if (window.lucide) window.lucide.createIcons({ root: dialog });
-
-  const close = () => { mask.remove(); dialog.remove(); };
-  dialog.querySelector('.cp-close').addEventListener('click', close);
-  dialog.querySelector('.cp-cancel').addEventListener('click', close);
-  mask.addEventListener('click', close);
-
-  const passwordForm = dialog.querySelector('.cp-form');
-  const okBtn = dialog.querySelector('.cp-ok');
-  passwordForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const currentPassword = dialog.querySelector('#cp-current').value;
-    const newPassword = dialog.querySelector('#cp-new').value;
-    const confirmPassword = dialog.querySelector('#cp-confirm').value;
-    if (!currentPassword || !newPassword) {
-      toast('请填写当前密码和新密码', 'error');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      toast('两次输入的新密码不一致', 'error');
-      return;
-    }
-    okBtn.disabled = true;
-    try {
-      await fetchJson('/api/auth/change-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
-      });
-      close();
-      toast('密码已修改', 'success');
-    } catch (err) {
-      toast(err.message || '修改失败', 'error');
-      okBtn.disabled = false;
-    }
-  });
-  setTimeout(() => dialog.querySelector('#cp-current').focus(), 40);
-}
-
-// —— 两步验证管理弹窗（TOTP 开关 + 通行密钥增删） ——
-
-function bufferToBase64url(buf) {
-  const bytes = new Uint8Array(buf);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function base64urlToBuffer(str) {
-  const s = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
-  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
-  const bin = atob(s + pad);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  return bytes.buffer;
-}
-
-// 所有 /api/auth/2fa/* 接口都要验当前密码（require2faAccess），所以先做一道密码门：
-// 输对密码才加载管理界面，拿到的 currentPassword 存闭包里，后续操作复用。
-function open2faDialog() {
-  const mask = document.createElement('div');
-  mask.className = 'modal-mask open';
-  mask.style.zIndex = '10050';
-  const dialog = document.createElement('div');
-  dialog.className = 'modal open';
-  dialog.style.cssText = 'z-index:10051; max-width:520px; width:min(520px,94vw);';
-
-  dialog.innerHTML = `
-    <div class="modal-header">
-      <div>
-        <h2>两步验证</h2>
-        <p class="muted" style="margin:4px 0 0;font-size:13px;">TOTP 动态码 + 通行密钥免密登录</p>
-      </div>
-      <button type="button" class="icon-btn t2-close" aria-label="关闭"><i data-lucide="x" class="icon-md"></i></button>
-    </div>
-    <div class="modal-body">
-      <div id="t2-lock">
-        <p class="muted" style="margin-top:0;font-size:13px;line-height:1.7;">
-          两步验证的管理操作都需要先验证当前密码，防止别人趁会话未过期偷改你的安全设置。
-        </p>
-        <div class="stack-form">
-          <div>
-            <label class="field-label" for="t2-password">当前密码</label>
-            <input id="t2-password" type="password" autocomplete="current-password" style="width:100%" />
-          </div>
-          <div class="row" style="gap:8px; justify-content:flex-end;">
-            <button type="button" class="alt t2-cancel">取消</button>
-            <button type="button" class="btn-primary t2-unlock">验证并进入</button>
-          </div>
-        </div>
-      </div>
-
-      <div id="t2-manage" hidden>
-        <div class="twofa-section">
-          <h3><i data-lucide="smartphone" class="icon-sm"></i> 身份验证器（TOTP）</h3>
-          <div id="t2-totp"></div>
-        </div>
-        <div class="twofa-section">
-          <h3><i data-lucide="fingerprint" class="icon-sm"></i> 通行密钥（Passkey）</h3>
-          <div id="t2-passkey"></div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(mask);
-  document.body.appendChild(dialog);
-  if (window.lucide) window.lucide.createIcons({ root: dialog });
-
-  const close = () => { mask.remove(); dialog.remove(); };
-  dialog.querySelector('.t2-close').addEventListener('click', close);
-  dialog.querySelector('.t2-cancel').addEventListener('click', close);
-  mask.addEventListener('click', close);
-
-  const lockEl = dialog.querySelector('#t2-lock');
-  const manageEl = dialog.querySelector('#t2-manage');
-  const passwordInput = dialog.querySelector('#t2-password');
-  let currentPassword = '';
-
-  dialog.querySelector('.t2-unlock').addEventListener('click', async () => {
-    currentPassword = passwordInput.value;
-    if (!currentPassword) { toast('请输入当前密码', 'error'); return; }
-    const unlockBtn = dialog.querySelector('.t2-unlock');
-    unlockBtn.disabled = true;
-    try {
-      await fetchJson('/api/auth/2fa/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword }),
-      });
-      lockEl.hidden = true;
-      manageEl.hidden = false;
-      await load2faStatus();
-    } catch {
-      // 401 已被 fetchJson 踢去登录页；剩的是密码错误之类，恢复按钮让用户重试
-      unlockBtn.disabled = false;
-      passwordInput.value = '';
-      passwordInput.focus();
-    }
-  });
-
-  async function load2faStatus() {
-    try {
-      const res = await fetchJson('/api/auth/2fa/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword }),
-      });
-      renderTotp(res.data);
-      renderPasskeys(res.data);
-    } catch { /* 401 已处理，其余错误进 toast */ }
-  }
-
-  function renderTotp(status) {
-    const el = dialog.querySelector('#t2-totp');
-    if (status.totpEnabled) {
-      el.innerHTML = `
-        <div class="twofa-row">
-          <div>
-            <strong>已开启</strong>
-            <p>登录时需输入身份验证器里的 6 位动态码。</p>
-          </div>
-          <button type="button" class="danger t2-totp-off">关闭 TOTP</button>
-        </div>`;
-      el.querySelector('.t2-totp-off').addEventListener('click', async () => {
-        try {
-          await fetchJson('/api/auth/2fa/totp/disable', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ currentPassword }),
-          });
-          toast('两步验证已关闭', 'success');
-          await load2faStatus();
-        } catch (err) { toast(err.message || '关闭失败', 'error'); }
-      });
-    } else {
-      el.innerHTML = `
-        <div class="twofa-row">
-          <div>
-            <strong>未开启</strong>
-            <p>开启后，输入密码后还要再输一个动态码才能登录。</p>
-          </div>
-          <button type="button" class="alt t2-totp-on">开启</button>
-        </div>`;
-      el.querySelector('.t2-totp-on').addEventListener('click', startTotpSetup);
-    }
-  }
-
-  async function startTotpSetup() {
-    const el = dialog.querySelector('#t2-totp');
-    let setup;
-    try {
-      setup = (await fetchJson('/api/auth/2fa/totp/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword }),
-      })).data;
-    } catch (err) { toast(err.message || '生成秘钥失败', 'error'); return; }
-
-    el.innerHTML = `
-      <div class="totp-setup">
-        <p class="muted" style="margin:0;font-size:13px;line-height:1.7;">
-          用身份验证器 App（如 Google Authenticator / 1Password）扫下面的二维码，
-          或手动输入秘钥，然后填上 App 里显示的 6 位动态码完成开启。
-        </p>
-        <div class="totp-qr-wrap"><div id="t2-qr"></div></div>
-        <div class="totp-secret-row">
-          <code id="t2-secret">${escapeHtml(setup.secret)}</code>
-          <button type="button" class="alt t2-copy">复制</button>
-        </div>
-        <div>
-          <label class="field-label" for="t2-code">动态验证码</label>
-          <input id="t2-code" type="text" inputmode="numeric" maxlength="6"
-                 placeholder="6 位数字" style="width:100%;font:600 18px/1.2 var(--font-mono);letter-spacing:0.3em;text-align:center;" />
-        </div>
-        <div class="row" style="gap:8px; justify-content:flex-end;">
-          <button type="button" class="alt t2-setup-cancel">取消</button>
-          <button type="button" class="btn-primary t2-setup-ok">确认开启</button>
-        </div>
-      </div>`;
-    if (window.lucide) window.lucide.createIcons({ root: el });
-
-    renderTotpQr(setup.otpauthUrl, el);
-
-    el.querySelector('.t2-copy').addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(setup.secret);
-        toast('秘钥已复制', 'success');
-      } catch {
-        // 剪贴板权限被拒就选中文本，让用户自己 Ctrl+C
-        const code = el.querySelector('#t2-secret');
-        const range = document.createRange();
-        range.selectNodeContents(code);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
-    });
-
-    el.querySelector('.t2-setup-cancel').addEventListener('click', load2faStatus);
-
-    el.querySelector('.t2-setup-ok').addEventListener('click', async () => {
-      const code = el.querySelector('#t2-code').value.trim();
-      if (!/^\d{6}$/.test(code)) { toast('请输入 6 位数字验证码', 'error'); return; }
-      try {
-        await fetchJson('/api/auth/2fa/totp/confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ currentPassword, code }),
-        });
-        toast('两步验证已开启', 'success');
-        await load2faStatus();
-      } catch (err) { toast(err.message || '开启失败', 'error'); }
-    });
-  }
-
-  // 二维码本地生成（qrcode-generator，CDN 懒加载，只在开启 TOTP 时拉一次）；
-  // 加载失败就退化为手动输入秘钥——二维码没了但功能不丢。
-  let qrLibPromise = null;
-  function loadQrLib() {
-    if (window.qrcode) return Promise.resolve();
-    if (!qrLibPromise) {
-      qrLibPromise = new Promise((resolve) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
-        script.onload = () => resolve();
-        script.onerror = () => resolve(); // 失败也走完，draw 里会兜底
-        document.head.appendChild(script);
-      });
-    }
-    return qrLibPromise;
-  }
-
-  function renderTotpQr(otpauthUrl, root) {
-    const wrap = root.querySelector('#t2-qr');
-    loadQrLib().then(() => {
-      if (!window.qrcode) {
-        wrap.innerHTML = '<p class="muted" style="margin:0;text-align:center;font-size:12px;">二维码组件加载失败，请手动输入下方秘钥。</p>';
-        return;
-      }
-      try {
-        const qr = window.qrcode(0, 'L');
-        qr.addData(otpauthUrl);
-        qr.make();
-        const img = document.createElement('img');
-        img.src = qr.createDataURL(4, 12);
-        img.alt = 'TOTP 二维码';
-        img.width = 180;
-        img.height = 180;
-        wrap.innerHTML = '';
-        wrap.appendChild(img);
-      } catch {
-        wrap.innerHTML = '<p class="muted" style="margin:0;text-align:center;font-size:12px;">二维码生成失败，请手动输入下方秘钥。</p>';
-      }
-    });
-  }
-
-  function fmtTime(iso) {
-    if (!iso) return '从未';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-
-  function renderPasskeys(status) {
-    const el = dialog.querySelector('#t2-passkey');
-    const list = status.passkeys || [];
-    const rows = list.length
-      ? list.map((pk) => `
-          <div class="passkey-item">
-            <div>
-              <strong>${escapeHtml(pk.name || '未命名通行密钥')}</strong>
-              <p>注册于 ${fmtTime(pk.created_at)} · 上次使用 ${fmtTime(pk.last_used_at)}</p>
-            </div>
-            <button type="button" class="danger passkey-del" data-id="${pk.id}">删除</button>
-          </div>`).join('')
-      : '<p class="muted" style="font-size:13px;margin:0;">还没有通行密钥。</p>';
-
-    const supported = Boolean(window.isSecureContext && navigator.credentials && window.PublicKeyCredential);
-    el.innerHTML = `
-      <div class="passkey-list">${rows}</div>
-      <div class="twofa-add-row">
-        <input id="t2-passkey-name" type="text" maxlength="60" placeholder="名称（可选）" />
-        <button type="button" class="alt t2-passkey-add" ${supported ? '' : 'disabled'}>添加</button>
-      </div>
-      ${supported ? '' : '<p class="muted" style="font-size:12px;margin:8px 0 0;">当前环境不支持 WebAuthn（需 HTTPS 或 localhost），无法注册通行密钥。</p>'}`;
-    if (window.lucide) window.lucide.createIcons({ root: el });
-
-    el.querySelectorAll('.passkey-del').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = Number(btn.dataset.id);
-        if (!id) return;
-        if (!confirm('确定删除这把通行密钥？删除后该设备将无法用它免密登录。')) return;
-        try {
-          await fetchJson('/api/auth/2fa/passkey/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ currentPassword, id }),
-          });
-          toast('通行密钥已删除', 'success');
-          await load2faStatus();
-        } catch (err) { toast(err.message || '删除失败', 'error'); }
-      });
-    });
-
-    const addBtn = el.querySelector('.t2-passkey-add');
-    if (addBtn) {
-      addBtn.addEventListener('click', () => {
-        registerPasskey(el.querySelector('#t2-passkey-name').value);
-      });
-    }
-  }
-
-  async function registerPasskey(name) {
-    if (!window.PublicKeyCredential || !navigator.credentials) {
-      toast('当前环境不支持通行密钥（需要 HTTPS 或 localhost）', 'error');
-      return;
-    }
-    let options;
-    try {
-      options = (await fetchJson('/api/auth/2fa/passkey/register/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword, name: String(name || '').trim() }),
-      })).data;
-    } catch (err) { toast(err.message || '获取注册凭证失败', 'error'); return; }
-
-    try {
-      const cred = await navigator.credentials.create({
-        publicKey: {
-          challenge: base64urlToBuffer(options.challenge),
-          rp: options.rp,
-          user: {
-            id: base64urlToBuffer(options.user.id),
-            name: options.user.name,
-            displayName: options.user.displayName,
-          },
-          pubKeyCredParams: options.pubKeyCredParams,
-          timeout: options.timeout,
-          attestation: options.attestation || 'none',
-          authenticatorSelection: options.authenticatorSelection,
-          excludeCredentials: (options.excludeCredentials || []).map((c) => ({
-            ...c,
-            id: base64urlToBuffer(c.id),
-          })),
-        },
-      });
-      const transports = cred.response.getTransports
-        ? cred.response.getTransports()
-        : (cred.response.transports || []);
-      await fetchJson('/api/auth/2fa/passkey/register/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          currentPassword,
-          challenge: options.challenge,
-          response: {
-            id: cred.id,
-            rawId: bufferToBase64url(cred.rawId),
-            type: cred.type,
-            response: {
-              clientDataJSON: bufferToBase64url(cred.response.clientDataJSON),
-              attestationObject: bufferToBase64url(cred.response.attestationObject),
-              transports,
-            },
-          },
-        }),
-      });
-      toast('通行密钥已添加', 'success');
-      await load2faStatus();
-    } catch (err) {
-      const msg = String((err && err.message) || err || '');
-      // 用户主动取消是正常路径，不弹错
-      if (msg && !/NotAllowedError|abort|cancel|取消/i.test(msg)) {
-        toast('添加通行密钥失败：' + msg, 'error');
-      }
-    }
-  }
-
-  setTimeout(() => passwordInput.focus(), 40);
-}
-
-function wireAuthUi(username) {
-  const box = document.getElementById('topbar-user');
-  const nameEl = document.getElementById('topbar-username');
-  if (nameEl) nameEl.textContent = username || '';
-  if (box) box.hidden = false;
-
-  // 版本号显示在侧边栏 brand 旁边。走独立小接口，失败就藏起来 ——
-  // 一个装饰性的标签不值得报错打断启动。
-  fetch('/api/version')
-    .then((res) => (res.ok ? res.json() : null))
-    .then((data) => {
-      const el = document.getElementById('app-version');
-      const label = data && data.data && data.data.label;
-      if (el && label) {
-        el.textContent = label;
-        el.title = `版本 ${label}${data.data.describe ? `（${data.data.describe}）` : ''}`;
-        el.hidden = false;
-      }
-    })
-    .catch(() => {});
-
-  const logoutBtn = document.getElementById('logout-btn');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', async () => {
-      try {
-        await fetch('/api/auth/logout', { method: 'POST' });
-      } catch {
-        // 退出失败也照样跳登录页：Cookie 可能已经没了，留在面板上没意义
-      }
-      location.replace('/login.html');
-    });
-  }
-
-  const cpBtn = document.getElementById('change-password-btn');
-  if (cpBtn) cpBtn.addEventListener('click', openChangePasswordDialog);
-
-  const twofaBtn = document.getElementById('twofa-btn');
-  if (twofaBtn) twofaBtn.addEventListener('click', open2faDialog);
-}
+const authUi = AuthUi.create({
+  fetchJson,
+  toast,
+  base64urlToBytes,
+  bytesToBase64url,
+});
 
 // 先确认登录再启动面板。不先问一句的话，未登录时十几个接口会并发打出去，
 // 全部 401，用户先看到一屏报错才被弹走。
@@ -4284,7 +2726,7 @@ async function bootPanel() {
     return;
   }
 
-  wireAuthUi(state.username);
+  authUi.wire(state.username);
 
   fileBrowserController.mount();
   browserResourcesController.mount();

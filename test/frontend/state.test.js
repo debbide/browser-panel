@@ -143,10 +143,15 @@ test('queued refresh preserves the active SSE connection', () => {
 });
 
 test('active panel activation keeps tab and header state synchronized', () => {
-  const source = read('public/panel-runtime.js');
-  assert.match(source, /function activateAppTab\(targetId/);
+  const source = read('public/core/app-navigation.js');
+  const runtime = read('public/panel-runtime.js');
+  const html = read('public/index.html');
   assert.match(source, /classList\.toggle\('active'/);
   assert.match(source, /tabContents\.forEach/);
+  assert.match(source, /function activate\(targetId/);
+  assert.doesNotMatch(runtime, /function activateAppTab\(targetId/);
+  assert.match(runtime, /AppNavigation\.create/);
+  assert.ok(html.indexOf('/core/app-navigation.js') < html.indexOf('/panel-runtime.js'));
 });
 
 test('task filter and backup selections use persistent module state', () => {
