@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
-const { applyProxyAliases } = require('../../server/runtime/env-builder');
+const db = require('../../server/db');
+const { applyProxyAliases, buildForegroundEnv } = require('../../server/runtime/env-builder');
 const fs = require('node:fs');
 
 test('browser proxy keeps all loopback control endpoints direct', () => {
@@ -24,6 +25,29 @@ test('browser proxy keeps all loopback control endpoints direct', () => {
     '::1',
   ]);
   assert.equal(env.no_proxy, env.NO_PROXY);
+});
+
+test('request tasks inherit the panel proxy as standard proxy variables', () => {
+  const original = db.getBrowserRuntimeSettings;
+  db.getBrowserRuntimeSettings = () => ({
+    proxyMode: 'launch',
+    proxyValue: 'http://proxy.test:8080',
+  });
+  try {
+    const env = buildForegroundEnv({
+      id: 9001,
+      type: 'python',
+      use_browser: 0,
+      params_json: '{}',
+    });
+    assert.equal(env.BROWSER_PROXY_MODE, 'launch');
+    assert.equal(env.BROWSER_PROXY, 'http://proxy.test:8080');
+    assert.equal(env.HTTP_PROXY, 'http://proxy.test:8080');
+    assert.equal(env.HTTPS_PROXY, 'http://proxy.test:8080');
+    assert.equal(env.ALL_PROXY, 'http://proxy.test:8080');
+  } finally {
+    db.getBrowserRuntimeSettings = original;
+  }
 });
 
 test('RuyiPage adapter forces local browser control traffic direct', () => {

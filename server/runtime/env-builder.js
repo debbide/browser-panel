@@ -440,10 +440,10 @@ function buildForegroundEnv(task, { screenshotPath } = {}) {
     }
   }
 
-  if (task && !task.use_browser && task._managedProxyUrl) {
+  if (task && !task.use_browser) {
     const proxyContract = resolveEffectiveProxyContract(task);
     system.BROWSER_PROXY_MODE = proxyContract.mode;
-    system.BROWSER_PROXY_VALUE = '';
+    system.BROWSER_PROXY_VALUE = proxyContract.value;
     system.BROWSER_PROXY = proxyContract.scriptProxy;
     for (const key of PROXY_ALIAS_KEYS) {
       system[key] = proxyContract.scriptProxy;

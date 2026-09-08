@@ -600,6 +600,7 @@ function appendOutputTail(current, chunk, limit = FOREGROUND_OUTPUT_MEMORY_LIMIT
 function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
   return new Promise((resolve) => {
     const startedAt = new Date().toISOString();
+    const taskEnv = buildEnv(task, screenshotPath);
     writeLogHeader(logPath, 'TASK START', [
       ['started_at', startedAt],
       ['mode', 'foreground'],
@@ -609,6 +610,8 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
       ['script_path', task.script_path],
       ['timeout_sec', task.timeout_sec],
       ['screenshot_path', screenshotPath],
+      ['proxy_mode', taskEnv.BROWSER_PROXY_MODE || 'direct'],
+      ['proxy_enabled', taskEnv.BROWSER_PROXY ? 'yes' : 'no'],
     ]);
     appendLog(logPath, section('SUBPROCESS OUTPUT'));
 
@@ -617,7 +620,7 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
     const { cmd, args } = getCommand(task);
     const child = spawn(cmd, args, {
       cwd: config.paths.root,
-      env: buildEnv(task, screenshotPath),
+      env: taskEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     activeChildren.set(task.id, child);
