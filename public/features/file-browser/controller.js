@@ -64,7 +64,7 @@
             <div class="files-mtime" title="${escapeHtml(ent.mtime || '')}">${escapeHtml(mtimeLabel)}</div>
             <div class="files-actions"></div>
           `;
-          const actions = row.querySelector('.files-actions');
+          const rowActions = row.querySelector('.files-actions');
           if (ent.type === 'dir') {
             row.addEventListener('click', (e) => {
               if (e.target.closest('button')) return;
@@ -80,7 +80,7 @@
                 e.stopPropagation();
                 openTasksFileEditor(ent.path);
               });
-              actions.appendChild(editBtn);
+              rowActions.appendChild(editBtn);
             }
             const dlBtn = document.createElement('button');
             dlBtn.type = 'button';
@@ -90,7 +90,7 @@
               e.stopPropagation();
               window.open(`/api/tasks-fs/download?path=${encodeURIComponent(ent.path)}`, '_blank');
             });
-            actions.appendChild(dlBtn);
+            rowActions.appendChild(dlBtn);
           }
           const delBtn = document.createElement('button');
           delBtn.type = 'button';
@@ -113,7 +113,7 @@
               }
             });
           });
-          actions.appendChild(delBtn);
+          rowActions.appendChild(delBtn);
           list.appendChild(row);
         }
         if (window.lucide) window.lucide.createIcons({ root: list });

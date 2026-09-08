@@ -34,6 +34,12 @@ test('file browser controller exposes idempotent lifecycle and navigation', () =
   assert.equal(typeof instance.currentPath, 'function');
 });
 
+test('file browser entry actions do not shadow controller dependencies', () => {
+  const source = read('public/features/file-browser/controller.js');
+  assert.doesNotMatch(source, /const actions = row\.querySelector/);
+  assert.match(source, /const rowActions = row\.querySelector/);
+});
+
 test('production page loads file browser modules before app', () => {
   const html = read('public/index.html');
   const api = html.indexOf('/features/file-browser/api.js?v=20260907a');
