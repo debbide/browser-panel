@@ -62,6 +62,8 @@ apt-get install -y --no-install-recommends \
   python3-tk \
   python3-setuptools \
   python3-wheel \
+  php-cli \
+  php-curl \
   xvfb \
   xauth \
   xdotool \

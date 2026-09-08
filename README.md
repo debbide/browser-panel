@@ -16,7 +16,7 @@
 
 ### 第一步：安装完整运行环境
 
-安装系统级 Node.js 22 + npm、Python 3 + pip、Chrome/Chromium、Xvfb、字体、构建工具及 Python 浏览器任务依赖（DrissionPage、SeleniumBase、Playwright Python 等）：
+安装系统级 Node.js 22 + npm、Python 3 + pip、PHP CLI + cURL、Chrome/Chromium、Xvfb、字体、构建工具及 Python 浏览器任务依赖（DrissionPage、SeleniumBase、Playwright Python 等）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/scripts/install-browser-stack.sh | bash
@@ -121,7 +121,7 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 bash /opt/browser-panel/scripts/install-browser-stack.sh
 ```
 
-会安装：系统级 Node.js 22 + npm、Python 3 + pip、构建工具、Chrome/Chromium、**Xvfb 系统服务常驻**（`xvfb-browser.service`，显示 `:1`）、字体、xdotool、ffmpeg、DrissionPage、SeleniumBase、Playwright（仅 Python 库）、pyrogram、Pillow、SpeechRecognition/pydub 等。
+会安装：系统级 Node.js 22 + npm、Python 3 + pip、PHP CLI + cURL、构建工具、Chrome/Chromium、**Xvfb 系统服务常驻**（`xvfb-browser.service`，显示 `:1`）、字体、xdotool、ffmpeg、DrissionPage、SeleniumBase、Playwright（仅 Python 库）、pyrogram、Pillow、SpeechRecognition/pydub 等。
 
 ---
 
