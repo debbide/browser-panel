@@ -80,6 +80,32 @@ test('browser task mutual exclusion respects parallel setting', async () => {
   assert.equal(isAnyBrowserTaskRunning(), false);
 });
 
+test('non-browser tasks remain unrestricted while a browser task is running', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const browserTask = { id: 53, type: 'python', use_browser: 1 };
+  const requestTasks = [
+    { id: 54, type: 'python', use_browser: 0 },
+    { id: 55, type: 'javascript', use_browser: 0 },
+    { id: 56, type: 'php', use_browser: 0 },
+    { id: 57, type: 'shell', use_browser: 0 },
+  ];
+  const running = runTaskSafely(53, async () => pending, {
+    task: browserTask,
+    allowParallel: false,
+  });
+
+  for (const task of requestTasks) {
+    assert.deepEqual(canStartTask(task.id, {
+      task,
+      allowParallel: false,
+    }), { ok: true });
+  }
+
+  release('done');
+  await running;
+});
+
 test('runTaskSafely releases state when execution throws', async () => {
   const task = { id: 61, use_browser: 0 };
   await assert.rejects(
