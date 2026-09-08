@@ -116,7 +116,7 @@ function filterBackupEnvEntries(entries) {
 }
 
 const CONFLICT_STRATEGIES = Object.freeze(['skip', 'overwrite', 'rename']);
-const SCRIPT_EXTENSIONS = Object.freeze(['.js', '.py']);
+const SCRIPT_EXTENSIONS = Object.freeze(['.js', '.py', '.php', '.sh']);
 
 // 附加文件的排除项与上限。上限是防呆:随手把一个装满数据的目录声明成附加模块,
 // 备份文件会大到没法用,这里宁可截断并明确告警,也不静默打包。
@@ -157,7 +157,7 @@ function sanitizeScriptPath(raw) {
   const resolved = resolveUnderTasks(raw, '脚本路径');
   const ext = path.extname(resolved.relative).toLowerCase();
   if (!SCRIPT_EXTENSIONS.includes(ext)) {
-    throw new Error(`只支持 .js / .py 脚本: ${resolved.relPath}`);
+    throw new Error(`只支持 .js / .py / .php / .sh 脚本: ${resolved.relPath}`);
   }
   return { relPath: resolved.relPath, absPath: resolved.absPath, ext };
 }

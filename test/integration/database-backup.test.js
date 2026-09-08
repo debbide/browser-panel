@@ -83,3 +83,29 @@ test('backup restore writes task data and rolls database back when file restore 
   `, 'browser-panel-backup-');
   assert.match(output, /backup-ok/);
 });
+
+test('backup import accepts php and shell entry scripts', () => {
+  runIsolated(String.raw`
+    const fs = require('fs');
+    const config = require('./config');
+    const backup = require('./server/backup');
+    fs.mkdirSync(config.paths.tasksDir, { recursive: true });
+    const payload = {
+      schema_version: backup.SCHEMA_VERSION,
+      exported_at: new Date().toISOString(),
+      tasks: [
+        { name: 'php task', type: 'php', script_path: 'tasks/example.php', config: {}, env: [] },
+        { name: 'shell task', type: 'shell', script_path: 'tasks/example.sh', config: {}, env: [] },
+      ],
+      profiles: [], groups: [],
+      scripts: [
+        { path: 'tasks/example.php', content: '<?php echo "ok";\\n' },
+        { path: 'tasks/example.sh', content: '#!/bin/sh\\necho ok\\n' },
+      ],
+    };
+    const restored = backup.importBackup(payload, { task_strategy: 'rename', script_strategy: 'overwrite' });
+    if (restored.created.length !== 2) throw new Error('task restore failed');
+    if (!fs.existsSync(config.paths.tasksDir + '/example.php')) throw new Error('php script missing');
+    if (!fs.existsSync(config.paths.tasksDir + '/example.sh')) throw new Error('shell script missing');
+  `, 'browser-panel-php-shell-backup-');
+});
