@@ -94,11 +94,12 @@ function createTaskService(dependencies) {
   }
 
   function remove(id) {
+    if (isTaskRunning(id)) return { removed: false, reason: 'task_running' };
     const result = db.deleteTask(id);
-    if (!result.changes) return false;
+    if (!result.changes) return { removed: false, reason: 'not_found' };
     reloadJobs(executeTask);
     if (emit) emit('tasks', { action: 'deleted', task_id: id });
-    return true;
+    return { removed: true };
   }
 
   return { list, create, update, remove };

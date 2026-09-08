@@ -29,7 +29,14 @@ function createTaskRouter(taskService) {
 
   router.delete('/:id', (req, res) => {
     try {
-      if (!taskService.remove(Number(req.params.id))) {
+      const result = taskService.remove(Number(req.params.id));
+      if (result.reason === 'task_running') {
+        return res.status(409).json({
+          message: 'Task is currently running and cannot be deleted',
+          code: 'task_running',
+        });
+      }
+      if (!result.removed) {
         return res.status(404).json({ message: 'Task not found or already deleted' });
       }
       res.json({ ok: true });
