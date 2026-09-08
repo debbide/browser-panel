@@ -791,7 +791,16 @@ const settingsController = SettingsController.create({
 const fileBrowserController = FileBrowserController.create({
   api: FileBrowserApi,
   view: FileBrowserView,
-  actions: { toast, dialogConfirm, loadScripts, pathBasename },
+  actions: {
+    toast,
+    dialogConfirm,
+    loadScripts,
+    pathBasename(path) {
+      const normalizedPath = String(path || '').replace(/\\/g, '/');
+      const separatorIndex = normalizedPath.lastIndexOf('/');
+      return separatorIndex >= 0 ? normalizedPath.slice(separatorIndex + 1) : normalizedPath;
+    },
+  },
 });
 
 const backupStorageController = BackupStorageController.create({
