@@ -55,3 +55,26 @@ test('stopTask interrupts an active foreground process', async () => {
   assert.notEqual(result.exitCode, 0);
   assert.equal(stopTask(taskId), false);
 });
+
+test('runTask contains foreground spawn failures without terminating the panel', async () => {
+  const originalPath = process.env.PATH;
+  const logPath = path.join(config.paths.logsDir, 'runtime-spawn-error.log');
+  process.env.PATH = '';
+  try {
+    const result = await runTask({
+      id: 9103,
+      name: 'runtime spawn error test',
+      type: 'php',
+      script_path: path.join(config.paths.tasksDir, 'missing.php'),
+      use_browser: 0,
+      timeout_sec: 30,
+    }, { logPath });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'script_error');
+    assert.match(result.errorText, /spawn php ENOENT/);
+    assert.match(fs.readFileSync(logPath, 'utf8'), /spawn php ENOENT/);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});

@@ -619,6 +619,7 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
     let stdoutText = '';
     let stderrText = '';
     let timedOut = false;
+    let settled = false;
     const timer = setTimeout(() => {
       timedOut = true;
       stderrText += '\nTask timeout exceeded';
@@ -638,9 +639,15 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
       lineWriter.write(text);
     });
 
-    child.on('close', (code, signal) => {
+    const finish = (code, signal, spawnError = null) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       activeChildren.delete(task.id);
+      if (spawnError) {
+        stderrText += `${stderrText ? '\n' : ''}${spawnError.message}`;
+        lineWriter.write(`${spawnError.message}\n`);
+      }
       lineWriter.flush();
       const logVerdict = evaluateLogSuccess(`${stdoutText}\n${stderrText}`, task);
       let ok = code === 0;
@@ -690,7 +697,10 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
         retryable: ok ? 0 : defaultRetryableByErrorCode(errorCode),
         retryReason: null,
       });
-    });
+    };
+
+    child.once('error', (error) => finish(null, null, error));
+    child.once('close', (code, signal) => finish(code, signal));
   });
 }
 
