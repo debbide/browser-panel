@@ -106,6 +106,9 @@
       form.type.value = TasksModel.resolveTaskType(task.script_path, task.type);
       form.script_path.value = task.script_path;
       form.timeout_sec.value = task.timeout_sec;
+      if (form.elements.use_browser) {
+        form.elements.use_browser.value = Number(task.use_browser) ? '1' : '0';
+      }
       // host2play 默认至少 900；已保存的更大值（如 1200）原样保留
       if (isHost2PlayScript(task.script_path) && Number(form.timeout_sec.value || 0) < 600) {
         form.timeout_sec.value = '900';

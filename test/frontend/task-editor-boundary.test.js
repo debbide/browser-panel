@@ -34,6 +34,7 @@ test('task editor preserves create, update, clone, delete and refresh contracts'
   assert.match(controller, /TasksApi\.deleteTask\(id\)/);
   assert.match(controller, /payload\.type = TasksModel\.resolveTaskType\(payload\.script_path, payload\.type\)/);
   assert.match(controller, /payload\.use_browser = String\(payload\.use_browser\) === '1'/);
+  assert.match(controller, /form\.elements\.use_browser\.value = Number\(task\.use_browser\) \? '1' : '0'/);
   assert.doesNotMatch(controller, /payload\.use_browser = !\[['"]python['"]/);
   assert.match(controller, /await loadTasks\(\)/);
   assert.match(controller, /openModal\('create'\)/);
