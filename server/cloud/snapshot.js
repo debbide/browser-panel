@@ -171,19 +171,12 @@ function copyTaskDir(srcDir, destDir) {
 }
 
 function countTaskFiles(rootDir) {
-  let count = 0;
-  const walk = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith('.')) continue;
-      if (TASK_EXCLUDE_NAMES.has(entry.name)) continue;
-      if (entry.name.endsWith('.pyc')) continue;
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(entryPath);
-      else if (entry.isFile() && SCRIPT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) count += 1;
-    }
-  };
-  if (fs.existsSync(rootDir)) walk(rootDir);
-  return count;
+  if (!fs.existsSync(rootDir)) return 0;
+  return fs.readdirSync(rootDir, { withFileTypes: true }).filter((entry) => (
+    entry.isFile()
+    && !entry.name.startsWith('.')
+    && SCRIPT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
+  )).length;
 }
 
 function runTar(cwd, tarPath) {
