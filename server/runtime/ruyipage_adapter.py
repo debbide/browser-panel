@@ -1,7 +1,22 @@
 import os
 
 
+def force_loopback_direct():
+    entries = [
+        entry.strip()
+        for entry in (os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or "").split(",")
+        if entry.strip()
+    ]
+    for host in ("localhost", "127.0.0.1", "::1"):
+        if host not in entries:
+            entries.append(host)
+    value = ",".join(entries)
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value
+
+
 def launch_browser():
+    force_loopback_direct()
     try:
         from ruyipage import launch
     except Exception as exc:
@@ -17,6 +32,7 @@ def launch_browser():
     kwargs = {
         "headless": headless,
         "close_on_exit": True,
+        "allow_system_access": True,
     }
     if browser_path:
         kwargs["browser_path"] = browser_path
