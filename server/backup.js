@@ -973,7 +973,9 @@ function buildTaskRow(plan, profileIdByName, groupIdByName, existing = null) {
 
   return {
     name: plan.finalName,
-    type: config_.type === 'python' ? 'python' : 'javascript',
+    type: ['javascript', 'python', 'php', 'shell'].includes(config_.type)
+      ? config_.type
+      : 'javascript',
     script_path: plan.finalScriptPath,
     cron_expr: String(config_.cron_expr || ''),
     schedule_mode: ['fixed', 'interval', 'daily_window'].includes(config_.schedule_mode)

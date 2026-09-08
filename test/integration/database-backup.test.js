@@ -107,5 +107,8 @@ test('backup import accepts php and shell entry scripts', () => {
     if (restored.created.length !== 2) throw new Error('task restore failed');
     if (!fs.existsSync(config.paths.tasksDir + '/example.php')) throw new Error('php script missing');
     if (!fs.existsSync(config.paths.tasksDir + '/example.sh')) throw new Error('shell script missing');
+    const restoredTasks = require('./server/db').listTasks();
+    if (restoredTasks.find((task) => task.name === 'php task')?.type !== 'php') throw new Error('php task type lost');
+    if (restoredTasks.find((task) => task.name === 'shell task')?.type !== 'shell') throw new Error('shell task type lost');
   `, 'browser-panel-php-shell-backup-');
 });
