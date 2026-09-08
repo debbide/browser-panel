@@ -30,6 +30,12 @@ function flush() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+function loadManagedEnvironment() {
+  const context = vm.createContext({ window: {} });
+  vm.runInContext(read('public/features/environment/managed-env.js'), context);
+  return context.window.ManagedEnvironment;
+}
+
 function createHarness({ responses = [] } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <select id="browser-profile-select"><option value="7" selected>old</option></select>
@@ -375,11 +381,11 @@ test('legacy task edit restores profile mode and selected profile with missing-p
     setTaskBrowserProxyInput() {},
     taskParamsBlock: null,
     filterManagedEnvRows: () => [],
+    findManagedParamValue: loadManagedEnvironment().findManagedParamValue,
     taskEnvEditor: { setRows() {} },
   };
   const { fillTaskForm } = evaluateFunctions([
     'parseParamsJson',
-    'findManagedParamValue',
     'syncTaskParamsUI',
     'setTaskProfileMode',
     'fillTaskForm',
