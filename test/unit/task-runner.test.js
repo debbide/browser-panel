@@ -79,14 +79,14 @@ test('runTask contains foreground spawn failures without terminating the panel',
   }
 });
 
-test('runTask falls back to system python when the virtual environment is absent', async () => {
-  const scriptPath = path.join(config.paths.tasksDir, 'runtime-python-fallback.py');
-  const logPath = path.join(config.paths.logsDir, 'runtime-python-fallback.log');
-  fs.writeFileSync(scriptPath, 'print("python-fallback-ok")\n');
+test('runTask executes python tasks with the system python', async () => {
+  const scriptPath = path.join(config.paths.tasksDir, 'runtime-system-python.py');
+  const logPath = path.join(config.paths.logsDir, 'runtime-system-python.log');
+  fs.writeFileSync(scriptPath, 'print("system-python-ok")\n');
 
   const result = await runTask({
     id: 9104,
-    name: 'runtime python fallback test',
+    name: 'runtime system python test',
     type: 'python',
     script_path: scriptPath,
     use_browser: 0,
@@ -95,7 +95,7 @@ test('runTask falls back to system python when the virtual environment is absent
 
   assert.equal(result.status, 'success');
   assert.equal(result.exitCode, 0);
-  assert.match(fs.readFileSync(logPath, 'utf8'), /python-fallback-ok/);
+  assert.match(fs.readFileSync(logPath, 'utf8'), /system-python-ok/);
 });
 
 test('runTask bounds captured request output while preserving the full log', async () => {

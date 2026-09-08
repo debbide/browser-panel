@@ -581,8 +581,7 @@ function buildEnv(task, screenshotPath) {
 
 function getCommand(task) {
   if (task.type === 'python') {
-    const virtualEnvPython = path.join(config.paths.root, '.venv', 'bin', 'python');
-    return { cmd: fs.existsSync(virtualEnvPython) ? virtualEnvPython : 'python3', args: [task.script_path] };
+    return { cmd: 'python3', args: [task.script_path] };
   }
   if (task.type === 'php') {
     return { cmd: 'php', args: [task.script_path] };
