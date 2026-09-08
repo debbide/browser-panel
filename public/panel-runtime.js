@@ -209,6 +209,7 @@ const TIMEZONE_PRESETS = [
 
 const setupPresetCustomControl = PresetCustomControl.setup;
 const getPresetCustomValue = PresetCustomControl.getValue;
+const updateProxyModeUI = ProxyModeControl.update;
 
 const {
   PROXY_ENV_ALIAS_KEYS,
@@ -3025,14 +3026,6 @@ const brRuyiPath = document.getElementById('br-ruyi-path');
 const brProxyMode = document.getElementById('br-proxy-mode');
 const brProxyValue = document.getElementById('br-proxy-value');
 const brProxyValueField = document.getElementById('br-proxy-value-field');
-
-function updateProxyModeUI(modeEl, valueEl, fieldEl) {
-  const mode = String(modeEl?.value || 'direct');
-  const acceptsValue = mode === 'launch';
-  if (!acceptsValue && valueEl) valueEl.value = '';
-  if (fieldEl) fieldEl.hidden = !acceptsValue;
-  if (valueEl) valueEl.disabled = !acceptsValue;
-}
 
 function collectBrowserRuntimeFormPayload() {
   const proxyMode = brProxyMode?.value || 'direct';
