@@ -47,6 +47,7 @@ const HEADER_LEN = 7 + 1 + 4 * 3 + 16 + 12;   // magic+version+params+salt+nonce
 // 与 backup.js 相同的排除集：venv/node_modules 这类体积大、可重建的东西不进快照。
 // 额外的 *.pyc 和隐藏文件也在拷贝/打包时过滤。
 const TASK_EXCLUDE_NAMES = new Set([...ASSET_EXCLUDED_NAMES, '__pycache__']);
+const SCRIPT_EXTENSIONS = new Set(['.js', '.py', '.php', '.sh']);
 
 function deriveKey(passphrase, salt) {
   const key = crypto.scryptSync(String(passphrase), salt, SCRYPT_KEYLEN, {
@@ -169,6 +170,22 @@ function copyTaskDir(srcDir, destDir) {
   walk(srcDir, destDir);
 }
 
+function countTaskFiles(rootDir) {
+  let count = 0;
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue;
+      if (TASK_EXCLUDE_NAMES.has(entry.name)) continue;
+      if (entry.name.endsWith('.pyc')) continue;
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(entryPath);
+      else if (entry.isFile() && SCRIPT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) count += 1;
+    }
+  };
+  if (fs.existsSync(rootDir)) walk(rootDir);
+  return count;
+}
+
 function runTar(cwd, tarPath) {
   const args = [
     '-czf', tarPath,
@@ -218,6 +235,7 @@ function collectCounts() {
       counts[key] = 0;
     }
   }
+  counts.scripts = countTaskFiles(config.paths.tasksDir);
   return counts;
 }
 
@@ -357,7 +375,12 @@ async function peekManifest({ filePath, passphrase }) {
     runUntar(tarPath, extractDir);
     const manifestPath = path.join(extractDir, 'manifest.json');
     if (!fs.existsSync(manifestPath)) throw new Error('快照缺少 manifest.json');
-    return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.counts = manifest.counts || {};
+    if (!Number.isFinite(Number(manifest.counts.scripts))) {
+      manifest.counts.scripts = countTaskFiles(path.join(extractDir, 'tasks'));
+    }
+    return manifest;
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
   }

@@ -162,7 +162,7 @@ test('backup import failure keeps modal open and re-enables confirmation', async
 test('cloud backup listing renders rows and restore requires preview confirmation', async () => {
   const harness = createHarness({ responses: [
     { data: [{ key: 'daily/<x>.json', name: 'daily/<x>.json', size: 12, lastModified: '2026-01-02T03:04:05Z' }] },
-    { data: { name: 'daily/<x>.json', manifest: { counts: { tasks: 1, profiles: 0, users: 0, envEntries: 0 }, includes: [] } } },
+    { data: { name: 'daily/<x>.json', manifest: { counts: { tasks: 1, scripts: 2, profiles: 0, users: 0, envEntries: 0 }, includes: [] } } },
     { data: { created: [1] } },
   ] });
   await harness.loadCloudBackupList();
@@ -172,6 +172,7 @@ test('cloud backup listing renders rows and restore requires preview confirmatio
   assert.match(list.textContent, /12 B/);
   assert.equal(list.innerHTML.includes('<x>'), false);
   await harness.previewCloudBackup('daily/<x>.json');
+  assert.match(harness.elements.cloudRestoreModal.textContent, /1 个任务、2 个脚本/);
   assert.deepEqual(harness.calls[1], ['/api/cloud-backup/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'daily/<x>.json' }) }]);
   assert.equal(harness.elements.cloudRestoreModal.hidden, false);
   assert.equal(harness.elements.cloudRestoreMask.hidden, false);

@@ -418,7 +418,8 @@
       try {
         const result = await api.previewCloudBackup({ key });
         const preview = result.data || {};
-        cloudRestoreModal.innerHTML = `<div class="modal-panel"><div class="modal-header"><h2>还原云端备份</h2><button type="button" class="icon-btn" data-cloud-restore-close>关闭</button></div><div class="modal-body"><p>快照包含 ${preview.taskCount || 0} 个任务、${preview.scriptCount || 0} 个脚本。</p><div class="backup-import-actions"><button type="button" class="alt" data-cloud-restore-close>取消</button><button type="button" data-cloud-restore-confirm>确认还原</button></div></div></div>`;
+        const counts = preview.manifest?.counts || {};
+        cloudRestoreModal.innerHTML = `<div class="modal-panel"><div class="modal-header"><h2>还原云端备份</h2><button type="button" class="icon-btn" data-cloud-restore-close>关闭</button></div><div class="modal-body"><p>快照包含 ${counts.tasks || 0} 个任务、${counts.scripts || 0} 个脚本。</p><div class="backup-import-actions"><button type="button" class="alt" data-cloud-restore-close>取消</button><button type="button" data-cloud-restore-confirm>确认还原</button></div></div></div>`;
         cloudRestoreModal.hidden = false;
         cloudRestoreModal.classList.add('open');
         if (cloudRestoreMask) cloudRestoreMask.hidden = false;
