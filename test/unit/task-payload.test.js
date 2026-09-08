@@ -3,9 +3,17 @@ const assert = require('node:assert/strict');
 
 const {
   normalizeTaskType,
+  isPureRequestTaskType,
   buildTaskScriptFilename,
   resolveTaskScriptPath,
 } = require('../../server/tasks/task-payload');
+
+test('pure request task types do not require a browser', () => {
+  assert.equal(isPureRequestTaskType('python'), true);
+  assert.equal(isPureRequestTaskType('php'), true);
+  assert.equal(isPureRequestTaskType('shell'), true);
+  assert.equal(isPureRequestTaskType('javascript'), false);
+});
 
 test('normalizeTaskType preserves supported product task types', () => {
   assert.equal(normalizeTaskType('javascript'), 'javascript');

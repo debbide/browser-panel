@@ -64,6 +64,19 @@ test('task service preserves explicit script bindings and update bindings', () =
   assert.deepEqual(dependencies.calls, [['create', created.id], ['reload'], ['update', created.id], ['reload']]);
 });
 
+test('task service disables browser use for pure request task types', () => {
+  const dependencies = createDependencies();
+  const service = createTaskService(dependencies);
+
+  for (const type of ['python', 'php', 'shell']) {
+    const task = service.create({ name: type, type, use_browser: true });
+    assert.equal(task.use_browser, 0);
+  }
+
+  const browserTask = service.create({ name: 'browser', type: 'javascript' });
+  assert.equal(browserTask.use_browser, 1);
+});
+
 test('task service does not broadcast or reload before a failed database mutation', () => {
   const events = [];
   const dependencies = createDependencies({

@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeTaskType, resolveTaskScriptPath } = require('./task-payload');
+const { normalizeTaskType, isPureRequestTaskType, resolveTaskScriptPath } = require('./task-payload');
 
 function parseUsePersistentFlag(value, defaultValue = 0) {
   if (value === undefined || value === null || value === '') return defaultValue ? 1 : 0;
@@ -43,7 +43,7 @@ function createTaskService(dependencies) {
       daily_day_max: payload.daily_day_max ? Number(payload.daily_day_max) : null,
       next_run_at: payload.next_run_at ? String(payload.next_run_at) : existing?.next_run_at || null,
       enabled: payload.enabled ? 1 : 0,
-      use_browser: payload.use_browser === false ? 0 : 1,
+      use_browser: isPureRequestTaskType(type) ? 0 : (payload.use_browser === false ? 0 : 1),
       use_persistent: parseUsePersistentFlag(payload.use_persistent, Number(existing?.use_persistent) ? 1 : 0),
       timeout_sec: Number(payload.timeout_sec || 300),
       params_json: existing?.params_json || '{}',

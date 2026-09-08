@@ -259,7 +259,7 @@
       payload.enabled = Boolean(schedule.enabled);
       payload.condition_enabled = Boolean(conditionPayload.condition_enabled);
       payload.type = TasksModel.resolveTaskType(payload.script_path, payload.type);
-      payload.use_browser = true;
+      payload.use_browser = !['python', 'php', 'shell'].includes(payload.type);
       // 默认临时；仅当用户明确选「持久配置」才写 use_persistent=1
       const wantPersistent = !isTaskTempProfileMode();
       payload.use_persistent = wantPersistent;

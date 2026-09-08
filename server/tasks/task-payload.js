@@ -1,10 +1,15 @@
 'use strict';
 
 const SUPPORTED_TASK_TYPES = new Set(['javascript', 'python', 'php', 'shell']);
+const PURE_REQUEST_TASK_TYPES = new Set(['python', 'php', 'shell']);
 
 function normalizeTaskType(value) {
   const type = String(value || '').trim().toLowerCase();
   return SUPPORTED_TASK_TYPES.has(type) ? type : 'javascript';
+}
+
+function isPureRequestTaskType(value) {
+  return PURE_REQUEST_TASK_TYPES.has(normalizeTaskType(value));
 }
 
 function slugifyScriptName(input) {
@@ -38,6 +43,7 @@ function resolveTaskScriptPath(taskName, type, currentScriptPath = '') {
 
 module.exports = {
   normalizeTaskType,
+  isPureRequestTaskType,
   slugifyScriptName,
   buildTaskScriptFilename,
   resolveTaskScriptPath,
