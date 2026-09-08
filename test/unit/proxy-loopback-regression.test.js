@@ -4,6 +4,7 @@ const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const { applyProxyAliases } = require('../../server/runtime/env-builder');
+const fs = require('node:fs');
 
 test('browser proxy keeps all loopback control endpoints direct', () => {
   const env = {
@@ -45,4 +46,12 @@ test('RuyiPage adapter forces local browser control traffic direct', () => {
     'internal.test,localhost,127.0.0.1,::1',
     'internal.test,localhost,127.0.0.1,::1',
   ]);
+});
+
+test('browser launcher exports loopback bypass to direct Python scripts', () => {
+  const launcherPath = path.resolve(__dirname, '../../server/runtime/browser-launcher.js');
+  const source = fs.readFileSync(launcherPath, 'utf8');
+
+  assert.match(source, /\['NO_PROXY', proxyAliasEnv\.NO_PROXY/);
+  assert.match(source, /\['no_proxy', proxyAliasEnv\.no_proxy/);
 });

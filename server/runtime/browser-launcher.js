@@ -939,6 +939,8 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   const systemPairs = [
     ['DISPLAY', config.browser.display],
     ['XAUTHORITY', config.browser.xauthority],
+    ['NO_PROXY', proxyAliasEnv.NO_PROXY || '127.0.0.1,localhost,::1'],
+    ['no_proxy', proxyAliasEnv.no_proxy || proxyAliasEnv.NO_PROXY || '127.0.0.1,localhost,::1'],
     ['BROWSER_USER_DATA_DIR', effectiveUserDataDir],
     // Scripts (woiden/hax DP) key off this: 1 => treat as TEMP + cleanup after quit
     ['USE_TEMP_PROFILE', useTempProfile ? '1' : '0'],
