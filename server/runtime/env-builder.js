@@ -26,6 +26,8 @@ const SYSTEM_PROTECTED_KEYS = new Set([
   'https_proxy',
   'ALL_PROXY',
   'all_proxy',
+  'NO_PROXY',
+  'no_proxy',
   'BROWSER_LOCALE',
   'BROWSER_TIMEZONE',
   'BROWSER_HEADLESS',
@@ -291,8 +293,16 @@ function applyProxyAliases(env, { overwrite = false } = {}) {
         env[key] = effectiveProxy;
       }
     }
-    if (overwrite || !String(env.NO_PROXY || '').trim()) env.NO_PROXY = '127.0.0.1,localhost,::1';
-    if (overwrite || !String(env.no_proxy || '').trim()) env.no_proxy = '127.0.0.1,localhost,::1';
+    const noProxyEntries = String(env.NO_PROXY || env.no_proxy || '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    for (const loopbackHost of ['127.0.0.1', 'localhost', '::1']) {
+      if (!noProxyEntries.includes(loopbackHost)) noProxyEntries.push(loopbackHost);
+    }
+    const noProxy = noProxyEntries.join(',');
+    env.NO_PROXY = noProxy;
+    env.no_proxy = noProxy;
   }
 
   const chrome = String(env.BROWSER_CHROME_PATH || env.CHROME_PATH || env.CHROMIUM_PATH || '').trim();
