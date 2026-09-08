@@ -22,11 +22,9 @@
   global.createStateStore = createStateStore;
 })(window);
 
-let editingId = null;
 let tasksCache = [];
 let runsCache = [];
 let runningTaskIds = new Set();
 let stoppingTaskIds = new Set();
 let scriptsCache = [];
 let lastRunsByTask = new Map();
-let selectedScriptPath = '';

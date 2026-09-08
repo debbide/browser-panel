@@ -72,7 +72,7 @@ function extractFunction(source, name) {
 }
 
 function evaluateFunctions(names, globals = {}, accessors = {}) {
-  const source = `${read('public/core/dom.js')}\n${read('public/panel-runtime.js')}`;
+  const source = `${read('public/core/dom.js')}\n${read('public/features/tasks/editor-controller.js')}\n${read('public/panel-runtime.js')}`;
   const declarations = names.map((name) => extractFunction(source, name)).join('\n');
   const context = vm.createContext({ URLSearchParams, Error, String, Number, Date, ...globals });
   const accessorDeclarations = Object.entries(accessors)
