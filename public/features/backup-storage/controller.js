@@ -572,7 +572,9 @@
       on(elements.cloudBackupRefreshBtn, 'click', loadCloudBackupList);
       on(elements.cloudBackupSchedule, 'change', updateCloudBackupTimeFields);
       on(elements.cloudBackupUploadBtn, 'click', () => elements.cloudBackupUploadInput?.click());
-      on(elements.cloudBackupUploadInput, 'change', actions.uploadCloudBackupRestore);
+      if (typeof actions.uploadCloudBackupRestore === 'function') {
+        on(elements.cloudBackupUploadInput, 'change', actions.uploadCloudBackupRestore);
+      }
       actions.mount?.({ api, view, state });
     }
 

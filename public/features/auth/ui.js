@@ -2,9 +2,6 @@
   function create(deps = {}) {
     const requestJson = deps.fetchJson;
     const notify = deps.toast || (() => {});
-    const base64urlToBytes = deps.base64urlToBytes;
-    const bytesToBase64url = deps.bytesToBase64url;
-
     function openChangePasswordDialog() {
       const mask = document.createElement('div');
       mask.className = 'modal-mask open';

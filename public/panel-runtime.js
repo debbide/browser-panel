@@ -880,7 +880,6 @@ const backupStorageController = BackupStorageController.create({
     formatBytes,
     dialogConfirm,
     confirm: (message) => window.confirm(message),
-    uploadCloudBackupRestore,
     warn: (...args) => console.warn(...args),
     error: (...args) => console.error(...args),
     downloadBlob(blob, filename) {
@@ -1786,6 +1785,12 @@ function normalizePluginPackagesForUi(value) {
     .map(item => item.trim())
     .filter(Boolean)
     .join(', ');
+}
+
+function setSuccessHeuristicsStatus(text, color) {
+  if (!successHeuristicsStatus) return;
+  successHeuristicsStatus.textContent = text;
+  if (color) successHeuristicsStatus.style.color = color;
 }
 
 async function loadSuccessHeuristicsSettings() {
@@ -2715,8 +2720,6 @@ if (globalEnvSaveBtn) {
 const authUi = AuthUi.create({
   fetchJson,
   toast,
-  base64urlToBytes,
-  bytesToBase64url,
 });
 
 // 先确认登录再启动面板。不先问一句的话，未登录时十几个接口会并发打出去，
