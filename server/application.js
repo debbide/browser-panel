@@ -199,6 +199,7 @@ async function executeTask(id, options = {}) {
   } finally {
     if (lease) warpManager.releaseProxy(sessionId);
     logStream.end(run.log_path, { status: completedRun ? completedRun.status : 'failed' });
+    events.emit('task', { taskId: id });
   }
 }
 
