@@ -98,9 +98,17 @@ function createTelegramRouteHandlers({
           stopTelegramPolling();
           if (receiveMode === 'webhook') {
             await registerTelegramWebhook(botToken, webhookUrl);
-          } else {
+          } else if (receiveMode === 'polling') {
             await deleteTelegramWebhook(botToken);
-            if (receiveMode === 'polling') startTelegramPolling(botToken);
+            startTelegramPolling(botToken);
+          } else if (modeChanged && previousMode === 'webhook') {
+            // Only a real transition away from webhook mode needs remote cleanup.
+            // Saving a new notification-only token must remain local and immediate.
+            try {
+              await deleteTelegramWebhook(current.botToken || botToken);
+            } catch (error) {
+              console.warn('[telegram] unable to clear webhook in notify mode:', error.message);
+            }
           }
         }
       } catch (error) {

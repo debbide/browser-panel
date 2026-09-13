@@ -45,20 +45,20 @@ test('telegram settings and webhook routes preserve auth, responses, and lifecyc
         if (missing.status !== 400 || missing.body.message !== 'Bot Token and Chat ID are required') throw new Error('required settings contract failed');
         const invalidUrl = await request('/api/settings/telegram', {
           method: 'POST', headers,
-          body: JSON.stringify({ botToken: '123456:test-token', chatId: '42', webhookUrl: 'http://insecure.example.test' }),
+          body: JSON.stringify({ botToken: '123456:test-token', chatId: '42', receiveMode: 'webhook', webhookUrl: 'http://insecure.example.test' }),
         });
         if (invalidUrl.status !== 400 || !invalidUrl.body.message) throw new Error('webhook URL boundary failed');
         const saved = await request('/api/settings/telegram', {
           method: 'POST', headers,
-          body: JSON.stringify({ botToken: '123456:test-token', chatId: '42', proxy: ' socks5://127.0.0.1:1080 ', webhookUrl: '' }),
+          body: JSON.stringify({ botToken: '123456:test-token', chatId: '42', proxy: ' socks5://127.0.0.1:1080 ', receiveMode: 'notify', webhookUrl: '' }),
         });
-        if (saved.status !== 200 || saved.body.data.configured !== true || saved.body.data.botTokenMasked.includes('test-token') || saved.body.data.proxy !== 'socks5://127.0.0.1:1080' || saved.body.data.webhookStatus !== 'needs_url') throw new Error('settings persistence contract failed: ' + JSON.stringify(saved));
+        if (saved.status !== 200 || saved.body.data.configured !== true || saved.body.data.botTokenMasked.includes('test-token') || saved.body.data.proxy !== 'socks5://127.0.0.1:1080' || saved.body.data.receiveMode !== 'notify' || saved.body.data.webhookStatus !== 'notify') throw new Error('settings persistence contract failed: ' + JSON.stringify(saved));
         const testMessage = await request('/api/settings/telegram/test', { method: 'POST', headers, body: '{}' });
         if (testMessage.status !== 400 || !testMessage.body.message) throw new Error('test message failure contract failed');
-        const forbidden = await request('/api/telegram/webhook/wrong-token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-        if (forbidden.status !== 403 || forbidden.body.message !== 'Forbidden') throw new Error('webhook token boundary failed');
-        const accepted = await request('/api/telegram/webhook/123456:test-token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-        if (accepted.status !== 200 || accepted.body.ok !== true) throw new Error('webhook lifecycle acknowledgement failed');
+        const disabledWrongToken = await request('/api/telegram/webhook/wrong-token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+        if (disabledWrongToken.status !== 409 || disabledWrongToken.body.message !== 'Webhook mode is disabled') throw new Error('disabled webhook boundary failed');
+        const disabledConfiguredToken = await request('/api/telegram/webhook/123456:test-token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+        if (disabledConfiguredToken.status !== 409 || disabledConfiguredToken.body.message !== 'Webhook mode is disabled') throw new Error('disabled webhook lifecycle boundary failed');
         await shutdown('telegram route regression test');
         process.stdout.write(JSON.stringify({ checked: 9 }));
       })().catch((error) => { console.error(error); process.exitCode = 1; });
