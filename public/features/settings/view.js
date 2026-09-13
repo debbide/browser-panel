@@ -1,6 +1,9 @@
 (function exposeSettingsView(global) {
   function renderTelegram(elements, data = {}) {
-    const webhookRegistered = data.webhookStatus === 'registered';
+    const receiveMode = data.receiveMode || 'notify';
+    const webhookRegistered = receiveMode === 'webhook' && data.webhookStatus === 'registered';
+    (elements.receiveModes || []).forEach((input) => { input.checked = input.value === receiveMode; });
+    if (elements.webhookFields) elements.webhookFields.hidden = receiveMode !== 'webhook';
     if (elements.status) {
       if (!data.configured) {
         elements.status.textContent = '状态：未配置';
@@ -42,6 +45,7 @@
       botToken: elements.botToken ? elements.botToken.value.trim() : '',
       chatId: elements.chatId ? elements.chatId.value.trim() : '',
       proxy: elements.proxy ? elements.proxy.value.trim() : '',
+      receiveMode: ((elements.receiveModes || []).find((input) => input.checked) || {}).value || 'notify',
       webhookUrl: elements.webhookUrl ? elements.webhookUrl.value.trim() : '',
     };
   }

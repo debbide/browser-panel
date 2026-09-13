@@ -99,6 +99,8 @@ const tgBotToken = document.getElementById('tg-bot-token');
 const tgChatId = document.getElementById('tg-chat-id');
 const tgProxy = document.getElementById('tg-proxy');
 const tgWebhookUrl = document.getElementById('tg-webhook-url');
+const tgWebhookFields = document.getElementById('tg-webhook-fields');
+const tgReceiveModes = Array.from(document.querySelectorAll('input[name="receiveMode"]'));
 const tgTokenHelp = document.getElementById('tg-token-help');
 const tgWebhookHelp = document.getElementById('tg-webhook-help');
 const tgSaveBtn = document.getElementById('tg-save-btn');
@@ -764,6 +766,8 @@ const settingsController = SettingsController.create({
       chatId: tgChatId,
       proxy: tgProxy,
       webhookUrl: tgWebhookUrl,
+      webhookFields: tgWebhookFields,
+      receiveModes: tgReceiveModes,
       tokenHelp: tgTokenHelp,
       webhookHelp: tgWebhookHelp,
       saveButton: tgSaveBtn,

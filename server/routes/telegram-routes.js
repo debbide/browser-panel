@@ -7,6 +7,9 @@ function createTelegramRouteHandlers({
   buildRetryStartedMessage,
   normalizeWebhookPublicUrl,
   registerTelegramWebhook,
+  deleteTelegramWebhook,
+  startTelegramPolling,
+  stopTelegramPolling,
   sendTelegramMessage,
   triggerTaskExecutionInBackground,
 }) {
@@ -17,6 +20,7 @@ function createTelegramRouteHandlers({
       chatId: settings.chatId || '',
       botTokenMasked: maskTelegramToken(settings.botToken),
       proxy: settings.proxy || '',
+      receiveMode: settings.receiveMode || 'notify',
       webhookUrl: settings.webhookUrl || '',
       webhookStatus: settings.webhookStatus || (isTelegramConfigured(settings) ? 'needs_url' : 'unconfigured'),
       webhookError: settings.webhookError || '',
@@ -63,47 +67,58 @@ function createTelegramRouteHandlers({
       const current = db.getTelegramSettings();
       const botToken = resolveSettingValue(payload.botToken, current.botToken);
       const chatId = resolveSettingValue(payload.chatId, current.chatId);
+      const previousMode = current.receiveMode || 'notify';
+      const receiveMode = ['notify', 'polling', 'webhook'].includes(payload.receiveMode)
+        ? payload.receiveMode
+        : previousMode;
 
       if (!botToken || !chatId) {
         return res.status(400).json({ message: 'Bot Token and Chat ID are required' });
       }
 
-      let webhookUrl = '';
+      let webhookUrl = current.webhookUrl || '';
+      if (receiveMode === 'webhook') {
+        try {
+          const rawWebhookUrl = payload.webhookUrl === undefined
+            ? (current.webhookUrl || inferWebhookOrigin(req))
+            : payload.webhookUrl;
+          webhookUrl = normalizeWebhookPublicUrl(rawWebhookUrl);
+          if (!webhookUrl) throw new Error('Webhook 模式需要填写公网 HTTPS 地址');
+        } catch (error) {
+          return res.status(400).json({ message: error.message || 'Webhook URL is invalid' });
+        }
+      }
+
+      const tokenChanged = botToken !== current.botToken;
+      const modeChanged = receiveMode !== previousMode;
+      const urlChanged = receiveMode === 'webhook' && webhookUrl !== (current.webhookUrl || '');
+
       try {
-        const rawWebhookUrl = payload.webhookUrl === undefined
-          ? (current.webhookUrl || inferWebhookOrigin(req))
-          : payload.webhookUrl;
-        webhookUrl = normalizeWebhookPublicUrl(rawWebhookUrl);
+        if (tokenChanged || modeChanged || urlChanged) {
+          stopTelegramPolling();
+          if (receiveMode === 'webhook') {
+            await registerTelegramWebhook(botToken, webhookUrl);
+          } else {
+            await deleteTelegramWebhook(botToken);
+            if (receiveMode === 'polling') startTelegramPolling(botToken);
+          }
+        }
       } catch (error) {
-        return res.status(400).json({ message: error.message || 'Webhook URL is invalid' });
+        const message = String(error.message || 'Telegram 接收模式配置失败')
+          .split(botToken).join('<redacted>')
+          .slice(0, 500);
+        db.setSetting('telegram_webhook_error', message);
+        return res.status(400).json({ message });
       }
 
       db.setSetting('telegram_bot_token', botToken);
       db.setSetting('telegram_chat_id', chatId);
-      if (payload.proxy !== undefined) {
-        db.setSetting('telegram_proxy', String(payload.proxy).trim());
-      }
-      db.setSetting('telegram_webhook_url', webhookUrl);
-
-      if (!webhookUrl) {
-        db.setSetting('telegram_webhook_status', 'needs_url');
-        db.setSetting('telegram_webhook_error', '请填写公网 HTTPS 地址后保存，面板会自动注册 Webhook');
-        return res.json({ data: normalizeSettingsResponse() });
-      }
-
-      try {
-        await registerTelegramWebhook(botToken, webhookUrl);
-        db.setSetting('telegram_webhook_status', 'registered');
-        db.setSetting('telegram_webhook_error', '');
-        return res.json({ data: normalizeSettingsResponse() });
-      } catch (error) {
-        const message = String(error.message || 'Telegram Webhook 注册失败')
-          .replace(new RegExp(botToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<redacted>')
-          .slice(0, 500);
-        db.setSetting('telegram_webhook_status', 'error');
-        db.setSetting('telegram_webhook_error', message);
-        return res.json({ data: normalizeSettingsResponse() });
-      }
+      db.setSetting('telegram_receive_mode', receiveMode);
+      if (payload.proxy !== undefined) db.setSetting('telegram_proxy', String(payload.proxy).trim());
+      if (receiveMode === 'webhook') db.setSetting('telegram_webhook_url', webhookUrl);
+      db.setSetting('telegram_webhook_status', receiveMode === 'webhook' ? 'registered' : receiveMode);
+      db.setSetting('telegram_webhook_error', '');
+      return res.json({ data: normalizeSettingsResponse() });
     } catch (error) {
       return res.status(500).json({ message: error.message || '保存 Telegram 设置失败' });
     }
@@ -120,6 +135,9 @@ function createTelegramRouteHandlers({
 
   async function receiveWebhook(req, res) {
     const settings = db.getTelegramSettings();
+    if (!req.__polling && (settings.receiveMode || 'notify') !== 'webhook') {
+      return res.status(409).json({ message: 'Webhook mode is disabled' });
+    }
     if (!settings.botToken || req.params.token !== settings.botToken) {
       return res.status(403).json({ message: 'Forbidden' });
     }
@@ -171,7 +189,15 @@ function createTelegramRouteHandlers({
     }
   }
 
-  return { getSettings, saveSettings, testSettings, receiveWebhook };
+  async function receivePollingUpdate(update) {
+    const settings = db.getTelegramSettings();
+    if ((settings.receiveMode || 'notify') !== 'polling') return;
+    const req = { body: update, params: { token: settings.botToken }, __polling: true };
+    const res = { status() { return this; }, json() { return this; } };
+    await receiveWebhook(req, res);
+  }
+
+  return { getSettings, saveSettings, testSettings, receiveWebhook, receivePollingUpdate };
 }
 
 module.exports = { createTelegramRouteHandlers };

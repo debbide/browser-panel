@@ -29,11 +29,8 @@
       try {
         const response = await api.saveTelegram(view.collectTelegram(telegram));
         const settings = response.data || {};
-        if (settings.webhookStatus === 'registered') {
-          toast('Telegram 设置已保存，Webhook 已注册', 'success');
-        } else {
-          toast(`Telegram 设置已保存，Webhook 未就绪：${settings.webhookError || '请检查公网 HTTPS 地址'}`, 'error');
-        }
+        const labels = { notify: '仅发送通知', polling: '长轮询', webhook: 'Webhook' };
+        toast(`Telegram 设置已保存，接收模式：${labels[settings.receiveMode] || settings.receiveMode}`, 'success');
         await loadTelegram();
       } catch (error) {
         toast(error.message || '保存设置遇到了错误', 'error');
@@ -126,6 +123,9 @@
       const telegram = elements.telegram || {};
       const vision = elements.vision || {};
       if (telegram.form) telegram.form.addEventListener('submit', saveTelegram);
+      (telegram.receiveModes || []).forEach((input) => input.addEventListener('change', () => {
+        if (telegram.webhookFields) telegram.webhookFields.hidden = input.value !== 'webhook';
+      }));
       if (telegram.testButton) telegram.testButton.addEventListener('click', testTelegram);
       if (vision.form) vision.form.addEventListener('submit', saveVision);
       if (vision.testButton) vision.testButton.addEventListener('click', testVision);

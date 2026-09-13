@@ -75,6 +75,10 @@ const {
   buildRetryStartedMessage,
   normalizeWebhookPublicUrl,
   registerTelegramWebhook,
+  deleteTelegramWebhook,
+  startTelegramPolling,
+  stopTelegramPolling,
+  setTelegramUpdateHandler,
   sendTelegramMessage,
 } = require('./telegram');
 const { PROXY_MODES } = require('./runtime/runtime-contract');
@@ -290,21 +294,29 @@ async function triggerTaskExecutionInBackground(taskId) {
 
 async function ensureTelegramWebhook() {
   const settings = db.getTelegramSettings();
-  if (!settings.botToken || !settings.webhookUrl) return false;
-
+  const mode = settings.receiveMode || 'notify';
+  if (!settings.botToken) return false;
+  if (mode === 'polling') {
+    try {
+      await deleteTelegramWebhook(settings.botToken);
+      startTelegramPolling(settings.botToken);
+      return true;
+    } catch (error) {
+      console.warn('[telegram] polling startup failed:', error.message);
+      return false;
+    }
+  }
+  if (mode !== 'webhook' || !settings.webhookUrl) return false;
   try {
     await registerTelegramWebhook(settings.botToken, settings.webhookUrl);
     db.setSetting('telegram_webhook_status', 'registered');
     db.setSetting('telegram_webhook_error', '');
-    console.log(`[telegram] webhook registered: ${settings.webhookUrl}`);
     return true;
   } catch (error) {
-    const message = String(error.message || 'Telegram Webhook 注册失败')
-      .replace(new RegExp(settings.botToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<redacted>')
-      .slice(0, 500);
+    const message = String(error.message || 'Telegram Webhook 注册失败').slice(0, 500);
     db.setSetting('telegram_webhook_status', 'error');
     db.setSetting('telegram_webhook_error', message);
-    console.warn(`[telegram] webhook registration failed: ${message}`);
+    console.warn('[telegram] webhook registration failed:', message);
     return false;
   }
 }
@@ -666,9 +678,13 @@ const telegramRouteHandlers = createTelegramRouteHandlers({
   buildRetryStartedMessage,
   normalizeWebhookPublicUrl,
   registerTelegramWebhook,
+  deleteTelegramWebhook,
+  startTelegramPolling,
+  stopTelegramPolling,
   sendTelegramMessage,
   triggerTaskExecutionInBackground,
 });
+setTelegramUpdateHandler(telegramRouteHandlers.receivePollingUpdate);
 app.get('/api/settings/telegram', telegramRouteHandlers.getSettings);
 app.post('/api/settings/telegram', telegramRouteHandlers.saveSettings);
 app.post('/api/settings/telegram/test', telegramRouteHandlers.testSettings);
@@ -1034,6 +1050,7 @@ function startServer() {
 async function closeCoreServices(reason) {
   console.log(`[shutdown] ${reason}`);
   stopAllJobs();
+  stopTelegramPolling();
   cloudBackup.stopTicker();
   events.closeAll();
   await warpManager.shutdown();

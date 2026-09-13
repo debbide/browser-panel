@@ -431,6 +431,59 @@ async function telegramRequest(method, botToken, options) {
   }
 }
 
+async function deleteTelegramWebhook(botToken) {
+  try {
+    await telegramCurlRequest('deleteWebhook', botToken, (url) => ['-X', 'POST', url]);
+  } catch (error) {
+    console.warn('[telegram] curl deleteWebhook failed, fallback to fetch:', error.message);
+    await telegramRequest('deleteWebhook', botToken, { method: 'POST' });
+  }
+  return true;
+}
+
+async function getTelegramUpdates(botToken, offset) {
+  const form = new URLSearchParams({
+    timeout: '25',
+    allowed_updates: JSON.stringify(['message', 'callback_query']),
+  });
+  if (Number.isFinite(offset)) form.set('offset', String(offset));
+  return telegramRequest('getUpdates', botToken, { method: 'POST', body: form });
+}
+
+let pollingGeneration = 0;
+let pollingUpdateHandler = null;
+
+function setTelegramUpdateHandler(handler) {
+  pollingUpdateHandler = typeof handler === 'function' ? handler : null;
+}
+
+function stopTelegramPolling() {
+  pollingGeneration += 1;
+}
+
+function startTelegramPolling(botToken) {
+  stopTelegramPolling();
+  const generation = pollingGeneration;
+  let offset;
+  void (async () => {
+    console.log('[telegram] long polling started');
+    while (generation === pollingGeneration) {
+      try {
+        const updates = await getTelegramUpdates(botToken, offset);
+        for (const update of Array.isArray(updates) ? updates : []) {
+          if (Number.isFinite(update?.update_id)) offset = update.update_id + 1;
+          if (pollingUpdateHandler) await pollingUpdateHandler(update);
+        }
+      } catch (error) {
+        if (generation !== pollingGeneration) break;
+        console.warn('[telegram] polling failed:', error.message);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+    }
+    console.log('[telegram] long polling stopped');
+  })();
+}
+
 async function registerTelegramWebhook(botToken, publicUrl) {
   const webhookUrl = buildTelegramWebhookUrl(publicUrl, botToken);
   try {
@@ -444,7 +497,7 @@ async function registerTelegramWebhook(botToken, publicUrl) {
     console.warn('[telegram] curl setWebhook failed, fallback to fetch:', error.message);
     const form = new URLSearchParams({
       url: webhookUrl,
-      allowed_updates: JSON.stringify(['callback_query']),
+      allowed_updates: JSON.stringify(['message', 'callback_query']),
     });
     await telegramRequest('setWebhook', botToken, {
       method: 'POST',
@@ -611,6 +664,10 @@ module.exports = {
   buildRetryStartedMessage,
   normalizeWebhookPublicUrl,
   registerTelegramWebhook,
+  deleteTelegramWebhook,
+  startTelegramPolling,
+  stopTelegramPolling,
+  setTelegramUpdateHandler,
   sendTelegramMessage,
   sendTelegramPhoto,
   answerTelegramCallback,
