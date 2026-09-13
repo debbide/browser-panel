@@ -89,6 +89,23 @@ test('settings DOM selectors and visible status text remain stable', () => {
   assert.match(source, /全局变量已保存/);
 });
 
+test('telegram mode selector preserves accessible card contracts', () => {
+  const html = read('public/index.html');
+  const css = read('public/styles.css');
+  assert.match(html, /class=["']telegram-mode-fieldset["']/);
+  assert.equal((html.match(/name=["']receiveMode["']/g) || []).length, 3);
+  for (const mode of ['notify', 'polling', 'webhook']) {
+    assert.match(html, new RegExp(`value=["']${mode}["']`));
+  }
+  assert.match(html, /只发送任务通知/);
+  assert.match(html, /无需公网地址/);
+  assert.match(html, /需要公网 HTTPS/);
+  assert.match(css, /\.telegram-mode-options\s*\{/);
+  assert.match(css, /grid-template-columns:\s*repeat\(3,/);
+  assert.match(css, /input:checked\s*\+\s*\.telegram-mode-card/);
+  assert.match(css, /input:focus-visible\s*\+\s*\.telegram-mode-card/);
+  assert.match(css, /@media\s*\(max-width:\s*760px\)/);
+});
 test('settings static scripts preserve api view controller runtime app order', () => {
   const html = read('public/index.html');
   const paths = [

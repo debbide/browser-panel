@@ -313,11 +313,34 @@
               <label class="field-label" for="tg-proxy">代理 (Proxy)</label>
               <input type="text" name="proxy" id="tg-proxy" placeholder="例如: socks5://127.0.0.1:7891" />
             </div>
-            <fieldset style="border:0;padding:0;margin:0;">
+            <fieldset class="telegram-mode-fieldset">
               <legend class="field-label">Telegram 接收模式</legend>
-              <label><input type="radio" name="receiveMode" value="notify" checked /> 仅发送通知</label>
-              <label style="margin-left:16px;"><input type="radio" name="receiveMode" value="polling" /> 长轮询</label>
-              <label style="margin-left:16px;"><input type="radio" name="receiveMode" value="webhook" /> Webhook</label>
+              <div class="telegram-mode-options">
+                <label class="telegram-mode-option">
+                  <input type="radio" name="receiveMode" value="notify" checked />
+                  <span class="telegram-mode-card">
+                    <span class="telegram-mode-icon" aria-hidden="true"><i data-lucide="bell"></i></span>
+                    <span class="telegram-mode-copy"><strong>仅发送通知</strong><small>只发送任务通知</small></span>
+                    <span class="telegram-mode-indicator" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="telegram-mode-option">
+                  <input type="radio" name="receiveMode" value="polling" />
+                  <span class="telegram-mode-card">
+                    <span class="telegram-mode-icon" aria-hidden="true"><i data-lucide="refresh-cw"></i></span>
+                    <span class="telegram-mode-copy"><strong>长轮询</strong><small>无需公网地址</small></span>
+                    <span class="telegram-mode-indicator" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="telegram-mode-option">
+                  <input type="radio" name="receiveMode" value="webhook" />
+                  <span class="telegram-mode-card">
+                    <span class="telegram-mode-icon" aria-hidden="true"><i data-lucide="link"></i></span>
+                    <span class="telegram-mode-copy"><strong>Webhook</strong><small>需要公网 HTTPS</small></span>
+                    <span class="telegram-mode-indicator" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
             </fieldset>
             <div id="tg-webhook-fields" hidden>
               <label class="field-label" for="tg-webhook-url">面板公网 HTTPS 地址</label>
