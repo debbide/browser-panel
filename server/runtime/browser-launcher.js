@@ -633,18 +633,27 @@ function runTerminateCommands(commands) {
     ...commands,
     '',
   ].join('\n');
-  const tmpDir = fs.mkdtempSync('/tmp/bap-stop-');
-  const scriptPath = path.join(tmpDir, 'terminate.sh');
-  fs.writeFileSync(scriptPath, script, { encoding: 'utf8', mode: 0o700 });
+  const useWsl = process.platform === 'win32';
+  let tmpDir = null;
+  let scriptPath = '<wsl-stdin>';
+  if (!useWsl) {
+    tmpDir = fs.mkdtempSync('/tmp/bap-stop-');
+    scriptPath = path.join(tmpDir, 'terminate.sh');
+    fs.writeFileSync(scriptPath, script, { encoding: 'utf8', mode: 0o700 });
+  }
   console.log(`[browser-launcher] terminate script=${scriptPath} lines=${commands.length}`);
 
   let settled = false;
   let stdout = '';
   let stderr = '';
-  const child = spawn('/bin/bash', [scriptPath], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  // Browser processes live in Linux. When the panel runs on Windows, execute
+  // cleanup inside WSL and stream the script over stdin without path conversion.
+  const child = useWsl
+    ? spawn('wsl.exe', ['--', 'bash', '-s'], { stdio: ['pipe', 'pipe', 'pipe'] })
+    : spawn('/bin/bash', [scriptPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+  if (useWsl) child.stdin.end(script);
   const cleanup = () => {
+    if (!tmpDir) return;
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -1321,6 +1330,12 @@ function stopBrowserTask(taskId, fallbackTask = null) {
   if (!state) {
     if (!fallbackTask) return false;
     const snapshot = { ...fallbackTask };
+    if (String(snapshot._runtimeStack || '').toLowerCase() === 'ruyipage') {
+      const hasOtherRuyiRun = Array.from(activeBrowserRuns.values()).some((run) => (
+        String(run && run.task && run.task._runtimeStack || '').toLowerCase() === 'ruyipage'
+      ));
+      snapshot._forceRuyiBinaryCleanup = !hasOtherRuyiRun;
+    }
     const gen = Number(snapshot._runGeneration) || 0;
     runTerminateCommands(buildTerminateCommandsByTask(snapshot));
     scheduleTerminateCommands(snapshot, 1500, gen);

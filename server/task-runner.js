@@ -977,6 +977,14 @@ function stopTask(taskId) {
     const profile = db.getBrowserProfile(task.browser_profile_id);
     if (profile) taskWithProfile = { ...task, _profile: profile };
   }
+  if (taskWithProfile) {
+    const runtimeSettings = db.getBrowserRuntimeSettings();
+    taskWithProfile = {
+      ...taskWithProfile,
+      _runtimeStack: resolveRuntimeStack(taskWithProfile, runtimeSettings),
+      _ruyiPath: runtimeSettings.ruyiPath || config.browser.ruyiPath || process.env.BROWSER_RUYI_PATH || '/opt/ruyipage-firefox/firefox',
+    };
+  }
 
   const child = activeChildren.get(numericId);
   if (child) {
