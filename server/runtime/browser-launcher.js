@@ -373,6 +373,13 @@ function buildTerminateCommandsByTask(task) {
   const launcherPid = task && task._launcherPid ? Number(task._launcherPid) : 0;
   const taskId = task && task.id != null ? Number(task.id) : 0;
   const runtimeStack = String(task && task._runtimeStack ? task._runtimeStack : '').trim().toLowerCase();
+  const forceRuyiBinaryCleanup = Boolean(task && task._forceRuyiBinaryCleanup);
+  const ruyiPath = String(
+    (task && task._ruyiPath)
+    || config.browser.ruyiPath
+    || process.env.BROWSER_RUYI_PATH
+    || '/opt/ruyipage-firefox/firefox'
+  ).trim();
   // Unique token injected as BAP_RUN_ID env on the worker process tree.
   const runMarker = runId
     ? `BAP_RUN_ID=${runId}`
@@ -467,6 +474,12 @@ function buildTerminateCommandsByTask(task) {
   }
   if (runtimeStack === 'ruyipage' && userDataDir) {
     commands.push(`kill_ruyi_profile KILL ${shellEscape(userDataDir)} || true`);
+  }
+  // Last-resort cleanup requested by a manual stop. This broad executable-path
+  // match is safe only when stopBrowserTask established that no other RuyiPage
+  // task is active, otherwise it would terminate unrelated concurrent tasks.
+  if (runtimeStack === 'ruyipage' && forceRuyiBinaryCleanup && ruyiPath) {
+    commands.push(`pkill -KILL -f -- ${shellEscape(ruyiPath)} || true`);
   }
 
   // 4) SeleniumBase UC orphans: chrome reparented to init after python dies.
@@ -1124,6 +1137,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       _runGeneration: runGeneration,
       _runId: runId,
       _runtimeStack: runtimeStack,
+      _ruyiPath: runtimeSettings.ruyiPath || config.browser.ruyiPath || process.env.BROWSER_RUYI_PATH || '/opt/ruyipage-firefox/firefox',
       _effectiveUserDataDir: effectiveUserDataDir,
     };
     activeBrowserRuns.set(Number(task.id), {
@@ -1317,6 +1331,13 @@ function stopBrowserTask(taskId, fallbackTask = null) {
   state.stoppedByUser = true;
   const child = state.child;
   const taskSnapshot = state.task ? { ...state.task } : null;
+  if (taskSnapshot && String(taskSnapshot._runtimeStack || '').toLowerCase() === 'ruyipage') {
+    const hasOtherRuyiRun = Array.from(activeBrowserRuns.entries()).some(([id, run]) => (
+      Number(id) !== Number(taskId)
+      && String(run && run.task && run.task._runtimeStack || '').toLowerCase() === 'ruyipage'
+    ));
+    taskSnapshot._forceRuyiBinaryCleanup = !hasOtherRuyiRun;
+  }
   const groupPid = child && child.pid ? Number(child.pid) : 0;
   let groupSignalSent = false;
   try {
