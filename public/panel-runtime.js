@@ -1769,8 +1769,16 @@ function renderTasks() {
   if (window.lucide) window.lucide.createIcons({ root: tasksEl });
 }
 
+// 并发保护：任务结束时两条路径会同时拉 /api/tasks —— SSE 的 refreshStatus() 和
+// /run 响应回来的 refreshAll()（/run 是阻塞的，响应要等整个任务跑完）。两次都会
+// 无条件覆盖 tasksCache，先发起、后返回的那次会把已经 is_running=false 的快照写回
+// true，按钮就永久卡在“停止”，只有整页刷新才能恢复。只认最新一次请求的结果。
+let loadTasksSeq = 0;
+
 async function loadTasks() {
+  const seq = ++loadTasksSeq;
   const data = await TasksApi.listTasks();
+  if (seq !== loadTasksSeq) return;
   tasksCache = data.data;
   // 服务端已经确认不在跑了，本地的"停止中"覆盖就该退场，交回服务端状态。
   // 放在渲染前统一清，避免 taskCard 边遍历边改集合。
