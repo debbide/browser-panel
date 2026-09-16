@@ -1182,17 +1182,27 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     };
 
     const requestKill = (reason) => {
+      const cleanupTask = { ...task, _runGeneration: runGeneration };
       try {
         process.kill(-child.pid, 'SIGTERM');
       } catch {
         try { child.kill('SIGTERM'); } catch { /* ignore */ }
       }
+
+      // Do not rely on the worker process exiting cleanly. Playwright can leave
+      // Firefox descendants alive after the Python process receives SIGTERM.
+      // Start task-scoped browser cleanup immediately and repeat it later.
+      runTerminateCommands(buildTerminateCommandsByTask(cleanupTask));
+      scheduleTerminateCommands(cleanupTask, 1500, runGeneration);
+      scheduleTerminateCommands(cleanupTask, 3500, runGeneration);
+
       hardKillTimer = setTimeout(() => {
         try {
           process.kill(-child.pid, 'SIGKILL');
         } catch {
           try { child.kill('SIGKILL'); } catch { /* ignore */ }
         }
+        runTerminateCommands(buildTerminateCommandsByTask(cleanupTask));
       }, 2000);
       if (reason) {
         stderr += `\n${reason}`;
