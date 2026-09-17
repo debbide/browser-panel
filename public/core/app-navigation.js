@@ -5,6 +5,7 @@
     'scripts-tab': ['Script Management', '管理任务脚本、目录与上传文件。'],
     'extensions-tab': ['插件管理', '上传、解压和管理浏览器插件目录。'],
     'profile-files-tab': ['用户目录', '管理浏览器用户数据目录与压缩包。'],
+    'managed-proxies-tab': ['代理管理', '管理上游代理与本地 HTTP 转发端口。'],
     'warp-tab': ['Cloudflare WARP', '管理 WARP 连接与双栈出口。'],
     'notifications-tab': ['TG Notifications', '配置 Telegram 通知与测试消息。'],
     'config-tab': ['Global Settings', '查找并调整面板级运行设置。'],

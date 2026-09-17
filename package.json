@@ -24,6 +24,7 @@
     "node-cron": "^4.2.1",
     "playwright": "^1.58.2",
     "playwright-extra": "^4.3.6",
+    "proxy-chain": "^3.0.1",
     "puppeteer-extra-plugin-anonymize-ua": "^2.4.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
