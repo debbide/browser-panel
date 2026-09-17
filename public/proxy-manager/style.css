@@ -1,156 +1,487 @@
-:root {
-  --bg: #f3f6f8;
-  --surface: #ffffff;
-  --surface-soft: #f8fafb;
-  --text: #17232d;
-  --muted: #5d6b75;
-  --border: #dbe3e8;
-  --primary: #086f72;
-  --primary-hover: #075b5e;
-  --success: #16815b;
-  --warning: #b65c16;
-  --danger: #ba3f3f;
-  --shadow: 0 12px 30px rgba(27, 46, 58, .08);
-  --radius: 16px;
+/* ---------------------------------------------------------------------------
+   代理管理（节点控制台，移植自 E:\ck\ProxyManager 前端）
+
+   这是原项目 style.css 的移植版，做了三件事：
+     1. 全部选择器收进 #proxy-manager-app 作用域，避免和面板样式互相污染；
+     2. 与面板重名的通用类改名，加 pm- 前缀
+        （modal / modal-header / toast 面板里已有裸定义，会泄漏进来）；
+     3. 配色改接面板的设计变量，从原项目的浅色主题落到面板的深色主题。
+   其余类名和结构与原项目一致，方便对照。
+--------------------------------------------------------------------------- */
+
+#proxy-manager-app {
+  --pm-surface-soft: rgba(255, 255, 255, 0.03);
+  --pm-border: var(--glass-border);
+  --pm-text: var(--text-main);
+  --pm-muted: var(--text-muted);
+  --pm-primary: var(--accent-color);
+  --pm-success: #22c55e;
+  --pm-warning: #f59e0b;
+  --pm-danger: #ef4444;
+  --pm-radius: var(--radius-md);
 }
-* { box-sizing: border-box; }
-html { min-width: 320px; background: var(--bg); }
-body { margin: 0; color: var(--text); background: var(--bg); font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 16px; line-height: 1.55; }
-button, input, select { font: inherit; }
-button { cursor: pointer; }
-button:disabled { cursor: not-allowed; opacity: .6; }
-[v-cloak] { display: none; }
-svg { width: 20px; height: 20px; fill: currentColor; flex: 0 0 auto; }
-.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 20% 10%, #d6ece8 0, transparent 32%), linear-gradient(145deg, #f8fbfb, #e9f0f2); }
-.login-card { width: min(100%, 440px); padding: 42px; background: rgba(255,255,255,.94); border: 1px solid rgba(255,255,255,.9); border-radius: 24px; box-shadow: 0 24px 60px rgba(22,55,62,.14); }
-.brand-mark, .brand-icon { display: grid; place-items: center; color: #fff; background: var(--primary); }
-.brand-mark { width: 52px; height: 52px; border-radius: 15px; margin-bottom: 24px; }
-.brand-mark svg { width: 30px; height: 30px; }
-.eyebrow { margin: 0 0 6px; color: var(--primary); font-size: 12px; font-weight: 800; letter-spacing: .14em; }
-h1, h2, h3, p { margin-top: 0; }
-.login-card h1 { margin-bottom: 8px; font-size: 30px; letter-spacing: -.03em; }
-.login-copy { color: var(--muted); margin-bottom: 28px; }
-.login-form { display: grid; gap: 12px; }
-label { font-size: 14px; font-weight: 700; }
-input, select { width: 100%; min-height: 46px; padding: 10px 13px; color: var(--text); background: #fff; border: 1px solid #cbd6dc; border-radius: 10px; outline: none; transition: border-color .2s, box-shadow .2s; }
-input:focus, select:focus, button:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(8,111,114,.18); outline: none; }
-.button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 15px; border: 1px solid transparent; border-radius: 10px; font-weight: 700; transition: background-color .2s, border-color .2s, color .2s, box-shadow .2s; }
-.button-block { width: 100%; margin-top: 8px; }
-.button-primary { color: #fff; background: var(--primary); }
-.button-primary:hover:not(:disabled) { background: var(--primary-hover); }
-.button-secondary { color: #30424d; background: #fff; border-color: var(--border); }
-.button-secondary:hover:not(:disabled) { background: #f1f5f6; border-color: #b9c8cf; }
-.button-ghost { color: #40515c; background: transparent; }
-.button-ghost:hover { background: #eef3f4; }
-.button-success { color: #fff; background: var(--success); }
-.button-warning { color: #fff; background: var(--warning); }
-.button-danger { color: #fff; background: var(--danger); }
-.button-danger-ghost { color: var(--danger); background: #fff; border-color: #ecd2d2; }
-.topbar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.92); border-bottom: 1px solid var(--border); backdrop-filter: blur(12px); }
-.topbar-inner, .content { width: min(100% - 40px, 1240px); margin-inline: auto; }
-.topbar-inner { min-height: 72px; display: flex; align-items: center; justify-content: space-between; }
-.brand { display: flex; align-items: center; gap: 12px; }
-.brand-icon { width: 38px; height: 38px; border-radius: 11px; }
-.brand strong, .brand small { display: block; }
-.brand small { color: var(--muted); font-size: 12px; }
-.topbar-actions, .version-panel, .version-summary { display: flex; align-items: center; }
-.topbar-actions { gap: 12px; }
-.version-panel { gap: 9px; padding: 7px 9px 7px 12px; border: 1px solid var(--border); border-radius: 12px; background: #f8fafb; }
-.version-summary { gap: 7px; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.version-summary strong { color: #263941; font-size: 13px; }
-.version-state { padding: 3px 7px; color: var(--success); background: #e8f5ef; border-radius: 999px; font-weight: 700; }
-.version-state.available { color: #9a5a00; background: #fff0d6; }
-.version-state.unavailable { color: var(--muted); background: #e9eef0; }
-.version-release-link { color: var(--primary); font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; }
-.version-release-link:hover { text-decoration: underline; }
-.button-update { min-height: 30px; padding: 4px 9px; color: #fff; background: var(--warning); border-radius: 8px; font-size: 12px; white-space: nowrap; }
-.button-update:hover:not(:disabled) { background: #95480f; }
-.version-check { width: 30px; height: 30px; flex: 0 0 auto; }
-.version-check svg { width: 17px; height: 17px; }
-.content { padding-block: 38px 60px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
-.page-heading h1 { margin-bottom: 6px; font-size: clamp(28px, 4vw, 40px); letter-spacing: -.04em; }
-.page-heading p { max-width: 680px; margin-bottom: 0; color: var(--muted); }
-.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
-.stat-card { padding: 22px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 16px rgba(27,46,58,.04); }
-.stat-card span, .stat-card small { display: block; color: var(--muted); }
-.stat-card strong { display: block; margin: 5px 0 2px; font-size: 32px; line-height: 1.1; }
-.stat-card.active { border-color: #a9d6c6; background: linear-gradient(135deg, #fff, #edf9f4); }
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
-.add-panel { padding: 24px; margin-bottom: 34px; }
-.panel-heading h2, .section-heading h2 { margin-bottom: 3px; font-size: 20px; }
-.panel-heading p, .section-heading p { margin-bottom: 0; color: var(--muted); font-size: 14px; }
-.add-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 14px; margin-top: 20px; }
-.field { display: grid; gap: 7px; min-width: 0; }
-.add-button { white-space: nowrap; }
-.nodes-section { margin-top: 8px; }
-.section-heading { margin-bottom: 16px; }
-.section-heading-actions { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
-.section-heading-actions > .button { flex: 0 0 auto; }
-.node-list { overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
-.node-row { display: grid; grid-template-columns: minmax(180px, 1.25fr) minmax(150px, .8fr) minmax(110px, .7fr) auto auto; align-items: center; gap: 14px; min-height: 72px; padding: 12px 14px; border-left: 3px solid #adb9bf; border-bottom: 1px solid var(--border); }
-.node-row:last-child { border-bottom: 0; }
-.node-row.online { border-left-color: var(--success); background: #fbfefd; }
-.node-identity, .node-name-wrap, .name-edit-form, .node-test, .node-actions { display: flex; align-items: center; }
-.node-identity { min-width: 0; gap: 9px; }
-.node-name-wrap { min-width: 0; gap: 4px; }
-.node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.protocol-badge { padding: 4px 7px; color: #155b65; background: #e3f2f1; border-radius: 6px; font-size: 10px; font-weight: 800; letter-spacing: .05em; }
-.icon-button { width: 44px; height: 44px; display: inline-grid; flex: 0 0 44px; place-items: center; padding: 0; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 9px; }
-.icon-button:hover:not(:disabled) { color: var(--primary); background: #edf5f5; }
-.icon-button.save { color: var(--success); }
-.name-edit-form { min-width: 0; gap: 4px; }
-.name-edit-form input { min-width: 110px; min-height: 44px; padding: 7px 9px; }
-.node-endpoint { min-width: 0; }
-.node-endpoint small { display: block; color: var(--muted); font-size: 11px; }
-.node-endpoint strong { color: var(--primary); font-family: Consolas, monospace; font-size: 14px; }
-.node-test { min-width: 0; flex-wrap: wrap; gap: 5px 8px; font-size: 12px; }
-.node-test strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-test > span:not(.muted-result) { padding: 2px 6px; color: var(--success); background: #e8f7f1; border-radius: 5px; }
-.muted-result { color: var(--muted); }
-.status { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 13px; font-weight: 700; }
-.status i { width: 8px; height: 8px; border-radius: 50%; }
-.status-online { color: var(--success); }
-.status-online i { background: var(--success); box-shadow: 0 0 0 4px rgba(22,129,91,.12); }
-.status-offline { color: #6d7980; }
-.status-offline i { background: #929da3; }
-.node-details { display: grid; gap: 11px; margin: 20px 0; }
-.node-details div { min-width: 0; }
-.node-details dt { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.node-details dd { margin: 3px 0 0; overflow: hidden; color: #334650; font-family: Consolas, monospace; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.node-details .endpoint { color: var(--primary); font-size: 16px; font-weight: 800; }
-.test-result { justify-content: space-between; gap: 10px; }
-.test-result span { padding: 2px 7px; color: var(--success); background: #e8f7f1; border-radius: 5px; font-family: "Segoe UI", sans-serif; font-size: 12px; }
-.node-actions { justify-content: flex-end; gap: 6px; }
-.node-actions .button { min-width: 44px; padding-inline: 10px; }
-.empty-state { display: grid; justify-items: center; padding: 54px 20px; color: var(--muted); background: var(--surface); border: 1px dashed #bdc9cf; border-radius: var(--radius); text-align: center; }
-.empty-state > svg { width: 44px; height: 44px; margin-bottom: 14px; color: #8da0a8; }
-.empty-state h3 { margin-bottom: 5px; color: var(--text); }
-.empty-state p { margin: 0; }
-.spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.45); border-top-color: currentColor; border-radius: 50%; animation: spin .7s linear infinite; }
-.spinner-dark { color: var(--primary); border-color: rgba(8,111,114,.25); border-top-color: var(--primary); }
-.rotating { animation: spin 1s linear infinite; }
-.modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(19,31,38,.55); backdrop-filter: blur(3px); }
-.modal { width: min(100%, 440px); padding: 28px; background: #fff; border-radius: 18px; box-shadow: 0 24px 70px rgba(0,0,0,.22); }
-.add-modal { width: min(100%, 560px); }
-.modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-.modal-header h2 { margin-bottom: 6px; }
-.modal-header p { margin-bottom: 0; color: var(--muted); font-size: 14px; }
-.modal-close { margin: -8px -8px 0 0; }
-.modal-form { display: grid; gap: 22px; margin-top: 24px; }
-.field-hint { color: var(--muted); font-size: 12px; font-weight: 400; }
-.modal-icon { display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 16px; color: var(--danger); background: #fff0f0; border-radius: 50%; }
-.modal-icon.update-icon { color: var(--primary); background: #e7f4f4; }
-.modal h2 { margin-bottom: 8px; }
-.modal p { color: var(--muted); }
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
-.toast-region { position: fixed; right: 20px; bottom: 20px; z-index: 70; display: grid; gap: 10px; width: min(calc(100% - 40px), 380px); }
-.toast { padding: 13px 16px; color: #fff; background: #344853; border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.2); animation: toast-in .22s ease-out; }
-.toast-success { background: #116b4c; }
-.toast-error { background: #a63838; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
-@media (max-width: 1100px) { .node-row { grid-template-columns: minmax(180px, 1fr) minmax(145px, .8fr) auto; } .node-test { display: none; } .node-actions { grid-column: 3; grid-row: 1; } .status { grid-column: 2; grid-row: 2; } }
-@media (max-width: 720px) { .topbar-inner { min-height: 64px; gap: 10px; } .topbar-actions { gap: 5px; } .version-panel { padding: 6px; } .version-summary > span:first-child, .version-state, .version-release-link { display: none; } .version-summary { gap: 0; } .button-update { max-width: 118px; overflow: hidden; text-overflow: ellipsis; } .button-ghost { padding-inline: 9px; } }
-@media (max-width: 720px) { .topbar-inner, .content { width: min(100% - 26px, 1240px); } .brand small { display: none; } .content { padding-top: 26px; } .page-heading { align-items: stretch; flex-direction: column; } .page-heading > .button { align-self: flex-start; } .stats-grid { grid-template-columns: 1fr; gap: 10px; } .stat-card { padding: 17px 19px; } .section-heading-actions { align-items: stretch; flex-direction: column; } .section-heading-actions > .button { width: 100%; } .node-row { grid-template-columns: minmax(0, 1fr) auto; gap: 9px 12px; padding: 14px 12px; } .node-identity { grid-column: 1 / -1; } .node-endpoint { grid-column: 1; grid-row: 2; } .status { grid-column: 2; grid-row: 2; } .node-actions { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: repeat(3, 1fr); } .node-actions .button { width: 100%; } .name-edit-form { flex: 1; } .name-edit-form input { flex: 1; } .modal { padding: 22px 18px; } .modal-actions { display: grid; grid-template-columns: 1fr 1fr; } .modal-actions .button { width: 100%; } .login-card { padding: 30px 24px; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+#proxy-manager-app[v-cloak] { display: none; }
+
+#proxy-manager-app button,
+#proxy-manager-app input { font: inherit; }
+
+#proxy-manager-app button { cursor: pointer; }
+#proxy-manager-app button:disabled { cursor: not-allowed; opacity: .55; }
+
+#proxy-manager-app svg { width: 18px; height: 18px; fill: currentColor; flex: 0 0 auto; }
+
+#proxy-manager-app h1,
+#proxy-manager-app h2,
+#proxy-manager-app h3,
+#proxy-manager-app p { margin-top: 0; }
+
+/* 布局 --------------------------------------------------------------------- */
+#proxy-manager-app .content { padding: 0; }
+
+#proxy-manager-app .page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+#proxy-manager-app .page-heading h1 {
+  margin-bottom: 4px;
+  font-size: 22px;
+  letter-spacing: -.02em;
+}
+
+#proxy-manager-app .page-heading p {
+  max-width: 680px;
+  margin-bottom: 0;
+  color: var(--pm-muted);
+  font-size: 13px;
+}
+
+/* 选择器要比上面的 .page-heading p 更具体，否则小标题会被染成 muted */
+#proxy-manager-app .page-heading .eyebrow {
+  margin: 0 0 4px;
+  color: var(--pm-primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+/* 概览卡片 ----------------------------------------------------------------- */
+#proxy-manager-app .stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+#proxy-manager-app .stat-card {
+  padding: 14px 16px;
+  background: var(--pm-surface-soft);
+  border: 1px solid var(--pm-border);
+  border-radius: var(--pm-radius);
+}
+
+#proxy-manager-app .stat-card span,
+#proxy-manager-app .stat-card small { display: block; color: var(--pm-muted); font-size: 12px; }
+
+#proxy-manager-app .stat-card strong {
+  display: block;
+  margin: 3px 0 1px;
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+#proxy-manager-app .stat-card.active {
+  border-color: rgba(34, 197, 94, .35);
+  background: rgba(34, 197, 94, .08);
+}
+
+/* 节点列表 ----------------------------------------------------------------- */
+#proxy-manager-app .nodes-section { margin-top: 4px; }
+#proxy-manager-app .section-heading { margin-bottom: 12px; }
+
+#proxy-manager-app .section-heading h2 { margin-bottom: 2px; font-size: 17px; }
+#proxy-manager-app .section-heading p { margin-bottom: 0; color: var(--pm-muted); font-size: 13px; }
+
+#proxy-manager-app .section-heading-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+#proxy-manager-app .section-heading-actions > .button { flex: 0 0 auto; }
+
+#proxy-manager-app .node-list {
+  overflow: hidden;
+  background: var(--pm-surface-soft);
+  border: 1px solid var(--pm-border);
+  border-radius: var(--pm-radius);
+}
+
+#proxy-manager-app .node-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.25fr) minmax(140px, .8fr) minmax(100px, .7fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 14px;
+  border-left: 3px solid rgba(148, 163, 184, .45);
+  border-bottom: 1px solid var(--pm-border);
+}
+
+#proxy-manager-app .node-row:last-child { border-bottom: 0; }
+
+#proxy-manager-app .node-row.online {
+  border-left-color: var(--pm-success);
+  background: rgba(34, 197, 94, .05);
+}
+
+#proxy-manager-app .node-identity,
+#proxy-manager-app .node-name-wrap,
+#proxy-manager-app .name-edit-form,
+#proxy-manager-app .node-test,
+#proxy-manager-app .node-actions { display: flex; align-items: center; }
+
+#proxy-manager-app .node-identity { min-width: 0; gap: 9px; }
+#proxy-manager-app .node-name-wrap { min-width: 0; gap: 4px; }
+
+#proxy-manager-app .node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#proxy-manager-app .protocol-badge {
+  padding: 3px 7px;
+  color: var(--pm-primary);
+  background: rgba(59, 130, 246, .14);
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+
+#proxy-manager-app .name-edit-form { min-width: 0; gap: 4px; }
+
+#proxy-manager-app .node-endpoint { min-width: 0; }
+#proxy-manager-app .node-endpoint small { display: block; color: var(--pm-muted); font-size: 11px; }
+
+#proxy-manager-app .node-endpoint strong {
+  color: var(--pm-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+#proxy-manager-app .node-test {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+
+#proxy-manager-app .node-test strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#proxy-manager-app .node-test > span:not(.muted-result) {
+  padding: 2px 6px;
+  color: var(--pm-success);
+  background: rgba(34, 197, 94, .12);
+  border-radius: 5px;
+}
+
+#proxy-manager-app .muted-result { color: var(--pm-muted); }
+
+#proxy-manager-app .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#proxy-manager-app .status i { width: 8px; height: 8px; border-radius: 50%; }
+#proxy-manager-app .status-online { color: var(--pm-success); }
+#proxy-manager-app .status-online i { background: var(--pm-success); box-shadow: 0 0 0 4px rgba(34, 197, 94, .15); }
+#proxy-manager-app .status-offline { color: var(--pm-muted); }
+#proxy-manager-app .status-offline i { background: #64748b; }
+
+#proxy-manager-app .node-actions { justify-content: flex-end; gap: 6px; }
+
+/* 按钮 --------------------------------------------------------------------- */
+#proxy-manager-app .button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .06);
+  color: var(--pm-text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: none;
+  transition: var(--transition);
+}
+
+#proxy-manager-app .button:hover:not(:disabled) {
+  transform: none;
+  background: rgba(255, 255, 255, .11);
+}
+
+#proxy-manager-app .button-primary { color: #fff; background: var(--pm-primary); }
+#proxy-manager-app .button-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+#proxy-manager-app .button-secondary {
+  color: var(--pm-text);
+  background: rgba(255, 255, 255, .06);
+  border-color: var(--pm-border);
+}
+
+#proxy-manager-app .button-secondary:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
+
+#proxy-manager-app .button-success { color: #052e16; background: var(--pm-success); }
+#proxy-manager-app .button-success:hover:not(:disabled) { background: #4ade80; }
+
+#proxy-manager-app .button-warning { color: #451a03; background: var(--pm-warning); }
+#proxy-manager-app .button-warning:hover:not(:disabled) { background: #fbbf24; }
+
+#proxy-manager-app .button-danger { color: #fff; background: var(--pm-danger); }
+#proxy-manager-app .button-danger:hover:not(:disabled) { background: #f87171; }
+
+#proxy-manager-app .button-danger-ghost {
+  color: var(--pm-danger);
+  background: transparent;
+  border-color: rgba(239, 68, 68, .35);
+}
+
+#proxy-manager-app .button-danger-ghost:hover:not(:disabled) { background: rgba(239, 68, 68, .12); }
+
+#proxy-manager-app .node-actions .button { min-width: 40px; padding-inline: 10px; }
+
+#proxy-manager-app .icon-button {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  flex: 0 0 34px;
+  place-items: center;
+  padding: 0;
+  color: var(--pm-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+#proxy-manager-app .icon-button:hover:not(:disabled) {
+  transform: none;
+  color: var(--pm-primary);
+  background: rgba(255, 255, 255, .08);
+}
+
+#proxy-manager-app .icon-button.save { color: var(--pm-success); }
+
+/* 空态 --------------------------------------------------------------------- */
+#proxy-manager-app .empty-state {
+  display: grid;
+  justify-items: center;
+  padding: 44px 20px;
+  color: var(--pm-muted);
+  background: var(--pm-surface-soft);
+  border: 1px dashed rgba(148, 163, 184, .3);
+  border-radius: var(--pm-radius);
+  text-align: center;
+}
+
+#proxy-manager-app .empty-state > svg { width: 40px; height: 40px; margin-bottom: 12px; color: #64748b; }
+#proxy-manager-app .empty-state h3 { margin-bottom: 4px; color: var(--pm-text); font-size: 15px; }
+#proxy-manager-app .empty-state p { margin: 0; font-size: 13px; }
+
+/* 表单 --------------------------------------------------------------------- */
+#proxy-manager-app .field { display: grid; gap: 6px; min-width: 0; }
+#proxy-manager-app .field label { font-size: 13px; font-weight: 600; }
+
+#proxy-manager-app input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  color: var(--pm-text);
+  background: rgba(15, 23, 42, .6);
+  border: 1px solid var(--pm-border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: var(--transition);
+}
+
+#proxy-manager-app input:focus {
+  border-color: var(--pm-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .2);
+}
+
+#proxy-manager-app .field-hint { color: var(--pm-muted); font-size: 12px; font-weight: 400; }
+
+#proxy-manager-app .name-edit-form input {
+  min-width: 110px;
+  min-height: 34px;
+  padding: 5px 9px;
+}
+
+/* 弹窗（pm- 前缀，避开面板的 .modal 规则）---------------------------------- */
+#proxy-manager-app .pm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 6, 23, .65);
+  backdrop-filter: blur(4px);
+}
+
+#proxy-manager-app .pm-modal {
+  width: min(100%, 440px);
+  padding: 24px;
+  background: #111c30;
+  border: 1px solid var(--pm-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+}
+
+#proxy-manager-app .pm-add-modal { width: min(100%, 540px); }
+
+#proxy-manager-app .pm-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+#proxy-manager-app .pm-modal-header h2 { margin-bottom: 5px; font-size: 17px; }
+#proxy-manager-app .pm-modal-header p { margin-bottom: 0; color: var(--pm-muted); font-size: 13px; }
+#proxy-manager-app .modal-close { margin: -6px -6px 0 0; }
+
+#proxy-manager-app .pm-modal-form { display: grid; gap: 18px; margin-top: 20px; }
+#proxy-manager-app .pm-modal h2 { margin-bottom: 7px; font-size: 17px; }
+#proxy-manager-app .pm-modal p { color: var(--pm-muted); font-size: 13px; }
+
+#proxy-manager-app .pm-modal-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 14px;
+  color: var(--pm-danger);
+  background: rgba(239, 68, 68, .12);
+  border-radius: 50%;
+}
+
+#proxy-manager-app .pm-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* 提示（pm- 前缀，避开面板的 .toast 规则）---------------------------------- */
+#proxy-manager-app .pm-toast-region {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 130;
+  display: grid;
+  gap: 10px;
+  width: min(calc(100% - 40px), 360px);
+}
+
+#proxy-manager-app .pm-toast {
+  padding: 12px 15px;
+  color: #fff;
+  background: #334155;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .35);
+  font-size: 13px;
+  animation: pm-toast-in .22s ease-out;
+}
+
+#proxy-manager-app .pm-toast-success { background: #15803d; }
+#proxy-manager-app .pm-toast-error { background: #b91c1c; }
+
+/* 转圈 --------------------------------------------------------------------- */
+#proxy-manager-app .spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: pm-spin .7s linear infinite;
+}
+
+#proxy-manager-app .spinner-dark {
+  color: var(--pm-primary);
+  border-color: rgba(59, 130, 246, .25);
+  border-top-color: var(--pm-primary);
+}
+
+#proxy-manager-app .rotating { animation: pm-spin 1s linear infinite; }
+
+@keyframes pm-spin { to { transform: rotate(360deg); } }
+@keyframes pm-toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* 窄屏 --------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  #proxy-manager-app .node-row {
+    grid-template-columns: minmax(170px, 1fr) minmax(135px, .8fr) auto;
+  }
+  #proxy-manager-app .node-test { display: none; }
+  #proxy-manager-app .node-actions { grid-column: 3; grid-row: 1; }
+  #proxy-manager-app .status { grid-column: 2; grid-row: 2; }
+}
+
+@media (max-width: 720px) {
+  #proxy-manager-app .stats-grid { grid-template-columns: 1fr; gap: 10px; }
+
+  #proxy-manager-app .page-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  #proxy-manager-app .page-heading > .button { align-self: flex-start; }
+
+  #proxy-manager-app .section-heading-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  #proxy-manager-app .section-heading-actions > .button { width: 100%; }
+
+  #proxy-manager-app .node-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    padding: 12px;
+  }
+  #proxy-manager-app .node-identity { grid-column: 1 / -1; }
+  #proxy-manager-app .node-endpoint { grid-column: 1; grid-row: 2; }
+  #proxy-manager-app .status { grid-column: 2; grid-row: 2; }
+
+  #proxy-manager-app .node-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+  #proxy-manager-app .node-actions .button { width: 100%; }
+  #proxy-manager-app .name-edit-form { flex: 1; }
+  #proxy-manager-app .name-edit-form input { flex: 1; }
+
+  #proxy-manager-app .pm-modal { padding: 20px 16px; }
+  #proxy-manager-app .pm-modal-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  #proxy-manager-app .pm-modal-actions .button { width: 100%; }
+}

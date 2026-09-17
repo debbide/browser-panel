@@ -2699,16 +2699,7 @@ button.linkish:hover {
   align-items: center;
 }
 
-/* --- 代理管理（内嵌 Proxy Manager 页面）----------------------------------- */
-.managed-proxy-frame {
-  display: block;
-  width: 100%;
-  height: calc(100vh - 96px);
-  min-height: 640px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md, 12px);
-  background: #0b1220;
-}
+/* 代理管理：见 public/proxy-manager/style.css（收在 #proxy-manager-app 作用域内） */
 
 @media (max-width: 900px) {
   .warp-overview,

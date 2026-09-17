@@ -10,6 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="/styles.css?v=20260814d" />
+  <link rel="stylesheet" href="/proxy-manager/style.css" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -242,13 +243,104 @@
       </div>
 
       <div id="managed-proxies-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-managed-proxies" hidden>
-        <!-- 完整内嵌 E:\ck\ProxyManager 前端（原样式、原交互，独立文档避免样式互相污染） -->
-        <iframe
-          id="managed-proxy-frame"
-          class="managed-proxy-frame"
-          src="/proxy-manager/index.html"
-          title="代理管理"
-        ></iframe>
+        <!-- 节点控制台，移植自 E:\ck\ProxyManager 前端；认证沿用面板会话。
+             结构与类名保持原项目原样，样式已收进 #proxy-manager-app 作用域。 -->
+        <div id="proxy-manager-app" v-cloak>
+          <section class="modal-panel config-panel">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">OPERATIONS</p>
+                <h1>节点控制台</h1>
+                <p>每个上游节点映射到独立的本地 HTTP 端口，任务之间互不干扰。</p>
+              </div>
+              <button class="button button-secondary" type="button" @click="loadProxies" :disabled="listLoading">
+                <svg viewBox="0 0 24 24" :class="{ rotating: listLoading }"><path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.3L13 11h8V3l-3.3 3.3Z"/></svg>
+                刷新状态
+              </button>
+            </div>
+
+            <div class="stats-grid" aria-label="运行概览">
+              <article class="stat-card"><span>全部节点</span><strong>{{ proxies.length }}</strong><small>已分配端口</small></article>
+              <article class="stat-card active"><span>运行中</span><strong>{{ runningCount }}</strong><small>正在转发流量</small></article>
+              <article class="stat-card"><span>已停止</span><strong>{{ proxies.length - runningCount }}</strong><small>端口当前关闭</small></article>
+            </div>
+
+            <div class="nodes-section">
+              <div class="section-heading section-heading-actions">
+                <div><h2>代理节点</h2><p>{{ proxies.length ? `共 ${proxies.length} 个独立映射` : '尚未添加代理节点' }}</p></div>
+                <button class="button button-primary" type="button" @click="openAddModal">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
+                  添加节点
+                </button>
+              </div>
+
+              <div v-if="listLoading && !proxies.length" class="empty-state"><span class="spinner spinner-dark"></span><p>正在加载节点...</p></div>
+              <div v-else-if="!proxies.length" class="empty-state">
+                <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4V5Zm2 2v10h12V7H6Zm2 2h8v2H8V9Zm0 4h5v2H8v-2Z"/></svg>
+                <h3>还没有代理节点</h3>
+                <p>点击“添加节点”录入第一个 HTTP、SOCKS5 或 VLESS 代理。</p>
+              </div>
+              <div v-else class="node-list" role="list">
+                <article v-for="proxy in proxies" :key="proxy.id" class="node-row" :class="{ online: proxy.is_running }" role="listitem">
+                  <div class="node-identity">
+                    <span class="protocol-badge">{{ proxy.protocol.toUpperCase() }}</span>
+                    <div v-if="editingName !== proxy.id" class="node-name-wrap">
+                      <strong class="node-name" :title="proxy.name">{{ proxy.name }}</strong>
+                      <button class="icon-button" type="button" @click="startEditName(proxy)" :disabled="busy(proxy.id)" :aria-label="`编辑 ${proxy.name} 的名称`" title="编辑名称">
+                        <svg viewBox="0 0 24 24"><path d="m4 16.5-.8 4.3 4.3-.8L18.8 8.7l-3.5-3.5L4 16.5Zm13.9-13a1.2 1.2 0 0 1 1.7 0l.9.9a1.2 1.2 0 0 1 0 1.7l-1.1 1.1-3.5-3.5 1-1.2Z"/></svg>
+                      </button>
+                    </div>
+                    <form v-else class="name-edit-form" @submit.prevent="saveName(proxy)">
+                      <input v-model.trim="nameDraft" maxlength="80" required :aria-label="`修改 ${proxy.name} 的名称`" @keydown.esc.prevent="cancelEditName">
+                      <button class="icon-button save" type="submit" :disabled="savingName[proxy.id]" aria-label="保存名称" title="保存名称"><span v-if="savingName[proxy.id]" class="spinner spinner-dark"></span><svg v-else viewBox="0 0 24 24"><path d="m9 16.2-4.2-4.2-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z"/></svg></button>
+                      <button class="icon-button" type="button" @click="cancelEditName" :disabled="savingName[proxy.id]" aria-label="取消编辑" title="取消编辑"><svg viewBox="0 0 24 24"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z"/></svg></button>
+                    </form>
+                  </div>
+                  <div class="node-endpoint"><small>代理入口</small><strong>{{ proxyHost }}:{{ proxy.local_port }}</strong></div>
+                  <div class="node-test"><template v-if="results[proxy.id]"><strong>{{ results[proxy.id].ip }}</strong><span>{{ results[proxy.id].latency }} ms</span></template><span v-else class="muted-result">尚未测速</span></div>
+                  <span class="status" :class="proxy.is_running ? 'status-online' : 'status-offline'"><i></i>{{ proxy.is_running ? '运行中' : '已停止' }}</span>
+                  <div class="node-actions">
+                    <button class="button button-secondary" @click="testProxy(proxy)" :disabled="busy(proxy.id)"><span v-if="testing[proxy.id]" class="spinner spinner-dark"></span><svg v-else viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z"/></svg>测速</button>
+                    <button class="button" :class="proxy.is_running ? 'button-warning' : 'button-success'" @click="toggleProxy(proxy)" :disabled="busy(proxy.id)"><span v-if="toggling[proxy.id]" class="spinner"></span><svg v-else viewBox="0 0 24 24"><path v-if="proxy.is_running" d="M6 5h5v14H6V5Zm7 0h5v14h-5V5Z"/><path v-else d="m8 5 11 7-11 7V5Z"/></svg>{{ proxy.is_running ? '停止' : '启动' }}</button>
+                    <button class="button button-danger-ghost" @click="askDelete(proxy)" :disabled="busy(proxy.id)"><svg viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 12H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z"/></svg>删除</button>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <div v-if="addModalOpen" class="pm-modal-backdrop" @click.self="closeAddModal" @keydown.esc="closeAddModal">
+            <section class="pm-modal pm-add-modal" role="dialog" aria-modal="true" aria-labelledby="add-title">
+              <div class="pm-modal-header">
+                <div><h2 id="add-title">添加代理节点</h2><p>系统会自动识别协议。地址前后可附带节点名称，未填写时自动生成。</p></div>
+                <button class="icon-button modal-close" type="button" @click="closeAddModal" :disabled="addLoading" aria-label="关闭添加节点弹窗" title="关闭">
+                  <svg viewBox="0 0 24 24"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z"/></svg>
+                </button>
+              </div>
+              <form class="pm-modal-form" @submit.prevent="addProxy">
+                <div class="field">
+                  <label for="proxy-input">代理地址或“名称 + 地址”</label>
+                  <input id="proxy-input" ref="proxyInput" v-model.trim="form.input" required spellcheck="false" autocomplete="off" placeholder="香港节点 socks5://user:pass@host:1080">
+                  <small class="field-hint">支持 HTTP、HTTPS、SOCKS、SOCKS5、SOCKS5H 和 VLESS（vless:// 分享链接）</small>
+                </div>
+                <div class="pm-modal-actions">
+                  <button class="button button-secondary" type="button" @click="closeAddModal" :disabled="addLoading">取消</button>
+                  <button class="button button-primary" type="submit" :disabled="addLoading"><span v-if="addLoading" class="spinner" aria-hidden="true"></span>{{ addLoading ? '添加中' : '添加节点' }}</button>
+                </div>
+              </form>
+            </section>
+          </div>
+
+          <div v-if="deleteTarget" class="pm-modal-backdrop" @click.self="deleteTarget = null">
+            <section class="pm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+              <div class="pm-modal-icon"><svg viewBox="0 0 24 24"><path d="M11 7h2v6h-2V7Zm0 8h2v2h-2v-2Zm1-13L1 21h22L12 2Zm0 4 7.5 13h-15L12 6Z"/></svg></div>
+              <h2 id="delete-title">删除代理节点？</h2><p>即将删除“{{ deleteTarget.name }}”。若端口正在运行，转发服务会同时停止，此操作无法撤销。</p>
+              <div class="pm-modal-actions"><button class="button button-secondary" @click="deleteTarget = null" :disabled="deleteLoading">取消</button><button class="button button-danger" @click="deleteProxy" :disabled="deleteLoading"><span v-if="deleteLoading" class="spinner"></span>确认删除</button></div>
+            </section>
+          </div>
+
+          <div class="pm-toast-region" aria-live="polite"><div v-for="notice in notices" :key="notice.id" class="pm-toast" :class="`pm-toast-${notice.type}`">{{ notice.message }}</div></div>
+        </div>
       </div>
 
       <div id="warp-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-warp" hidden>
@@ -1326,6 +1418,8 @@
   <script src="/features/browser-resources/controller.js?v=20260907a"></script>
   <script src="/core/proxy-mode-control.js?v=20260908a"></script>
   <script src="/core/app-navigation.js?v=20260908a"></script>
+  <script src="/proxy-manager/vendor/vue.global.prod.js"></script>
+  <script src="/proxy-manager/app.js"></script>
   <script src="/core/clipboard.js?v=20260908a"></script>
   <script src="/core/run-presentation.js?v=20260908a"></script>
   <script src="/features/auth/ui.js?v=20260908a"></script>
