@@ -123,20 +123,6 @@ CREATE TABLE IF NOT EXISTS panel_passkeys (
 );
 CREATE INDEX IF NOT EXISTS idx_panel_passkeys_user ON panel_passkeys(user_id);
 
-CREATE TABLE IF NOT EXISTS managed_proxies (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  upstream_url TEXT NOT NULL,
-  desired_running INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'stopped',
-  local_port INTEGER,
-  last_error TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_managed_proxies_desired ON managed_proxies(desired_running, id);
-
 CREATE TABLE IF NOT EXISTS warp_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   desired_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1473,51 +1459,6 @@ function purgeExpiredSessions() {
   return info.changes || 0;
 }
 
-function listManagedProxies() {
-  return db.prepare('SELECT * FROM managed_proxies ORDER BY id ASC').all();
-}
-
-function getManagedProxy(id) {
-  return db.prepare('SELECT * FROM managed_proxies WHERE id = ?').get(Number(id)) || null;
-}
-
-function createManagedProxy({ name, upstreamUrl }) {
-  const info = db.prepare(`
-    INSERT INTO managed_proxies (name, upstream_url)
-    VALUES (?, ?)
-  `).run(String(name), String(upstreamUrl));
-  return getManagedProxy(info.lastInsertRowid);
-}
-
-function updateManagedProxyConfig(id, { name, upstreamUrl }) {
-  db.prepare(`
-    UPDATE managed_proxies
-    SET name = ?, upstream_url = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(String(name), String(upstreamUrl), Number(id));
-  return getManagedProxy(id);
-}
-
-function updateManagedProxyRuntime(id, { desiredRunning, status, localPort, lastError }) {
-  db.prepare(`
-    UPDATE managed_proxies
-    SET desired_running = ?, status = ?, local_port = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(
-    desiredRunning ? 1 : 0,
-    String(status || 'stopped'),
-    localPort == null ? null : Number(localPort),
-    lastError == null ? null : String(lastError),
-    Number(id),
-  );
-  return getManagedProxy(id);
-}
-
-function deleteManagedProxy(id) {
-  const info = db.prepare('DELETE FROM managed_proxies WHERE id = ?').run(Number(id));
-  return info.changes > 0;
-}
-
 module.exports = {
   db,
   listTaskGroups,
@@ -1606,10 +1547,4 @@ module.exports = {
   deleteSession,
   deleteSessionsForUser,
   purgeExpiredSessions,
-  listManagedProxies,
-  getManagedProxy,
-  createManagedProxy,
-  updateManagedProxyConfig,
-  updateManagedProxyRuntime,
-  deleteManagedProxy,
 };

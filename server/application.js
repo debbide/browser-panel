@@ -85,9 +85,8 @@ const { PROXY_MODES } = require('./runtime/runtime-contract');
 const { resolveEffectiveProxyContract } = require('./runtime/env-builder');
 const { manager: warpManager, cleanError: cleanWarpError } = require('./warp/manager');
 const { createWarpRouter } = require('./warp/routes');
-const { ManagedProxyManager } = require('./managed-proxy-manager');
-const { createManagedProxyRouter } = require('./routes/managed-proxy-routes');
-const managedProxyManager = new ManagedProxyManager(db);
+const { createProxyManager } = require('./proxy-manager');
+const proxyManager = createProxyManager({ panelDb: db, dataDir: config.paths.dataDir });
 const cloudBackup = require('./cloud/backup-service');
 const { createCloudBackupRouter } = require('./cloud/routes');
 const { createResourceRouter } = require('./resources/router');
@@ -639,7 +638,8 @@ app.use('/api/profiles-fs', createResourceRouter({
   isBusy: () => getManualBrowserStatus().open || isAnyBrowserTaskRunning(),
 }));
 app.use('/api/warp', createWarpRouter(warpManager));
-app.use('/api/managed-proxies', createManagedProxyRouter(managedProxyManager));
+// 内嵌的 Proxy Manager：路由挂面板自身会话鉴权之后，前端页面由 public 静态目录提供。
+app.use('/api/proxy-manager', proxyManager.router);
 // 云端备份快照里含全部密钥（代理凭据、面板账号、WARP），必须挂在 requireAuth 之后。
 app.use('/api/cloud-backup', createCloudBackupRouter(cloudBackup));
 app.use('/api/task-groups', createTaskGroupRouter(db));
@@ -1004,7 +1004,7 @@ function onServerStarted() {
     reloadJobs(executeTask);
     void ensureTelegramWebhook();
     void warpManager.restore();
-    void managedProxyManager.restore();
+    void proxyManager.restore();
     // 云端备份定时器：启动时先把 next_at 算好（若缺失），再挂 60s 的轮询。
     try {
       cloudBackup.ensureScheduled();
@@ -1059,7 +1059,7 @@ async function closeCoreServices(reason) {
   cloudBackup.stopTicker();
   events.closeAll();
   await warpManager.shutdown();
-  await managedProxyManager.shutdown();
+  await proxyManager.close();
   db.db.close();
 }
 
