@@ -1489,6 +1489,15 @@ function createManagedProxy({ name, upstreamUrl }) {
   return getManagedProxy(info.lastInsertRowid);
 }
 
+function updateManagedProxyConfig(id, { name, upstreamUrl }) {
+  db.prepare(`
+    UPDATE managed_proxies
+    SET name = ?, upstream_url = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(String(name), String(upstreamUrl), Number(id));
+  return getManagedProxy(id);
+}
+
 function updateManagedProxyRuntime(id, { desiredRunning, status, localPort, lastError }) {
   db.prepare(`
     UPDATE managed_proxies
@@ -1600,6 +1609,7 @@ module.exports = {
   listManagedProxies,
   getManagedProxy,
   createManagedProxy,
+  updateManagedProxyConfig,
   updateManagedProxyRuntime,
   deleteManagedProxy,
 };

@@ -16,6 +16,16 @@ function createManagedProxyRouter(manager) {
     }
   });
 
+  router.patch('/:id', async (req, res) => {
+    try {
+      const proxy = await manager.update(req.params.id, req.body || {});
+      res.json({ data: proxy });
+    } catch (error) {
+      const status = manager.get(req.params.id) ? 400 : 404;
+      res.status(status).json({ message: error.message || 'Failed to update proxy' });
+    }
+  });
+
   router.post('/:id/start', async (req, res) => {
     try {
       const proxy = await manager.start(req.params.id);
@@ -33,6 +43,16 @@ function createManagedProxyRouter(manager) {
     } catch (error) {
       const status = manager.get(req.params.id) ? 400 : 404;
       res.status(status).json({ message: error.message || 'Failed to stop proxy' });
+    }
+  });
+
+  router.post('/:id/test', async (req, res) => {
+    try {
+      const result = await manager.test(req.params.id);
+      res.json({ data: result });
+    } catch (error) {
+      const status = manager.get(req.params.id) ? 400 : 404;
+      res.status(status).json({ message: error.message || 'Failed to test proxy' });
     }
   });
 
