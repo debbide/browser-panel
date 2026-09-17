@@ -1,4 +1,7 @@
 const { fetchJson, goLogin } = SessionApi;
+// `isRedirecting` is read through SessionApi instead of destructured: the panel
+// must observe the live flag, and the module-load-order test pins the line above.
+const isRedirecting = () => SessionApi.isRedirecting();
 
 const { dialogPassphrase, dialogPassphraseOnce } = UiFeedback;
 const { copyText } = Clipboard;
@@ -2177,7 +2180,7 @@ let refreshInFlight = false;
 let refreshQueued = false;
 
 async function refreshStatus() {
-  if (redirectingToLogin) return;
+  if (isRedirecting()) return;
   // 上一轮还没回来：记一笔，等它结束后补一次，别让请求堆叠。
   // 直接 return 会丢事件 —— 任务结束的那条正好撞上一轮慢请求就永远不刷了。
   if (refreshInFlight) {
@@ -2229,7 +2232,7 @@ const taskEditorController = TaskEditorController.createTaskEditorController({
 const statusStream = createEventStream({
   refreshStatus,
   loadWarpStatus,
-  isRedirecting: () => redirectingToLogin,
+  isRedirecting,
 });
 
 function scheduleRefresh() {

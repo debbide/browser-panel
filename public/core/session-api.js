@@ -35,6 +35,6 @@
     return data;
   }
 
-  global.SessionApi = { fetchJson, goLogin };
+  global.SessionApi = { fetchJson, goLogin, isRedirecting: () => redirectingToLogin };
   global.fetchJson = fetchJson;
 }(window));

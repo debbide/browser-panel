@@ -13,8 +13,12 @@
   const editing = new Set();
 
   function setMessage(text, isError = false) {
-    message.textContent = text || '';
-    message.classList.toggle('managed-proxy-message-error', isError);
+    const value = String(text == null ? '' : text);
+    message.textContent = value;
+    message.classList.toggle('managed-proxy-message-error', Boolean(isError) && value !== '');
+    // The node ships with `hidden`; without clearing it every success/error note
+    // stayed invisible and the page looked like the buttons did nothing.
+    message.hidden = value === '';
   }
 
   function escapeHtml(value) {
@@ -105,11 +109,11 @@
     return payload.data;
   }
 
-  async function load() {
+  async function load({ clearMessage = true } = {}) {
     refreshButton.disabled = true;
     try {
       render(await request('/api/managed-proxies'));
-      setMessage('');
+      if (clearMessage) setMessage('');
     } catch (error) {
       setMessage(error.message || String(error), true);
     } finally {
@@ -130,8 +134,8 @@
         }),
       });
       form.reset();
+      await load({ clearMessage: false });
       setMessage('代理已添加。');
-      await load();
     } catch (error) {
       setMessage(error.message || String(error), true);
     } finally {
@@ -160,8 +164,8 @@
         }),
       });
       editing.delete(id);
+      await load({ clearMessage: false });
       setMessage('代理配置已保存。');
-      await load();
     } catch (error) {
       setMessage(error.message || String(error), true);
       submitButton.disabled = false;
@@ -206,18 +210,25 @@
     }[action] || '正在处理代理…';
     setMessage(progressText);
     try {
+      let doneText = '';
       if (action === 'delete') {
         await request(`/api/managed-proxies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        doneText = '代理已删除。';
       } else {
         const result = await request(`/api/managed-proxies/${encodeURIComponent(id)}/${action}`, {
           method: 'POST',
           body: JSON.stringify(action === 'stop' ? { force: true } : {}),
         });
         if (action === 'test') {
-          setMessage(`HTTPS 测试通过：状态 ${result.statusCode}，延迟 ${result.latencyMs} ms。`);
+          doneText = `HTTPS 测试通过：状态 ${result.statusCode}，延迟 ${result.latencyMs} ms。`;
+        } else if (action === 'start') {
+          doneText = '代理已启动。';
+        } else if (action === 'stop') {
+          doneText = '代理已停止。';
         }
       }
-      await load();
+      await load({ clearMessage: false });
+      if (doneText) setMessage(doneText);
     } catch (error) {
       setMessage(error.message || String(error), true);
       button.disabled = false;
