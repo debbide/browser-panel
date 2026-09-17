@@ -241,6 +241,33 @@
         </section>
       </div>
 
+      <div id="managed-proxies-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-managed-proxies" hidden>
+        <section class="modal-panel config-panel">
+          <div class="section-header compact">
+            <div>
+              <h2>代理管理</h2>
+              <p class="muted">手动添加上游代理，管理本地 HTTP 转发端口并执行真实 HTTPS 测试。</p>
+            </div>
+            <button id="managed-proxy-refresh-btn" type="button" class="alt btn-with-icon"><i data-lucide="refresh-cw" class="icon-sm"></i> 刷新</button>
+          </div>
+          <form id="managed-proxy-form" class="managed-proxy-form">
+            <label>
+              <span>名称</span>
+              <input id="managed-proxy-name" type="text" maxlength="100" placeholder="例如：香港节点" required />
+            </label>
+            <label>
+              <span>上游代理地址</span>
+              <input id="managed-proxy-upstream-url" type="text" placeholder="例如：http://user:pass@host:port" required />
+            </label>
+            <button id="managed-proxy-add-btn" type="submit" class="btn-with-icon"><i data-lucide="plus" class="icon-sm"></i> 添加代理</button>
+          </form>
+          <p id="managed-proxy-message" class="muted" hidden></p>
+          <div id="managed-proxy-list" class="managed-proxy-list">
+            <div class="managed-proxy-empty muted">正在加载代理列表…</div>
+          </div>
+        </section>
+      </div>
+
       <div id="warp-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-warp" hidden>
         <section class="modal-panel config-panel">
           <div class="section-header compact">
@@ -1316,6 +1343,7 @@
   <script src="/features/browser-resources/controller.js?v=20260907a"></script>
   <script src="/core/proxy-mode-control.js?v=20260908a"></script>
   <script src="/core/app-navigation.js?v=20260908a"></script>
+  <script src="/managed-proxies.js?v=20260917a"></script>
   <script src="/core/clipboard.js?v=20260908a"></script>
   <script src="/core/run-presentation.js?v=20260908a"></script>
   <script src="/features/auth/ui.js?v=20260908a"></script>
