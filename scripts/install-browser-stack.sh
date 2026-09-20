@@ -490,6 +490,11 @@ done
   "pydub>=0.25.0" \
   "numpy>=1.24.0"
 
+# SeleniumBase may pull PyAutoGUI in as an optional transitive dependency. The
+# panel does not use desktop-level mouse automation, and PyAutoGUI is prone to
+# failing on headless servers when DISPLAY/Xauthority is unavailable.
+python3 -m pip uninstall -y --break-system-packages PyAutoGUI pyautogui 2>/dev/null || true
+
 # Fail the installer if the runtime it just installed is not importable. This
 # catches dependency-resolution and ABI errors before a scheduled task finds
 # them hours later.
