@@ -482,7 +482,7 @@ done
   "Pillow>=10.0.0" \
   "DrissionPage>=4.1.0" \
   "selenium>=4.20.0" \
-  "seleniumbase>=4.30.0" \
+  "seleniumbase==4.30.0" \
   "playwright>=1.40.0" \
   "pyrogram>=2.0.0" \
   "TgCrypto>=1.2.0" \
@@ -490,9 +490,9 @@ done
   "pydub>=0.25.0" \
   "numpy>=1.24.0"
 
-# SeleniumBase may pull PyAutoGUI in as an optional transitive dependency. The
-# panel does not use desktop-level mouse automation, and PyAutoGUI is prone to
-# failing on headless servers when DISPLAY/Xauthority is unavailable.
+# SeleniumBase 4.30.0 keeps PyAutoGUI behind an optional extra. Newer releases
+# require PyAutoGUI on Linux, which makes pip build it before this cleanup can
+# run. Keep the uninstall as a defensive cleanup for previously installed copies.
 python3 -m pip uninstall -y --break-system-packages PyAutoGUI pyautogui 2>/dev/null || true
 
 # Fail the installer if the runtime it just installed is not importable. This
