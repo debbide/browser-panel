@@ -589,6 +589,7 @@
       on(elements.openBrowserBtn, 'click', openBrowserSession);
       on(elements.closeBrowserBtn, 'click', closeBrowserSession);
       on(elements.addProfileBtn, 'click', () => openProfileModal(null));
+      wireResourceManagers();
       actions.mount?.({ api, view });
     }
 
