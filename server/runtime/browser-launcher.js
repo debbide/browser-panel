@@ -489,17 +489,15 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
   const browserUser = (config.browser && config.browser.user)
     ? String(config.browser.user).trim()
     : 'browser';
-  const workDir = (config.browser && config.browser.workDir)
-    ? String(config.browser.workDir).trim()
-    : '';
   const extraDirs = Array.isArray(opts.extraUserDataDirs)
     ? opts.extraUserDataDirs.map((d) => String(d || '').trim()).filter(Boolean)
     : [];
 
-  // Patterns: SB temp profiles, browser work profiles, optional exact dirs from this run
+  // Only match SeleniumBase temp profiles or exact profile paths owned by this run.
+  // Matching the shared browser work directory can include the manual persistent
+  // browser and must not be used as a task-cleanup boundary.
   const matchHints = [
     '--user-data-dir=/tmp/tmp',
-    workDir ? `--user-data-dir=${workDir}` : '',
     ...extraDirs.map((d) => `--user-data-dir=${d}`),
   ].filter(Boolean);
 
