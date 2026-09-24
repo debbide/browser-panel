@@ -657,6 +657,9 @@ function getManualBrowserStatus() {
   return {
     open: Boolean(manualBrowserState.pid),
     openedAt: manualBrowserState.openedAt,
+    // Session pid — exposed so terminate sweeps can exclude the hand-opened
+    // browser's whole process tree instead of killing it as a "leftover".
+    pid: manualBrowserState.pid || 0,
     // Exposed so the scheduler can compare profiles precisely: a second
     // Chrome on the SAME user-data-dir corrupts the profile lock, while a
     // task with its own (temp) profile never contends with the manual browser.

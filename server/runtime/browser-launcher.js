@@ -20,6 +20,86 @@ const activeBrowserRuns = new Map();
 /** Delayed terminate timers keyed by taskId — cancelled when a newer run starts. */
 const pendingTerminateTimers = new Map();
 
+/**
+ * Manual (resident) browser exclusion for terminate sweeps.
+ * The aggressive orphan sweep must never kill the browser the user opened by
+ * hand — it is not a task leftover. The session pid covers the live tree;
+ * the user-data-dir covers processes that detached from the session
+ * (SeleniumBase UC reparents chrome to init).
+ * Resolved lazily so this module never creates an import cycle with
+ * server/browser.js; a failure simply means "no exclusion".
+ */
+function getManualBrowserExclusion() {
+  try {
+    // eslint-disable-next-line global-require
+    const browser = require('../browser');
+    const status = browser && typeof browser.getManualBrowserStatus === 'function'
+      ? browser.getManualBrowserStatus()
+      : null;
+    if (!status || !status.open) return null;
+    const pid = Number(status.pid);
+    const userDataDir = status.userDataDir ? String(status.userDataDir).trim() : '';
+    if (!(pid > 0) && !userDataDir) return null;
+    return { pid: pid > 0 ? pid : 0, userDataDir };
+  } catch {
+    return null;
+  }
+}
+
+/** BFS the live process tree under rootPid via pgrep -P. Returns int pids. */
+function collectProcessTreePids(rootPid) {
+  const seen = new Set();
+  const queue = [Number(rootPid)];
+  while (queue.length > 0) {
+    const p = queue.shift();
+    if (!Number.isInteger(p) || p <= 0 || seen.has(p)) continue;
+    seen.add(p);
+    let kids = [];
+    try {
+      const out = spawnSync('pgrep', ['-P', String(p)], { encoding: 'utf8', timeout: 3000 });
+      kids = String((out && out.stdout) || '')
+        .split(/\s+/)
+        .map((s) => Number(s))
+        .filter((n) => Number.isInteger(n) && n > 0);
+    } catch {
+      // pgrep missing/failed: treat as leaf.
+    }
+    for (const k of kids) if (!seen.has(k)) queue.push(k);
+  }
+  return [...seen];
+}
+
+/**
+ * Shell snippet pieces that skip the hand-opened browser in kill loops.
+ * Returns { vars, fn } — vars are `name=value` lines (already shell-escaped),
+ * fn is the is_manual_excluded() body ($1 = pid, $2 = full cmdline).
+ */
+function buildManualExclusionSnippet() {
+  const exclusion = getManualBrowserExclusion();
+  const pids = exclusion && exclusion.pid > 0 ? collectProcessTreePids(exclusion.pid) : [];
+  const udir = exclusion && exclusion.userDataDir ? exclusion.userDataDir : '';
+  return {
+    vars: [
+      `manual_excluded_pids=${shellEscape(pids.length > 0 ? ` ${pids.join(' ')} ` : ' ')}`,
+      `manual_excluded_udir=${shellEscape(udir)}`,
+    ],
+    fn: [
+      'is_manual_excluded() {',
+      '  # $1 = pid, $2 = full cmdline. Never touch the hand-opened browser.',
+      '  case "$manual_excluded_pids" in',
+      '    *" $1 "*) return 0 ;;',
+      '  esac',
+      '  if [ -n "$manual_excluded_udir" ]; then',
+      '    case "$2" in',
+      '      *"--user-data-dir=$manual_excluded_udir"*) return 0 ;;',
+      '    esac',
+      '  fi',
+      '  return 1',
+      '}',
+    ],
+  };
+}
+
 function getRuntimeDataDir() {
   return path.join(config.paths.root, 'runtime-data');
 }
@@ -408,7 +488,13 @@ function buildTerminateCommandsByTask(task) {
     ? `BAP_RUN_ID=${runId}`
     : (taskId ? `BAP_TASK_ID=${taskId}` : '');
 
+  // Manual-browser exclusion for the kill loops below: never touch the
+  // hand-opened browser even when it shares the ruyipage stack.
+  const excl = buildManualExclusionSnippet();
+
   const killTreeFunc = [
+    ...excl.vars,
+    ...excl.fn,
     'kill_tree() {',
     '  local p="$1"',
     '  [ -z "$p" ] && return 0',
@@ -442,15 +528,22 @@ function buildTerminateCommandsByTask(task) {
     '  done',
     '}',
     'kill_ruyi_profile() {',
-    '  local sig="$1" profile="$2" line p cmd',
-    '  [ -z "$profile" ] && return 0',
+    '  local sig="$1" profile="$2" ruyibin="$3" line p cmd matched',
+    '  [ -z "$profile" ] && [ -z "$ruyibin" ] && return 0',
     '  pgrep -af -- "firefox|geckodriver" 2>/dev/null | while IFS= read -r line; do',
     '    p="${line%% *}"; cmd="${line#* }"',
     '    case "$p" in ""|*[!0-9]*) continue;; esac',
     '    owner_ok "$p" || continue',
-    '    printf "%s" "$cmd" | grep -Fq -- "$profile" || continue',
-    '    echo "[terminate] ruyipage pid=$p profile=$profile signal=$sig"',
-    '    kill "-$sig" "$p" 2>/dev/null || true',
+    '    is_manual_excluded "$p" "$cmd" && continue',
+    '    matched=0',
+    '    if [ -n "$profile" ]; then printf "%s" "$cmd" | grep -Fq -- "$profile" && matched=1; fi',
+    '    # ruyipage detaches firefox into its own session and does not always',
+    '    # keep the profile path on the cmdline — the dedicated ruyi binary',
+    '    # path is the reliable identity (a desktop firefox lives elsewhere).',
+    '    if [ "$matched" = "0" ] && [ -n "$ruyibin" ]; then printf "%s" "$cmd" | grep -Fq -- "$ruyibin" && matched=1; fi',
+    '    [ "$matched" = "1" ] || continue',
+    '    echo "[terminate] ruyipage pid=$p signal=$sig"',
+    '    if [ "$sig" = "KILL" ]; then kill_tree_kill "$p"; else kill_tree "$p"; fi 2>/dev/null || true',
     '  done',
     '}',
   ];
@@ -479,8 +572,8 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -TERM -f -- ${shellEscape(udMarker)} || true`);
   }
-  if (runtimeStack === 'ruyipage' && userDataDir) {
-    commands.push(`kill_ruyi_profile TERM ${shellEscape(userDataDir)} || true`);
+  if (runtimeStack === 'ruyipage' && (userDataDir || ruyiPath)) {
+    commands.push(`kill_ruyi_profile TERM ${shellEscape(userDataDir || '')} ${shellEscape(ruyiPath)} || true`);
   }
 
   commands.push('sleep 1');
@@ -495,8 +588,8 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
   }
-  if (runtimeStack === 'ruyipage' && userDataDir) {
-    commands.push(`kill_ruyi_profile KILL ${shellEscape(userDataDir)} || true`);
+  if (runtimeStack === 'ruyipage' && (userDataDir || ruyiPath)) {
+    commands.push(`kill_ruyi_profile KILL ${shellEscape(userDataDir || '')} ${shellEscape(ruyiPath)} || true`);
   }
 
   // 4) SeleniumBase UC orphans: chrome reparented to init after python dies.
@@ -537,11 +630,17 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
     ...extraDirs.map((d) => `--user-data-dir=${d}`),
   ].filter(Boolean);
 
+  // Never kill the hand-opened (resident) browser: it is not a task leftover.
+  // Resolved at sweep time so a manual browser opened after the task stopped
+  // is still protected.
+  const excl = buildManualExclusionSnippet();
+
   const script = [
     'cleanup_sb_orphan_chrome() {',
     `  local aggressive="${aggressive ? '1' : '0'}"`,
     `  local buser=${shellEscape(browserUser)}`,
     '  local line pid ppid udir owner cmd',
+    ...excl.vars.map((v) => `  local ${v}`),
     '  is_browser_related() {',
     '    case "$1" in',
     '      *chrome*|*chromium*|*chromedriver*|*uc_driver*|*chrome_crashpad*) return 0 ;;',
@@ -563,6 +662,7 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
     '    if [ "$aggressive" = "1" ]; then return 0; fi',
     '    return 1',
     '  }',
+    ...excl.fn,
     '  owner_ok() {',
     '    local p="$1"',
     '    [ -z "$buser" ] && return 0',
@@ -585,6 +685,7 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
     '    cmd="${line#* }"',
     '    should_consider "$cmd" || continue',
     '    owner_ok "$pid" || continue',
+    '    is_manual_excluded "$pid" "$cmd" && continue',
     '    orphan=0',
     '    if is_orphan "$pid"; then orphan=1; fi',
     '    if [ "$aggressive" = "1" ] || [ "$orphan" = "1" ]; then',
@@ -601,6 +702,7 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
     '    cmd="${line#* }"',
     '    should_consider "$cmd" || continue',
     '    owner_ok "$pid" || continue',
+    '    is_manual_excluded "$pid" "$cmd" && continue',
     '    orphan=0',
     '    if is_orphan "$pid"; then orphan=1; fi',
     '    if [ "$aggressive" = "1" ] || [ "$orphan" = "1" ]; then',
@@ -612,7 +714,9 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
     '    pgrep -af -- "$pat" 2>/dev/null | while IFS= read -r line; do',
     '      pid="${line%% *}"',
     '      case "$pid" in ""|*[!0-9]*) continue;; esac',
+    '      cmd="${line#* }"',
     '      owner_ok "$pid" || continue',
+    '      is_manual_excluded "$pid" "$cmd" && continue',
     '      if [ "$aggressive" = "1" ] || is_orphan "$pid"; then',
     '        echo "[terminate] sb-orphan driver pid=$pid pat=$pat"',
     '        kill -TERM "$pid" 2>/dev/null || true',
@@ -1441,4 +1545,8 @@ module.exports = {
   removeTempProfileDir,
   isPanelTempProfileDir,
   shouldCleanupTmpEntry,
+  // Test hooks: manual-browser exclusion for terminate sweeps.
+  getManualBrowserExclusion,
+  collectProcessTreePids,
+  buildTerminateCommandsByTask,
 };
