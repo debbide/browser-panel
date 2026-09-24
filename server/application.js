@@ -65,6 +65,7 @@ const {
 } = require('./conditions');
 const remainingCallback = require('./conditions/types/remaining_callback');
 const { router: authRouter, requireAuth } = require('./auth');
+const { createApiRateLimiter } = require('./rate-limit');
 const events = require('./events');
 const logStream = require('./log-stream');
 const { openManualBrowser, closeManualBrowser, getManualBrowserStatus, prepareBrowserWorkspace } = require('./browser');
@@ -690,6 +691,9 @@ const app = createApplication((app) => {
 app.use('/api/auth', authRouter);
 // 版本号不含任何敏感信息,放鉴权之前 —— 登录页也能显示,排查"哪台机器跑着哪个版本"不用登录
 registerPublicRoutes(app);
+// P2 全局 API 限流：挂在鉴权之前，未登录的扫描同样被拦；
+// 只作用于 /api/*，/healthz 等公开探针天然豁免。
+app.use(createApiRateLimiter());
 app.use(requireAuth);
 app.use('/api/extensions-fs', createResourceRouter({
   rootDir: config.paths.extensionsDir,
@@ -757,6 +761,15 @@ setTelegramUpdateHandler(telegramRouteHandlers.receivePollingUpdate);
 app.get('/api/settings/telegram', telegramRouteHandlers.getSettings);
 app.post('/api/settings/telegram', telegramRouteHandlers.saveSettings);
 app.post('/api/settings/telegram/test', telegramRouteHandlers.testSettings);
+
+// P2 审计日志查询：最新的 N 条（默认 100，上限 500），detail 里不含密钥明文
+app.get('/api/audit-log', (req, res) => {
+  try {
+    res.json({ data: db.listAuditLog(req.query.limit) });
+  } catch (error) {
+    res.status(500).json({ message: error.message || '读取审计日志失败' });
+  }
+});
 
 app.use('/api/settings', createSettingsRouter({ db, getRunningTaskIds }));
 

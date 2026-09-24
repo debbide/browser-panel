@@ -179,6 +179,18 @@ CREATE TABLE IF NOT EXISTS warp_probe_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_warp_probe_generation ON warp_probe_snapshots(generation, id DESC);
 
+-- P2 审计日志：只记"谁在什么时候干了什么"，绝不记密钥明文。
+-- 明文值由调用方在传入前剔除（见 server/audit.js 约定）。
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actor TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_id ON audit_log(id DESC);
+
 INSERT OR IGNORE INTO warp_state (id) VALUES (1);
 `);
 
@@ -970,6 +982,29 @@ function getSetting(key) {
   return row ? row.value : null;
 }
 
+// --- P2 审计日志 -----------------------------------------------------------
+const AUDIT_ACTION_MAX_LEN = 120;
+const AUDIT_ACTOR_MAX_LEN = 120;
+const AUDIT_DETAIL_MAX_LEN = 2000;
+
+function recordAudit(action, actor, detail) {
+  const detailText = typeof detail === 'string' ? detail : JSON.stringify(detail ?? {});
+  db.prepare(
+    'INSERT INTO audit_log (actor, action, detail) VALUES (?, ?, ?)'
+  ).run(
+    String(actor || '').slice(0, AUDIT_ACTOR_MAX_LEN),
+    String(action || '').slice(0, AUDIT_ACTION_MAX_LEN),
+    String(detailText || '').slice(0, AUDIT_DETAIL_MAX_LEN),
+  );
+}
+
+function listAuditLog(limit = 100) {
+  const n = Math.min(500, Math.max(1, Math.floor(Number(limit)) || 100));
+  return db.prepare(
+    'SELECT id, created_at, actor, action, detail FROM audit_log ORDER BY id DESC LIMIT ?'
+  ).all(n);
+}
+
 function setSetting(key, value) {
   if (value === null || value === undefined || value === '') {
     db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
@@ -1705,6 +1740,8 @@ module.exports = {
   listWarpProbeSnapshots,
   getSetting,
   setSetting,
+  recordAudit,
+  listAuditLog,
   getSecretSetting,
   setSecretSetting,
   getTelegramSettings,

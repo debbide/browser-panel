@@ -656,6 +656,38 @@ async function notifyTaskRun(task, run) {
   }
 }
 
+// P2：自动云备份失败时发一条 Telegram 告警。
+// - 复用 sendTelegramMessage 通道（token 走参数/请求体，不进进程 argv —— P0 S7 的修法）；
+// - 未配置 Telegram 时静默跳过，只记日志；通知模式设为 off 时同样跳过；
+// - sender 参数是测试缝：默认用真实发送函数，测试可传入假函数。
+async function notifyAutoBackupFailure(error, sender = sendTelegramMessage) {
+  if (getTelegramNotifyMode() === 'off') return false;
+  let settings;
+  try {
+    settings = db.getTelegramSettings();
+  } catch (dbError) {
+    console.error('[telegram] 读取 Telegram 配置失败，跳过自动备份失败告警:', dbError.message);
+    return false;
+  }
+  if (!isTelegramConfigured(settings)) {
+    console.log('[telegram] 自动备份失败：未配置 Telegram，跳过通知');
+    return false;
+  }
+  const reason = String((error && error.message) || error || '未知错误').slice(0, 300);
+  const message = [
+    '⚠️ <b>自动云备份失败</b>',
+    `原因：<code>${escapeTgHtml(reason)}</code>`,
+    '5 分钟后将自动重试，可在「设置 → 云备份」查看详情。',
+  ].join('\n');
+  try {
+    await sender(settings.botToken, settings.chatId, message);
+    return true;
+  } catch (sendError) {
+    console.warn('[telegram] 自动备份失败告警发送失败:', sendError.message);
+    return false;
+  }
+}
+
 async function sendTelegramTestMessage() {
   const settings = db.getTelegramSettings();
   if (!isTelegramConfigured(settings)) {
@@ -687,6 +719,7 @@ module.exports = {
   sendTelegramPhoto,
   answerTelegramCallback,
   notifyTaskRun,
+  notifyAutoBackupFailure,
   sendTelegramTestMessage,
   shouldPanelNotifyTaskRun,
   getTelegramNotifyMode,

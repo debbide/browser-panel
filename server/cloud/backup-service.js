@@ -23,6 +23,7 @@ const config = require('../../config');
 const db = require('../db');
 const scheduler = require('../scheduler');
 const { sanitizeExportFilenamePart } = require('../backup');
+const { notifyAutoBackupFailure } = require('../telegram');
 const { createS3Client } = require('./s3-client');
 const { createSnapshot, restoreSnapshot, peekManifest } = require('./snapshot');
 const { masterKeyFilePath, MASTER_KEY_FILE_NAME } = require('../secret-crypto');
@@ -471,6 +472,12 @@ async function checkAutoBackup() {
     db.setS3BackupSettings({
       nextAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     });
+    // P2：失败告警。无 Telegram 配置时函数内部静默跳过；告警本身永不抛错。
+    try {
+      await notifyAutoBackupFailure(error);
+    } catch (notifyError) {
+      console.error('[cloud-backup] 失败告警异常:', notifyError.message);
+    }
   }
 }
 

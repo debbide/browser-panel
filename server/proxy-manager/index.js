@@ -28,6 +28,7 @@ const { PortManager, parseProxyUri, sanitizeProxy, normalizeNodeName, validateUp
 const { createProxyCrypto } = require('./proxy-crypto');
 const { parseVlessLink, isVlessLink } = require('./vless/link');
 const { badRequest, notFound, serviceUnavailable } = require('./http-error');
+const { auditAction } = require('../audit');
 
 const ENCRYPTION_KEY_SETTING = 'proxy_manager_encryption_key';
 
@@ -127,6 +128,8 @@ function createProxyManager({ panelDb, dataDir, host = '127.0.0.1' }) {
       // concurrent allocations instead of a check-then-insert race.
       const proxy = await portManager.reservePort({ name, uri });
       if (!proxy) throw serviceUnavailable('没有可分配的本地端口');
+      // 审计：URI 里可能含密码，只记名称
+      auditAction(req, 'proxy.add', { name: proxy.name || name });
       return res.status(201).json(sanitizeProxy(proxy));
     } catch (error) {
       return next(error);
@@ -154,6 +157,7 @@ function createProxyManager({ panelDb, dataDir, host = '127.0.0.1' }) {
         await portManager.stop(proxy);
       }
       database.deleteProxy(proxy.id);
+      auditAction(req, 'proxy.delete', { name: proxy.name || '' });
       return res.status(204).end();
     } catch (error) {
       return next(error);

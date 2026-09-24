@@ -1,4 +1,5 @@
 const express = require('express');
+const { auditAction } = require('../audit');
 
 function isValidTimeZone(value) {
   try {
@@ -336,6 +337,7 @@ function createBrowserProfileRouter({ db, isAnyBrowserTaskRunning, buildSchedule
     const profileId = req.body && req.body.profile_id ? Number(req.body.profile_id) : null;
     const profile = profileId ? db.getBrowserProfile(profileId) : null;
     const session = await openManualBrowser(profile);
+    auditAction(req, 'browser.manual.open', { profile_id: profileId });
     res.json({ data: { open: true, openedAt: session.openedAt, profileId } });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to open browser' });
@@ -414,6 +416,7 @@ function createBrowserProfileRouter({ db, isAnyBrowserTaskRunning, buildSchedule
   router.post('/api/browser/close', async (req, res) => {
   try {
     const result = await closeManualBrowser();
+    auditAction(req, 'browser.manual.close', {});
     res.json({ data: result });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to close browser' });

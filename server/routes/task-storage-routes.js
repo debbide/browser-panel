@@ -1,4 +1,5 @@
 const express = require('express');
+const { auditAction } = require('../audit');
 
 function createTaskStorageRouter({ fs, path, tasksDir, listTasks }) {
   const router = express.Router();
@@ -393,6 +394,7 @@ router.delete('/scripts', (req, res) => {
       });
     }
     fs.unlinkSync(target);
+    auditAction(req, 'script.delete', { path: fullRel });
     res.json({ ok: true, data: { name: fileName, path: fullRel } });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to delete script' });

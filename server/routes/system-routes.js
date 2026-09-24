@@ -22,6 +22,12 @@ function createSystemRouteRegistrars({
       res.json({ data: getVersion() });
     });
 
+    // P2 健康检查：免登录、免限流，供反代/监控探针用。
+    // 只返回存活与版本号，不含任何敏感信息。
+    app.get('/healthz', (req, res) => {
+      res.json({ ok: true, version: getVersion().label });
+    });
+
   }
 
   function registerEventRoutes(app) {

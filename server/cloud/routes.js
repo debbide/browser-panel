@@ -16,6 +16,7 @@ const express = require('express');
 
 const db = require('../db');
 const backupService = require('./backup-service');
+const { auditAction } = require('../audit');
 
 // accessKey 也按密钥处理：设置视图里它和 secretKey 一样被遮蔽，传空 = 保持原值。
 // 否则前端保存时总带空 accessKey 会把已存的 Key 抹掉。
@@ -120,6 +121,14 @@ function createCloudBackupRouter(service = backupService) {
       } catch (error) {
         console.error('[cloud-backup] ensureScheduled:', error.message);
       }
+      // 审计：只记改了哪些字段名，密钥字段只记"是否提供了新值"，绝不记值本身
+      auditAction(req, 'settings.s3.update', {
+        fields: Object.keys(patch).filter((f) => f !== 'nextAt'),
+        secrets_changed: ['secretKey', 'token', 'passphrase', 'accessKey'].filter((f) => {
+          const v = (req.body || {})[f];
+          return v !== undefined && String(v).trim() !== '';
+        }),
+      });
       res.json({ data: toPublicSettings(saved) });
     } catch (error) {
       res.status(statusForError(error)).json({ message: error.message || '保存云端备份设置失败' });
@@ -145,6 +154,7 @@ function createCloudBackupRouter(service = backupService) {
       } catch (error) {
         console.error('[cloud-backup] ensureScheduled:', error.message);
       }
+      auditAction(req, 'settings.s3.clear', {});
       res.json({ data: toPublicSettings(saved) });
     } catch (error) {
       res.status(statusForError(error)).json({ message: error.message || '清空云端备份设置失败' });
@@ -206,6 +216,7 @@ function createCloudBackupRouter(service = backupService) {
         return;
       }
       const result = await service.restoreFromRemote(key);
+      auditAction(req, 'backup.restore', { key });
       res.json({ data: result });
     } catch (error) {
       res.status(statusForError(error)).json({ message: error.message || '恢复失败' });
@@ -243,6 +254,7 @@ function createCloudBackupRouter(service = backupService) {
         try {
           fs.writeFileSync(tmpPath, buffer);
           const result = await service.restoreFromUpload(tmpPath, passphrase);
+          auditAction(req, 'backup.restore', { source: 'upload' });
           res.json({ data: result });
         } finally {
           // 上传的明文临时文件立刻清掉

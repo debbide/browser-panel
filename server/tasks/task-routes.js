@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { auditAction } = require('../audit');
 
 function createTaskRouter(taskService) {
   const router = express.Router();
@@ -39,6 +40,7 @@ function createTaskRouter(taskService) {
       if (!result.removed) {
         return res.status(404).json({ message: 'Task not found or already deleted' });
       }
+      auditAction(req, 'task.delete', { id: Number(req.params.id), name: result.name || '' });
       res.json({ ok: true });
     } catch (error) {
       res.status(400).json({ message: error.message || 'Failed to delete task' });

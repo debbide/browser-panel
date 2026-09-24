@@ -1,3 +1,5 @@
+const { auditAction } = require('../audit');
+
 function createTelegramRouteHandlers({
   db,
   sendTelegramTestMessage,
@@ -126,6 +128,12 @@ function createTelegramRouteHandlers({
       if (receiveMode === 'webhook') db.setSecretSetting('telegram_webhook_url', webhookUrl);
       db.setSetting('telegram_webhook_status', receiveMode === 'webhook' ? 'registered' : receiveMode);
       db.setSetting('telegram_webhook_error', '');
+      // 审计：只记"换没换 token"，绝不记 token 明文
+      auditAction(req, 'settings.telegram.update', {
+        token_changed: tokenChanged,
+        chat_id: chatId,
+        receive_mode: receiveMode,
+      });
       return res.json({ data: normalizeSettingsResponse() });
     } catch (error) {
       return res.status(500).json({ message: error.message || '保存 Telegram 设置失败' });

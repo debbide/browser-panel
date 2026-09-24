@@ -128,6 +128,7 @@ test('task service reports missing deletes and emits once after successful delet
   assert.deepEqual(service.remove(999), { removed: false, reason: 'not_found' });
   const task = service.create({ name: 'Delete me', type: 'shell' });
   events.length = 0;
-  assert.deepEqual(service.remove(task.id), { removed: true });
+  // remove() returns the deleted task's name so the HTTP layer can audit the deletion
+  assert.deepEqual(service.remove(task.id), { removed: true, name: 'Delete me' });
   assert.deepEqual(events, [['tasks', { action: 'deleted', task_id: task.id }]]);
 });
