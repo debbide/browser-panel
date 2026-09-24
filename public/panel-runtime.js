@@ -1285,6 +1285,7 @@ async function openRunLog(runId) {
   let targetSize = Math.max(Number(data.size) || 0, cursor);
   let draining = false;
   let drainPromise = null;
+  let drainEpoch = 0;
   let finalizing = false;
   let currentStatus = data.status || '-';
   let totalLines = 0;
@@ -1346,13 +1347,18 @@ async function openRunLog(runId) {
     if (closed) return;
     if (drainPromise) return drainPromise;
     draining = true;
-    drainPromise = (async () => {
+    // F6: epoch 让截断事件能作废正在进行的旧 drain。truncated 到达时 cursor/
+    // logText 会被重置；旧 drain 若在 await 一个按截断前文件算好的 chunk，
+    // 回来后必须直接退出，不能再动 cursor/logText，否则会把过期内容塞回来，
+    // 把 cursor 推到 EOF 之后，viewer 就永久卡住不再同步。
+    const epoch = drainEpoch;
+    const current = (async () => {
       updateProgress();
       try {
-        while (!closed && cursor < targetSize) {
+        while (!closed && epoch === drainEpoch && cursor < targetSize) {
           const requestedTarget = targetSize;
           const chunkRes = await fetchJson(`/api/runs/${runId}/log?offset=${cursor}&limit=${256 * 1024}`);
-          if (closed) return;
+          if (closed || epoch !== drainEpoch) return;
           const chunk = chunkRes.data || {};
           const nextOffset = Number(chunk.nextOffset);
           if (!Number.isFinite(nextOffset) || nextOffset <= cursor) {
@@ -1365,13 +1371,17 @@ async function openRunLog(runId) {
           updateProgress();
         }
       } catch (error) {
-        if (!closed) progress.textContent = error.message || '日志同步失败，等待重连';
+        if (!closed && epoch === drainEpoch) progress.textContent = error.message || '日志同步失败，等待重连';
       } finally {
-        draining = false;
-        drainPromise = null;
-        updateProgress();
+        // 旧 drain 作废后不能清掉新 drain 的状态。
+        if (drainPromise === current) {
+          draining = false;
+          drainPromise = null;
+          updateProgress();
+        }
       }
     })();
+    drainPromise = current;
     return drainPromise;
   }
 
@@ -1439,6 +1449,18 @@ async function openRunLog(runId) {
   });
   eventSource.addEventListener('log', (event) => {
     const payload = JSON.parse(event.data || '{}');
+    if (payload.truncated) {
+      // 服务端对日志做了上限截断（只保留尾部）：丢弃已累积的内容，从头重新同步。
+      // epoch +1 作废正在进行的旧 drain（它可能正拿着按截断前文件算好的 chunk），
+      // 并把 drainPromise 置空让 requestCatchUp 立刻起一个新的 drain。
+      drainEpoch++;
+      drainPromise = null;
+      draining = false;
+      logText = '';
+      cursor = 0;
+      targetSize = 0;
+      render();
+    }
     requestCatchUp(payload.size);
   });
   eventSource.addEventListener('end', (event) => {
@@ -1783,8 +1805,8 @@ function renderTasks() {
 }
 
 // 并发保护：任务结束时两条路径会同时拉 /api/tasks —— SSE 的 refreshStatus() 和
-// /run 响应回来的 refreshAll()（/run 是阻塞的，响应要等整个任务跑完）。两次都会
-// 无条件覆盖 tasksCache，先发起、后返回的那次会把已经 is_running=false 的快照写回
+// /run 响应回来的 refreshAll()（/run 默认异步 202 立刻返回，?wait=1 才阻塞等整个
+// 任务跑完）。两次都会无条件覆盖 tasksCache，先发起、后返回的那次会把已经 is_running=false 的快照写回
 // true，按钮就永久卡在“停止”，只有整页刷新才能恢复。只认最新一次请求的结果。
 let loadTasksSeq = 0;
 

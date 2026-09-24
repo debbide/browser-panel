@@ -1,5 +1,9 @@
 const db = require('./db');
 const { listTasks, updateTask } = db;
+const path = require('path');
+const config = require('../config');
+const { getManualBrowserStatus } = require('./browser');
+const { resolveUseTempProfile, parseTaskParams } = require('./runtime/env-builder');
 const {
   evaluateTaskCondition,
   conditionFromTask,
@@ -40,9 +44,9 @@ function getRunningCount() {
 }
 
 /**
- * @returns {{ ok: true } | { ok: false, reason: 'already_running' | 'browser_busy' }}
+ * @returns {{ ok: true } | { ok: false, reason: 'already_running' | 'browser_busy' | 'manual_browser_busy' }}
  */
-function canStartTask(taskId, { allowParallel, task } = {}) {
+function canStartTask(taskId, { allowParallel, task, profileId } = {}) {
   const id = Number(taskId);
   if (runningTasks.has(id)) {
     return { ok: false, reason: 'already_running' };
@@ -56,29 +60,107 @@ function canStartTask(taskId, { allowParallel, task } = {}) {
   if (!parallel && Array.from(runningTasks.values()).some((run) => run.useBrowser)) {
     return { ok: false, reason: 'browser_busy' };
   }
+  // Manual browser holds its profile dir open: a second Chrome on the SAME
+  // dir corrupts the profile lock, so a colliding scheduled task must wait.
+  // Temp-profile tasks use a unique per-run dir and never collide.
+  const effectiveTask = profileId ? { ...target, browser_profile_id: Number(profileId) } : target;
+  const collision = checkManualBrowserCollision(effectiveTask);
+  if (collision) {
+    return { ok: false, reason: collision };
+  }
   return { ok: true };
+}
+
+/**
+ * Resolve the persistent browser profile dir a task would use, or null when
+ * the task runs with a disposable per-run temp profile (no shared dir, so no
+ * contention with the manual browser is possible).
+ */
+function resolveTaskPersistentBrowserDir(task) {
+  let profile = (task && task._profile) || null;
+  if (!profile && task && task.browser_profile_id) {
+    try {
+      profile = db.getBrowserProfile(Number(task.browser_profile_id)) || null;
+    } catch {
+      profile = null;
+    }
+  }
+  let params = {};
+  try {
+    params = parseTaskParams(task) || {};
+  } catch {
+    params = {};
+  }
+  let useTemp = true;
+  try {
+    useTemp = resolveUseTempProfile(task, params);
+  } catch {
+    useTemp = true;
+  }
+  if (useTemp) return null;
+  const dir = (profile && profile.user_data_dir)
+    || (task && task.use_persistent ? config.browser.userDataDir : '');
+  const text = String(dir || '').trim();
+  return text ? path.resolve(text) : null;
+}
+
+/**
+ * Manual-browser contention check shared by the scheduler gate and the HTTP /
+ * Telegram trigger paths.
+ * @returns {'manual_browser_busy'|null} skip reason, or null when safe.
+ */
+function checkManualBrowserCollision(task) {
+  let status = null;
+  try {
+    status = getManualBrowserStatus();
+  } catch {
+    return null;
+  }
+  if (!status || !status.open) return null;
+  const manualDir = String(status.userDataDir || '').trim();
+  // Fail closed: manual browser is open but its dir is unknown.
+  if (!manualDir) return 'manual_browser_busy';
+  const taskDir = resolveTaskPersistentBrowserDir(task);
+  // Temp-profile task: unique per-run dir, never contends.
+  if (!taskDir) return null;
+  return path.resolve(manualDir) === taskDir ? 'manual_browser_busy' : null;
+}
+
+/**
+ * Check the gate and, when it passes, reserve the task/browser slot
+ * synchronously so concurrent triggers cannot double-start the same task.
+ * The caller MUST call releaseTaskSlot() exactly once afterwards.
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+function reserveTaskSlot(taskId, { allowParallel, task, profileId } = {}) {
+  const id = Number(taskId);
+  const gate = canStartTask(id, { allowParallel, task, profileId });
+  if (!gate.ok) return gate;
+  const target = task || db.getTask(id);
+  runningTasks.set(id, { useBrowser: Boolean(target && target.use_browser) });
+  events.emit('task', { id, running: true });
+  return { ok: true };
+}
+
+function releaseTaskSlot(taskId) {
+  const id = Number(taskId);
+  runningTasks.delete(id);
+  // 任务抛错、被停止、正常结束都要通知，否则按钮会卡在"运行中…"
+  events.emit('task', { id, running: false });
 }
 
 async function runTaskSafely(taskId, runTaskById, options = {}) {
   const id = Number(taskId);
-  const allowParallel = options.allowParallel === undefined
-    ? db.isTaskParallelAllowed()
-    : Boolean(options.allowParallel);
-  const task = options.task || db.getTask(id);
-  const gate = canStartTask(id, { allowParallel, task });
-  if (!gate.ok) {
-    return { skipped: true, reason: gate.reason };
+  const reservation = reserveTaskSlot(id, options);
+  if (!reservation.ok) {
+    return { skipped: true, reason: reservation.reason };
   }
-  runningTasks.set(id, { useBrowser: Boolean(task && task.use_browser) });
   // 所有启动路径（HTTP /api/tasks/:id/run、Telegram 回调、定时器 tick）都走这里，
   // 所以推送只挂这一处就够，不用在每个入口重复。
-  events.emit('task', { id, running: true });
   try {
     return await runTaskById(id);
   } finally {
-    runningTasks.delete(id);
-    // 放在 finally 里：任务抛错、被停止、正常结束都要通知，否则按钮会卡在"运行中…"
-    events.emit('task', { id, running: false });
+    releaseTaskSlot(id);
   }
 }
 
@@ -248,6 +330,11 @@ function fireTask(task, runTaskById, options = {}) {
   runTaskSafely(taskId, runTaskById, { task })
     .then((result) => {
       if (result?.skipped) {
+        if (result.reason === 'manual_browser_busy') {
+          console.log(
+            `[scheduler] task ${taskId} skipped: manual browser holds the same profile open; will retry on next tick`
+          );
+        }
         if (typeof options.onSkipped === 'function') options.onSkipped(result);
         return;
       }
@@ -484,5 +571,8 @@ module.exports = {
   getRunningCount,
   canStartTask,
   runTaskSafely,
+  reserveTaskSlot,
+  releaseTaskSlot,
+  checkManualBrowserCollision,
   evaluateTaskCondition,
 };

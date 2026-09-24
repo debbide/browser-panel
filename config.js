@@ -45,4 +45,13 @@ module.exports = {
     profilesDir: process.env.BROWSER_PROFILES_DIR
       || (process.env.PANEL_RUNTIME_ROOT ? path.join(runtimeRoot, 'profiles') : path.join(browserWork, 'profiles')),
   },
+  tasks: {
+    // Grace period between SIGTERM and SIGKILL when stopping / timing out a
+    // foreground task whose child ignores SIGTERM. Plain config-file value,
+    // no env var needed.
+    killGraceSec: 10,
+    // Per-run log file cap. Appends stop (with a notice line) once exceeded
+    // so a runaway task can never fill the disk.
+    logMaxBytes: 50 * 1024 * 1024,
+  },
 };

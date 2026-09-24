@@ -14,7 +14,9 @@ function createRuntimeRouter(dependencies) {
   router.post('/tasks/:id/run', async (req, res) => {
     try {
       const profileId = req.body && req.body.profile_id ? Number(req.body.profile_id) : null;
-      const response = await triggerTaskExecution(Number(req.params.id), { profileId });
+      // ?wait=1 keeps the legacy blocking semantics; default is 202 + runId.
+      const wait = req.query && (req.query.wait === '1' || req.query.wait === 'true');
+      const response = await triggerTaskExecution(Number(req.params.id), { profileId, wait });
       res.status(response.status).json(response.payload);
     } catch (error) {
       res.status(400).json({ message: error.message });

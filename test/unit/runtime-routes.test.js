@@ -43,7 +43,7 @@ test('runtime routes preserve run conflicts and profile forwarding', async () =>
   const response = await request(app, 'POST', '/api/tasks/7/run', { profile_id: 12 });
   assert.equal(response.status, 409);
   assert.deepEqual(response.body, { message: 'Task is already running', code: 'already_running' });
-  assert.deepEqual(calls, [[7, { profileId: 12 }]]);
+  assert.deepEqual(calls, [[7, { profileId: 12, wait: false }]]);
 });
 
 test('runtime routes preserve missing stop and run history responses', async () => {

@@ -100,7 +100,7 @@ class WarpManager {
       policy: this.getPolicy(),
       policyStatus: this.policy.status(),
       components: state && state.manifest || null,
-      httpAddress: this.runner.status().running && this.httpPort ? `http://127.0.0.1:${this.httpPort}` : '',
+      httpAddress: this.runner.status().running && this.httpBridge.isRunning() && this.httpPort ? `http://127.0.0.1:${this.httpPort}` : '',
       process: this.runner.status(),
       probe: latest && latest.snapshot ? latest.snapshot : latest,
       activeSessions: this.sessions.size,
@@ -219,7 +219,11 @@ class WarpManager {
     this.httpPort = await this.httpBridge.start();
     const snapshot = await this.runProbe(source);
     if (!snapshot.healthy) {
+      // The probe failed: tear everything down, including the bridge, so no
+      // half-started component is left listening or reported as available.
       await this.runner.stop();
+      await this.httpBridge.stop();
+      this.httpPort = null;
       throw warpError('warp_not_ready', 'Neither address family passed the WARP exit probe');
     }
     return snapshot;
@@ -471,7 +475,7 @@ class WarpManager {
     const key = String(sessionId || '').trim();
     if (!key) throw warpError('warp_not_ready', 'A WARP session id is required');
     const status = this.status();
-    if (!status.desiredEnabled || !status.process.running || !['healthy', 'degraded'].includes(status.phase)) {
+    if (!status.desiredEnabled || !status.process.running || !this.httpBridge.isRunning() || !['healthy', 'degraded'].includes(status.phase)) {
       throw warpError('warp_not_ready', 'WARP HTTP is not ready');
     }
     if (this.sessions.has(key)) return this.sessions.get(key);

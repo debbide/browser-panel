@@ -338,9 +338,9 @@ function createSystemRouteRegistrars({
       res.on('close', cleanup);
     });
 
-    app.post('/api/runs/cleanup', (req, res) => {
+    app.post('/api/runs/cleanup', async (req, res) => {
       try {
-        const data = cleanupStorage(db, {
+        const data = await cleanupStorage(db, {
           dryRun: false,
           retentionDays: 30,
           categories: ['runArtifacts'],

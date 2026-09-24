@@ -1,4 +1,5 @@
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const config = require('../config');
 const { getBrowserWorkDir } = require('./browser');
@@ -42,24 +43,46 @@ function normalizeCategories(value) {
   return [...new Set(value)];
 }
 
-function getTreeSize(target) {
+// Cooperative multitasking: every N filesystem ops we yield to the event loop
+// so a huge tree can never starve HTTP/SSE traffic. The awaits on fsp calls
+// already yield between syscalls; the tick covers CPU-bound tight loops.
+function createBudget() {
+  return { ops: 0 };
+}
+
+async function tick(budget) {
+  if (budget && (++budget.ops % 64 === 0)) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+async function getTreeSize(target, budget) {
   let total = 0;
   let stat;
-  try { stat = fs.lstatSync(target); } catch { return 0; }
+  try { stat = await fsp.lstat(target); } catch { return 0; }
   if (!stat.isDirectory() || stat.isSymbolicLink()) return stat.size || 0;
   let entries = [];
-  try { entries = fs.readdirSync(target); } catch { return 0; }
-  for (const name of entries) total += getTreeSize(path.join(target, name));
+  try { entries = await fsp.readdir(target); } catch { return 0; }
+  for (const name of entries) {
+    total += await getTreeSize(path.join(target, name), budget);
+    await tick(budget);
+  }
   return total;
 }
 
-function getMtimeMs(target) {
-  try { return Number(fs.statSync(target).mtimeMs) || 0; } catch { return 0; }
+async function getMtimeMs(target) {
+  try { return Number((await fsp.stat(target)).mtimeMs) || 0; } catch { return 0; }
 }
 
-function listChildren(root) {
+async function pathExists(target) {
+  try { await fsp.access(target); return true; } catch { return false; }
+}
+
+async function listChildren(root, budget) {
   try {
-    return fs.readdirSync(root, { withFileTypes: true }).map((entry) => ({
+    const entries = await fsp.readdir(root, { withFileTypes: true });
+    await tick(budget);
+    return entries.map((entry) => ({
       entry,
       path: path.join(root, entry.name),
     }));
@@ -68,33 +91,36 @@ function listChildren(root) {
   }
 }
 
-function createCollector(cutoffMs) {
+function createCollector(cutoffMs, budget) {
   const seen = new Set();
   const items = [];
-  function add(category, target, root, detail = {}) {
+  async function add(category, target, root, detail = {}) {
     const resolved = path.resolve(String(target || ''));
-    if (!root || !isInside(root, resolved) || seen.has(resolved) || !fs.existsSync(resolved)) return;
-    const mtimeMs = getMtimeMs(resolved);
+    if (!root || !isInside(root, resolved) || seen.has(resolved)) return;
+    if (!await pathExists(resolved)) return;
+    const mtimeMs = await getMtimeMs(resolved);
     if (detail.requireStale !== false && (!mtimeMs || mtimeMs >= cutoffMs)) return;
     seen.add(resolved);
     items.push({
       category,
       path: resolved,
-      bytes: getTreeSize(resolved),
+      bytes: await getTreeSize(resolved, budget),
       mtime: mtimeMs ? new Date(mtimeMs).toISOString() : null,
       runId: detail.runId || null,
       kind: detail.kind || 'file',
     });
+    await tick(budget);
   }
   return { items, add };
 }
 
-function collectCleanupItems(db, options = {}) {
+async function collectCleanupItems(db, options = {}) {
   const retentionDays = normalizeRetentionDays(options.retentionDays);
   const categories = normalizeCategories(options.categories);
   const selected = new Set(categories);
   const cutoffMs = Date.now() - retentionDays * 86400000;
-  const collector = createCollector(cutoffMs);
+  const budget = createBudget();
+  const collector = createCollector(cutoffMs, budget);
   const logsRoot = path.resolve(config.paths.logsDir);
   const screenshotsRoot = path.resolve(config.paths.screenshotsDir);
   const profilesRoot = path.resolve(config.paths.root, 'runtime-data', 'profiles');
@@ -122,73 +148,73 @@ function collectCleanupItems(db, options = {}) {
       if (run.status === 'running' || !run.ended_at || runningTaskIds.has(Number(run.task_id))) continue;
       if (!legacyEligible && (!oldEnough || latestIds.has(run.id))) continue;
       removableRuns.push(run);
-      collector.add('runArtifacts', run.log_path, logsRoot, { runId: run.id, kind: 'log', requireStale: false });
-      collector.add('runArtifacts', run.screenshot_path, screenshotsRoot, { runId: run.id, kind: 'screenshot', requireStale: false });
-      collector.add('runArtifacts', run.screenshots_dir, screenshotsRoot, { runId: run.id, kind: 'screenshots_dir', requireStale: false });
+      await collector.add('runArtifacts', run.log_path, logsRoot, { runId: run.id, kind: 'log', requireStale: false });
+      await collector.add('runArtifacts', run.screenshot_path, screenshotsRoot, { runId: run.id, kind: 'screenshot', requireStale: false });
+      await collector.add('runArtifacts', run.screenshots_dir, screenshotsRoot, { runId: run.id, kind: 'screenshots_dir', requireStale: false });
     }
   }
 
   if (selected.has('orphanLogs')) {
-    for (const { entry, path: target } of listChildren(logsRoot)) {
+    for (const { entry, path: target } of await listChildren(logsRoot, budget)) {
       if (entry.isFile() && /^task-\d+-.*\.log$/i.test(entry.name) && !referencedLogs.has(path.resolve(target))) {
-        collector.add('orphanLogs', target, logsRoot, { kind: 'log' });
+        await collector.add('orphanLogs', target, logsRoot, { kind: 'log' });
       }
     }
   }
 
   if (selected.has('orphanScreenshots')) {
-    const scanScreenshots = (root) => {
-      for (const { entry, path: target } of listChildren(root)) {
+    const scanScreenshots = async (root) => {
+      for (const { entry, path: target } of await listChildren(root, budget)) {
         const resolved = path.resolve(target);
         if (referencedScreenshots.has(resolved)) continue;
         // Run dirs are `task-<id>[-<name slug>]-run-<runId>`; the slug is optional
         // so pre-rename dirs keep matching.
         if (entry.isDirectory() && root === path.join(screenshotsRoot, 'runs') && /^task-\d+-(?:.*-)?run-/i.test(entry.name)) {
-          collector.add('orphanScreenshots', target, screenshotsRoot, { kind: 'screenshots_dir' });
+          await collector.add('orphanScreenshots', target, screenshotsRoot, { kind: 'screenshots_dir' });
         } else if (entry.isFile() && /^task-\d+-.*\.(png|jpe?g|webp|gif)$/i.test(entry.name)) {
-          collector.add('orphanScreenshots', target, screenshotsRoot, { kind: 'screenshot' });
+          await collector.add('orphanScreenshots', target, screenshotsRoot, { kind: 'screenshot' });
         }
       }
     };
-    scanScreenshots(screenshotsRoot);
-    scanScreenshots(path.join(screenshotsRoot, 'runs'));
+    await scanScreenshots(screenshotsRoot);
+    await scanScreenshots(path.join(screenshotsRoot, 'runs'));
   }
 
   if (selected.has('tempProfiles')) {
-    for (const { entry, path: target } of listChildren(profilesRoot)) {
+    for (const { entry, path: target } of await listChildren(profilesRoot, budget)) {
       const taskMatch = /^task-(\d+)-/i.exec(entry.name);
       if (taskMatch && runningTaskIds.has(Number(taskMatch[1]))) continue;
       if (entry.isDirectory() && isPanelTempProfileDir(target)) {
-        collector.add('tempProfiles', target, profilesRoot, { kind: 'profile' });
+        await collector.add('tempProfiles', target, profilesRoot, { kind: 'profile' });
       }
     }
   }
 
   if (selected.has('workerArtifacts')) {
-    for (const { entry, path: target } of listChildren(workerResultsRoot)) {
+    for (const { entry, path: target } of await listChildren(workerResultsRoot, budget)) {
       const taskMatch = /^run-(\d+)-/i.exec(entry.name);
       if (taskMatch && runningTaskIds.has(Number(taskMatch[1]))) continue;
       if (entry.isFile() && /^run-[\w.-]+\.json$/i.test(entry.name)) {
-        collector.add('workerArtifacts', target, workerResultsRoot, { kind: 'result' });
+        await collector.add('workerArtifacts', target, workerResultsRoot, { kind: 'result' });
       }
     }
-    const scanWorkerShots = (root) => {
-      for (const { entry, path: target } of listChildren(root)) {
+    const scanWorkerShots = async (root) => {
+      for (const { entry, path: target } of await listChildren(root, budget)) {
         const taskMatch = /^task-(\d+)-/i.exec(entry.name);
         if (taskMatch && runningTaskIds.has(Number(taskMatch[1]))) continue;
         if (entry.isDirectory() && root === path.join(workerScreenshotsRoot, 'runs') && /^task-\d+-run-/i.test(entry.name)) {
-          collector.add('workerArtifacts', target, workerScreenshotsRoot, { kind: 'screenshots_dir' });
+          await collector.add('workerArtifacts', target, workerScreenshotsRoot, { kind: 'screenshots_dir' });
         } else if (entry.isFile() && /^task-\d+-.*\.(png|jpe?g|webp|gif)$/i.test(entry.name)) {
-          collector.add('workerArtifacts', target, workerScreenshotsRoot, { kind: 'screenshot' });
+          await collector.add('workerArtifacts', target, workerScreenshotsRoot, { kind: 'screenshot' });
         }
       }
     };
-    scanWorkerShots(workerScreenshotsRoot);
-    scanWorkerShots(path.join(workerScreenshotsRoot, 'runs'));
+    await scanWorkerShots(workerScreenshotsRoot);
+    await scanWorkerShots(path.join(workerScreenshotsRoot, 'runs'));
   }
 
   if (selected.has('tmpArtifacts')) {
-    for (const { entry, path: target } of listChildren('/tmp')) {
+    for (const { entry, path: target } of await listChildren('/tmp', budget)) {
       if (
         entry.name === 'browser-automation-panel-node'
         || entry.name === 'browser-automation-panel-node.meta.json'
@@ -200,7 +226,7 @@ function collectCleanupItems(db, options = {}) {
       const knownBrowserTmp = (entry.isDirectory() || entry.isSymbolicLink())
         && shouldCleanupTmpEntry(entry.name, target, retentionDays * 86400000);
       if (appSpecific || knownBrowserTmp) {
-        collector.add('tmpArtifacts', target, '/tmp', { kind: 'tmp' });
+        await collector.add('tmpArtifacts', target, '/tmp', { kind: 'tmp' });
       }
     }
   }
@@ -235,20 +261,24 @@ function summarize(collected, dryRun, failures = [], removedRunRows = 0) {
   };
 }
 
-function cleanupStorage(db, options = {}) {
+async function cleanupStorage(db, options = {}) {
   const dryRun = options.dryRun !== false;
-  const collected = collectCleanupItems(db, options);
+  const collected = await collectCleanupItems(db, options);
   if (dryRun) return summarize(collected, true);
 
   const failures = [];
   const failedRunIds = new Set();
+  let removed = 0;
   for (const item of collected.items) {
     try {
-      fs.rmSync(item.path, { recursive: true, force: true });
+      await fsp.rm(item.path, { recursive: true, force: true });
     } catch (error) {
       failures.push({ path: item.path, category: item.category, message: error.message || String(error) });
       if (item.runId) failedRunIds.add(item.runId);
     }
+    // Deletions run in libuv's threadpool, but we still yield regularly so a
+    // huge batch cannot monopolize the loop between completions.
+    if (++removed % 32 === 0) await new Promise((resolve) => setImmediate(resolve));
   }
 
   let removedRunRows = 0;

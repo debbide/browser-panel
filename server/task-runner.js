@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const config = require('../config');
-const { launchBrowserTaskAndWait, stopBrowserTask } = require('./runtime/browser-launcher');
+const { launchBrowserTaskAndWait, stopBrowserTask, getActiveBrowserTaskIds } = require('./runtime/browser-launcher');
 const db = require('./db');
 const {
   parseTaskParams,
@@ -19,6 +19,43 @@ const logStream = require('./log-stream');
 
 const activeChildren = new Map();
 const FOREGROUND_OUTPUT_MEMORY_LIMIT = 1024 * 1024;
+
+function taskKillGraceMs() {
+  const sec = Number(config.tasks && config.tasks.killGraceSec);
+  return (Number.isFinite(sec) && sec > 0 ? sec : 10) * 1000;
+}
+
+/**
+ * SIGTERM now, SIGKILL after the grace period if the child is still alive.
+ * A child that ignores SIGTERM must never leave a task stuck in
+ * `already_running` forever: SIGKILL cannot be caught or ignored.
+ */
+function terminateChild(child, graceMs = taskKillGraceMs()) {
+  if (!child) return;
+  const stillAlive = () => {
+    try {
+      return child.exitCode === null && child.signalCode === null;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    return; // Already exited; nothing to escalate.
+  }
+  const timer = setTimeout(() => {
+    if (!stillAlive()) return;
+    console.warn('[task-runner] child ignored SIGTERM, sending SIGKILL');
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // Exited between the check and the kill.
+    }
+  }, Math.max(0, graceMs));
+  if (timer.unref) timer.unref();
+  child.once('exit', () => clearTimeout(timer));
+}
 
 fs.mkdirSync(config.paths.logsDir, { recursive: true });
 fs.mkdirSync(config.paths.screenshotsDir, { recursive: true });
@@ -159,10 +196,113 @@ function section(title) {
   return `\n========== ${title} ==========\n`;
 }
 
+function taskLogMaxBytes() {
+  const v = Number(config.tasks && config.tasks.logMaxBytes);
+  return Number.isFinite(v) && v > 0 ? v : 50 * 1024 * 1024;
+}
+
+// Upper bound for the tail kept when a run log hits the cap.
+const LOG_TAIL_KEEP_BYTES = 1024 * 1024;
+const LOG_TRUNCATE_MARKER = '[日志已达上限';
+const LOG_TRUNCATE_NOTICE = `\n${LOG_TRUNCATE_MARKER}，仅保留尾部内容]\n`;
+
+/**
+ * Shrink an over-cap log file, keeping only the tail. The newest output is
+ * the most useful for debugging. A notice marks the cut: it is inline in the
+ * log stream, so an older one may itself have been cut off by this very
+ * truncation — re-add it only when the kept tail has none, which keeps
+ * exactly one marker in the file at any time.
+ */
+function truncateLogToTail(logPath, maxBytes, reserveBytes = 0) {
+  let size = 0;
+  try {
+    size = fs.statSync(logPath).size;
+  } catch {
+    size = 0;
+  }
+  // Reserve room for the truncation notice plus the incoming chunk, so the file
+  // never exceeds maxBytes and a later append always has room for new output.
+  const noticeLen = Buffer.byteLength(LOG_TRUNCATE_NOTICE);
+  if (size === 0) {
+    // Fresh file but the incoming chunk alone exceeds the cap: leave the
+    // notice so readers know the head of the chunk was trimmed.
+    try {
+      fs.appendFileSync(logPath, LOG_TRUNCATE_NOTICE, 'utf8');
+    } catch {
+      // ignore: logging must never break the task itself
+    }
+    return;
+  }
+  const keep = Math.min(size, LOG_TAIL_KEEP_BYTES, Math.max(0, maxBytes - noticeLen - reserveBytes));
+  const fd = fs.openSync(logPath, 'r+');
+  try {
+    if (keep > 0 && keep < size) {
+      const buf = Buffer.alloc(keep);
+      fs.readSync(fd, buf, 0, keep, size - keep);
+      fs.ftruncateSync(fd, 0);
+      fs.writeSync(fd, buf);
+    }
+    const finalSize = fs.fstatSync(fd).size;
+    let tail = '';
+    if (finalSize > 0) {
+      // keep <= LOG_TAIL_KEEP_BYTES, so this probe covers the whole file.
+      const probe = Buffer.alloc(Math.min(finalSize, LOG_TAIL_KEEP_BYTES));
+      fs.readSync(fd, probe, 0, probe.length, finalSize - probe.length);
+      tail = probe.toString('utf8');
+    }
+    if (!tail.includes(LOG_TRUNCATE_MARKER)) {
+      // Explicit end position: the fd offset is still 0 when the memmove
+      // above was skipped (file smaller than the keep window).
+      fs.writeSync(fd, LOG_TRUNCATE_NOTICE, finalSize, 'utf8');
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function appendLog(logPath, text) {
   const value = safeString(text);
-  fs.appendFileSync(logPath, value, 'utf8');
+  if (!value) return;
+  const maxBytes = taskLogMaxBytes();
+  try {
+    let size = 0;
+    try {
+      size = fs.statSync(logPath).size;
+    } catch {
+      size = 0;
+    }
+    // Enforce the cap before appending so a runaway task can never fill the
+    // disk. The check accounts for the incoming chunk to avoid overshoot.
+    const chunkLen = Buffer.byteLength(value);
+    if (size >= maxBytes || size + chunkLen > maxBytes) {
+      truncateLogToTail(logPath, maxBytes, chunkLen);
+      try {
+        size = fs.statSync(logPath).size;
+      } catch {
+        size = 0;
+      }
+    }
+    // F6: 单次写入本身就可能超过上限（如任务一次吐几十 MB）。只保留 chunk 的
+    // 尾部，保证文件永远不超过硬上限；最新输出比被截掉的旧输出更有价值。
+    let out = value;
+    const room = maxBytes - size;
+    if (room < chunkLen) {
+      out = room > 0 ? utf8Tail(value, room) : '';
+    }
+    if (out) fs.appendFileSync(logPath, out, 'utf8');
+  } catch {
+    // ignore: logging must never break the task itself
+  }
   logStream.publish(logPath);
+}
+
+/** 取字符串的最后 maxBytes 个字节，不从多字节 UTF-8 字符中间切断。 */
+function utf8Tail(str, maxBytes) {
+  const buf = Buffer.from(str, 'utf8');
+  if (buf.length <= maxBytes) return str;
+  let start = buf.length - maxBytes;
+  while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++;
+  return buf.slice(start).toString('utf8');
 }
 
 function isoNow() {
@@ -632,7 +772,7 @@ function runForegroundTask(task, screenshotPath, logPath = makeLogPath(task)) {
     const timer = setTimeout(() => {
       timedOut = true;
       stderrText += '\nTask timeout exceeded';
-      child.kill('SIGTERM');
+      terminateChild(child);
     }, task.timeout_sec * 1000);
 
     child.stdout.on('data', chunk => {
@@ -988,7 +1128,7 @@ function stopTask(taskId) {
 
   const child = activeChildren.get(numericId);
   if (child) {
-    child.kill('SIGTERM');
+    terminateChild(child);
     stopped = true;
   }
 
@@ -999,8 +1139,50 @@ function stopTask(taskId) {
   return stopped;
 }
 
+function getActiveTaskIds() {
+  const ids = new Set(activeChildren.keys());
+  try {
+    for (const id of getActiveBrowserTaskIds()) ids.add(Number(id));
+  } catch {
+    // Browser launcher state unavailable; foreground tasks still covered.
+  }
+  return [...ids];
+}
+
+/**
+ * Stop every running task (foreground + browser) and wait for their
+ * registries to drain, so shutdown never closes the DB or exits while a
+ * task is still marked running. Returns the number of tasks signalled.
+ */
+async function stopAllTasks({ timeoutMs = 30000 } = {}) {
+  const ids = getActiveTaskIds();
+  for (const id of ids) {
+    try {
+      stopTask(id);
+    } catch (err) {
+      console.warn(`[shutdown] stop task ${id} failed: ${err.message || err}`);
+    }
+  }
+  const deadline = Date.now() + Math.max(1000, timeoutMs);
+  while (Date.now() < deadline) {
+    if (getActiveTaskIds().length === 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const remaining = getActiveTaskIds();
+  if (remaining.length) {
+    console.warn(`[shutdown] ${remaining.length} task(s) still active after stop: ${remaining.join(',')}`);
+  }
+  return ids.length;
+}
+
 module.exports = {
   runTask,
   stopTask,
+  stopAllTasks,
+  getActiveTaskIds,
   prepareLogForTask,
+  appendLog,
+  taskLogMaxBytes,
+  terminateChild,
+  taskKillGraceMs,
 };

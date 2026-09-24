@@ -1350,35 +1350,36 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
   });
 }
 
-function killAllFirefoxProcesses() {
+/**
+ * Scoped tree kill for one recorded child pid. This must NEVER match by
+ * process name: a global name-based kill would murder other tasks' browsers
+ * and the user's own browser.
+ * On Windows there are no POSIX process groups, so use taskkill's /T
+ * (tree) flag with the recorded pid instead.
+ * @returns {boolean} true if the signal was delivered.
+ */
+function killChildTree(pid, force) {
+  const id = Number(pid);
+  // Reject non-positive pids: kill(-1) would broadcast to every process.
+  if (!Number.isInteger(id) || id <= 0) return false;
   if (process.platform === 'win32') {
-    for (const image of ['firefox.exe', 'geckodriver.exe']) {
-      try {
-        spawn('taskkill.exe', ['/F', '/T', '/IM', image], {
-          detached: false,
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-      } catch {
-        // Process may already have exited.
-      }
-    }
-    return;
-  }
-
-  for (const processName of ['firefox', 'geckodriver']) {
     try {
-      spawn('pkill', ['-KILL', '-f', processName], {
-        detached: false,
-        stdio: 'ignore',
-      });
+      const args = ['/PID', String(id), '/T'];
+      if (force) args.push('/F');
+      const result = spawnSync('taskkill.exe', args, { stdio: 'ignore', windowsHide: true });
+      return result.status === 0;
     } catch {
-      // Process may already have exited.
+      return false;
     }
+  }
+  try {
+    process.kill(-id, force ? 'SIGKILL' : 'SIGTERM');
+    return true;
+  } catch {
+    return false;
   }
 }
 function stopBrowserTask(taskId, fallbackTask = null) {
-  killAllFirefoxProcesses();
   const state = activeBrowserRuns.get(Number(taskId));
   if (!state) {
     if (!fallbackTask) return false;
@@ -1394,36 +1395,17 @@ function stopBrowserTask(taskId, fallbackTask = null) {
   const child = state.child;
   const taskSnapshot = state.task ? { ...state.task } : null;
   const groupPid = child && child.pid ? Number(child.pid) : 0;
-  let groupSignalSent = false;
-  try {
-    if (groupPid > 0) {
-      process.kill(-groupPid, 'SIGTERM');
-      groupSignalSent = true;
-    } else {
-      child.kill('SIGTERM');
-    }
-  } catch {
+  // Graceful then force, scoped to this run's own process tree only.
+  const signalTree = (force) => {
+    if (groupPid > 0 && killChildTree(groupPid, force)) return;
     try {
-      child.kill('SIGTERM');
+      child.kill(force ? 'SIGKILL' : 'SIGTERM');
     } catch {
-      // ignore
+      // Already exited.
     }
-  }
-  setTimeout(() => {
-    try {
-      if (groupSignalSent && groupPid > 0) {
-        process.kill(-groupPid, 'SIGKILL');
-      } else {
-        child.kill('SIGKILL');
-      }
-    } catch {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // ignore
-      }
-    }
-  }, 1500);
+  };
+  signalTree(false);
+  setTimeout(() => signalTree(true), 1500);
 
   if (taskSnapshot) {
     const gen = Number(taskSnapshot._runGeneration) || Number(state.runGeneration) || 0;
@@ -1437,6 +1419,13 @@ function stopBrowserTask(taskId, fallbackTask = null) {
   return true;
 }
 
+/**
+ * Task ids with a live browser run right now. Used by shutdown to stop
+ * everything before the database is closed.
+ */
+function getActiveBrowserTaskIds() {
+  return [...activeBrowserRuns.keys()];
+}
 module.exports = {
   launchBrowserTaskAndWait,
   stopBrowserTask,
@@ -1444,7 +1433,9 @@ module.exports = {
   buildOrphanSbChromeCleanupCommands,
   scheduleOrphanSbChromeSweep,
   resolveTaskScriptForRuntime,
+  killChildTree,
   getBrowserWorkDir,
+  getActiveBrowserTaskIds,
   getRuntimeDataDir,
   getTempProfileDir,
   removeTempProfileDir,

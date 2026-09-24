@@ -10,7 +10,7 @@ const config = require('../config');
 const db = require('./db');
 const { describeMasterKey } = require('./secret-crypto');
 const { getVersion, refreshTags } = require('./version');
-const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
+const { runTask, stopTask, stopAllTasks, prepareLogForTask } = require('./task-runner');
 /** 按字节读取 UTF-8 文本块，nextOffset 始终落在完整字符边界。 */
 function readUtf8Chunk(filePath, offset, limit, size) {
   const start = Math.min(Math.max(Number(offset) || 0, 0), size);
@@ -52,6 +52,9 @@ const {
   getRunningTaskIds,
   canStartTask,
   runTaskSafely,
+  reserveTaskSlot,
+  releaseTaskSlot,
+  checkManualBrowserCollision,
   computeNextRun,
   evaluateTaskCondition,
 } = require('./scheduler');
@@ -131,8 +134,13 @@ function refreshNextRunAfterSuccessfulManualRun(task) {
   return updatedTask;
 }
 
+// F2: 关机/恢复换文件期间不再接受新任务。HTTP 服务在 closeCoreServices 之后才
+// 关，scheduler tick 也可能正在飞行，统一在这里拦一道。
+let shuttingDown = false;
+
 async function executeTask(id, options = {}) {
-  const { refreshScheduleOnSuccess = false, profileId = null } = options;
+  if (shuttingDown) throw new Error('Server is shutting down, task not started');
+  const { refreshScheduleOnSuccess = false, profileId = null, runId = null } = options;
   const task = db.getTask(id);
   if (!task) throw new Error('Task not found');
   let effectiveTask = task;
@@ -142,16 +150,25 @@ async function executeTask(id, options = {}) {
     effectiveTask = { ...task, browser_profile_id: Number(profileId) };
   }
 
-  const run = db.createRun(id, {
-    status: 'running',
-    started_at: new Date().toISOString(),
-    ended_at: null,
-    exit_code: null,
-    log_path: prepareLogForTask(id),
-    screenshot_path: null,
-    screenshots_dir: null,
-    error_text: null,
-  });
+  // runId lets the HTTP trigger create the run right after the scheduler gate
+  // (so a 202 is only ever returned for a run that will really execute) and
+  // hand the pre-created row to the background execution.
+  let run;
+  if (runId != null) {
+    run = db.getRun(Number(runId));
+    if (!run || Number(run.task_id) !== Number(id)) throw new Error('Run not found');
+  } else {
+    run = db.createRun(id, {
+      status: 'running',
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      exit_code: null,
+      log_path: prepareLogForTask(id),
+      screenshot_path: null,
+      screenshots_dir: null,
+      error_text: null,
+    });
+  }
   const sessionId = `task-run:${run.id}`;
   let lease = null;
   let completedRun = null;
@@ -231,36 +248,73 @@ function buildSchedulerBusyPayload(taskId) {
 
 async function triggerTaskExecution(taskId, options = {}) {
   const idNum = Number(taskId);
+  // F2: 关机窗口内直接 503，不要先建 run 再让后台失败。
+  if (shuttingDown) {
+    return { ok: false, status: 503, payload: { message: '服务正在关闭，任务未启动', code: 'shutting_down' } };
+  }
   const task = db.getTask(idNum);
   if (!task) {
     return { ok: false, status: 404, payload: { message: 'Task not found', code: 'task_not_found' } };
   }
-  if (
-    task.use_browser
-    && getManualBrowserStatus().open
-    && !db.isTaskParallelAllowed()
-  ) {
-    return { ok: false, status: 409, payload: { message: 'Browser is open manually, close it before running tasks', code: 'browser_already_open' } };
-  }
-
   const profileId = options && options.profileId ? Number(options.profileId) : null;
   if (profileId && !db.getBrowserProfile(profileId)) {
     return { ok: false, status: 400, payload: { message: 'Selected browser profile not found', code: 'invalid_browser_profile' } };
   }
+  // Precise contention check: only blocks when the manual browser holds the
+  // SAME profile dir the task would use. Temp-profile tasks never collide.
+  if (task.use_browser) {
+    const effectiveTask = profileId ? { ...task, browser_profile_id: profileId } : task;
+    if (checkManualBrowserCollision(effectiveTask)) {
+      return { ok: false, status: 409, payload: { message: 'Browser is open manually, close it before running tasks', code: 'browser_already_open' } };
+    }
+  }
+  // ?wait=1 keeps the legacy blocking semantics for third-party callers.
+  // Default is async: 202 + runId immediately, progress over SSE / runs API.
+  const wait = options && (options.wait === true || options.wait === '1' || options.wait === 1);
 
-  const result = await runTaskSafely(
-    idNum,
-    (id) => executeTask(id, { refreshScheduleOnSuccess: true, profileId }),
-    { task }
-  );
-  if (result?.skipped) {
-    if (result.reason === 'browser_busy') {
+  // Reserve the scheduler slot BEFORE creating the run: a 202 must only be
+  // returned for a run that will really execute, never for a skipped trigger.
+  const reservation = reserveTaskSlot(idNum, { task, profileId });
+  if (!reservation.ok) {
+    if (reservation.reason === 'browser_busy') {
       return buildSchedulerBusyPayload(idNum);
     }
-    return { ok: false, status: 409, payload: { message: 'Task is already running', code: result.reason || 'already_running' } };
+    if (reservation.reason === 'manual_browser_busy') {
+      return { ok: false, status: 409, payload: { message: 'Browser is open manually, close it before running tasks', code: 'browser_already_open' } };
+    }
+    return { ok: false, status: 409, payload: { message: 'Task is already running', code: reservation.reason || 'already_running' } };
   }
 
-  return { ok: true, status: 200, payload: { data: result } };
+  let run;
+  try {
+    run = db.createRun(idNum, {
+      status: 'running',
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      exit_code: null,
+      log_path: prepareLogForTask(idNum),
+      screenshot_path: null,
+      screenshots_dir: null,
+      error_text: null,
+    });
+  } catch (error) {
+    releaseTaskSlot(idNum);
+    throw error;
+  }
+
+  const runPromise = executeTask(idNum, { refreshScheduleOnSuccess: true, profileId, runId: run.id })
+    .finally(() => releaseTaskSlot(idNum));
+
+  if (wait) {
+    const completedRun = await runPromise;
+    return { ok: true, status: 200, payload: { data: completedRun } };
+  }
+  // Async: the task keeps running in the background. A background failure is
+  // logged, never crashes the process; the slot is always released (finally).
+  runPromise.catch((error) => {
+    console.error(`[tasks] background run ${run.id} failed:`, (error && error.message) || error);
+  });
+  return { ok: true, status: 202, payload: { runId: run.id, taskId: idNum, status: 'running' } };
 }
 
 async function triggerTaskExecutionInBackground(taskId) {
@@ -269,17 +323,17 @@ async function triggerTaskExecutionInBackground(taskId) {
   if (!task) {
     return { ok: false, message: '任务不存在或已被删除' };
   }
-  if (
-    task.use_browser
-    && getManualBrowserStatus().open
-    && !db.isTaskParallelAllowed()
-  ) {
+  // Precise contention check: only the same profile dir actually collides.
+  if (task.use_browser && checkManualBrowserCollision(task)) {
     return { ok: false, message: '手动浏览器仍在运行，请先关闭后重试' };
   }
   const gate = canStartTask(taskIdNum, { task });
   if (!gate.ok) {
     if (gate.reason === 'browser_busy') {
       return { ok: false, message: '另一个浏览器任务正在运行，请稍后重试' };
+    }
+    if (gate.reason === 'manual_browser_busy') {
+      return { ok: false, message: '手动浏览器仍在运行，请先关闭后重试' };
     }
     return { ok: false, message: '这个任务已经在运行' };
   }
@@ -1025,6 +1079,15 @@ function warnOnMasterKeyIssues() {
 
 function onServerStarted() {
     warnOnMasterKeyIssues();
+    // Self-heal: runs left 'running' by a crashed/killed panel process can
+    // never finish; mark them interrupted before the scheduler starts so the
+    // UI stops showing phantom running tasks. Log files are kept as history.
+    try {
+      const healed = db.interruptStaleTaskRuns();
+      if (healed) console.log(`[boot] marked ${healed} stale running task run(s) as interrupted`);
+    } catch (err) {
+      console.error('[boot] stale run self-heal failed:', err.message || err);
+    }
     reloadJobs(executeTask);
     void ensureTelegramWebhook();
     void warpManager.restore();
@@ -1088,7 +1151,18 @@ function startServer() {
 // 关 httpServer 只留在真正退出的 shutdown() 里做。
 async function closeCoreServices(reason) {
   console.log(`[shutdown] ${reason}`);
+  // F2: 先停 scheduler 再停任务。stopAllTasks 可能等几十秒，这期间不能再有
+  // 新任务被 tick/手动触发起来；同时关掉新任务的总开关。
+  shuttingDown = true;
   stopAllJobs();
+  // Stop running tasks (SIGTERM, escalating to SIGKILL) so no run is
+  // left marked 'running' in the DB after the process exits.
+  try {
+    const stopped = await stopAllTasks();
+    if (stopped) console.log(`[shutdown] stopped ${stopped} running task(s)`);
+  } catch (err) {
+    console.warn('[shutdown] stopAllTasks failed:', err.message || err);
+  }
   stopTelegramPolling();
   cloudBackup.stopTicker();
   events.closeAll();
@@ -1114,6 +1188,11 @@ module.exports = {
   startServer,
   closeCoreServices,
   shutdown,
+  // Exported for regression tests (and the runtime router above).
+  triggerTaskExecution,
+  executeTask,
+  // Test-only: flip the shutdown guard without running the full shutdown.
+  __setShuttingDown(value) { shuttingDown = Boolean(value); },
   registerSignals() {
     registerSignalHandlers(shutdown);
   },

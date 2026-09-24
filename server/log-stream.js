@@ -42,9 +42,14 @@ function flush(logPath, client) {
   if (!client.dirty) return;
   client.dirty = false;
   const size = getSize(logPath);
-  if (size <= client.lastSize) return;
+  if (size === client.lastSize) return;
+  // The log may shrink when the server enforces the per-run size cap (keeps
+  // only the tail). Tell the client so it resets its byte cursor instead of
+  // waiting past EOF forever.
+  const truncated = size < client.lastSize;
   client.lastSize = size;
-  if (!write(client.res, frame('log', { size }))) client.cleanup();
+  const payload = truncated ? { size, truncated: true } : { size };
+  if (!write(client.res, frame('log', payload))) client.cleanup();
 }
 
 /**

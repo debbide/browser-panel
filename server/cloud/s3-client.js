@@ -395,51 +395,71 @@ function createS3Client(config) {
 
   async function listObjects({ prefix = '', maxKeys = 1000 } = {}) {
     const target = buildTarget({ endpoint, bucket, key: '', pathStyle, virtualHost });
-    // SigV4 的 canonical query 必须按键名升序。URLSearchParams 保持插入序不会排序，
-    // 必须自己排好再拼 —— 否则签名里的 query 和 S3 重算的顺序不一致，LIST 会 403。
-    const params = [
-      ['list-type', '2'],
-      ...(prefix ? [['prefix', prefix]] : []),
-      ...(maxKeys ? [['max-keys', String(maxKeys)]] : []),
-    ].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    const query = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
-    const s = sign({ method: 'GET', target, query });
-    const url = `${target.url}?${query}`;
 
-    let body;
-    if (curlAvailable) {
-      try {
-        const { args, stdinText } = buildCurlCall(s, 'GET', [
-          '-sS', '-f', '--max-time', String(CURL_MAX_TIME_SEC),
-        ], url);
-        body = (await runCurl(args, S3_TIMEOUT_MS, stdinText)).toString('utf8');
-      } catch (curlError) {
-        if (!proxy) {
-          try { body = await listViaFetch(url, s); } catch (fetchError) {
-            throw new Error(`S3 LIST 失败（curl: ${curlError.message}; fetch: ${fetchError.message}）`);
+    async function fetchPage(continuationToken) {
+      // SigV4 的 canonical query 必须按键名升序。URLSearchParams 保持插入序不会排序，
+      // 必须自己排好再拼 —— 否则签名里的 query 和 S3 重算的顺序不一致，LIST 会 403。
+      const params = [
+        ...(continuationToken ? [['continuation-token', continuationToken]] : []),
+        ['list-type', '2'],
+        ...(prefix ? [['prefix', prefix]] : []),
+        ...(maxKeys ? [['max-keys', String(maxKeys)]] : []),
+      ].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      const query = params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+      const s = sign({ method: 'GET', target, query });
+      const url = `${target.url}?${query}`;
+
+      if (curlAvailable) {
+        try {
+          const { args, stdinText } = buildCurlCall(s, 'GET', [
+            '-sS', '-f', '--max-time', String(CURL_MAX_TIME_SEC),
+          ], url);
+          return (await runCurl(args, S3_TIMEOUT_MS, stdinText)).toString('utf8');
+        } catch (curlError) {
+          if (!proxy) {
+            try { return await listViaFetch(url, s); } catch (fetchError) {
+              throw new Error(`S3 LIST 失败（curl: ${curlError.message}; fetch: ${fetchError.message}）`);
+            }
           }
-        } else {
           throw new Error(`S3 LIST 失败（经代理 curl）: ${curlError.message}`);
         }
       }
-    } else {
-      body = await listViaFetch(url, s);
+      return await listViaFetch(url, s);
     }
 
+    function parsePage(body) {
+      const objects = [];
+      const contentsRe = /<Contents>(.*?)<\/Contents>/gs;
+      let m;
+      while ((m = contentsRe.exec(body)) !== null) {
+        const block = m[1];
+        const keyMatch = /<Key>(.*?)<\/Key>/s.exec(block);
+        const sizeMatch = /<Size>(\d+)<\/Size>/.exec(block);
+        const lastMatch = /<LastModified>(.*?)<\/LastModified>/.exec(block);
+        if (!keyMatch) continue;
+        objects.push({
+          key: decodeXml(keyMatch[1]),
+          size: sizeMatch ? Number(sizeMatch[1]) : 0,
+          lastModified: lastMatch ? lastMatch[1] : null,
+        });
+      }
+      const truncatedMatch = /<IsTruncated>(true|false)<\/IsTruncated>/.exec(body);
+      const tokenMatch = /<NextContinuationToken>(.*?)<\/NextContinuationToken>/s.exec(body);
+      return {
+        objects,
+        isTruncated: truncatedMatch ? truncatedMatch[1] === 'true' : false,
+        nextToken: tokenMatch ? decodeXml(tokenMatch[1]) : null,
+      };
+    }
+
+    // 分页拉全量：对象数超过 maxKeys 时 S3 只返回第一页，不循环就会漏删/漏列。
     const objects = [];
-    const contentsRe = /<Contents>(.*?)<\/Contents>/gs;
-    let m;
-    while ((m = contentsRe.exec(body)) !== null) {
-      const block = m[1];
-      const keyMatch = /<Key>(.*?)<\/Key>/s.exec(block);
-      const sizeMatch = /<Size>(\d+)<\/Size>/.exec(block);
-      const lastMatch = /<LastModified>(.*?)<\/LastModified>/.exec(block);
-      if (!keyMatch) continue;
-      objects.push({
-        key: decodeXml(keyMatch[1]),
-        size: sizeMatch ? Number(sizeMatch[1]) : 0,
-        lastModified: lastMatch ? lastMatch[1] : null,
-      });
+    let continuationToken = null;
+    for (let page = 0; page < 1000; page++) {
+      const { objects: items, isTruncated, nextToken } = parsePage(await fetchPage(continuationToken));
+      objects.push(...items);
+      if (!isTruncated || !nextToken) break;
+      continuationToken = nextToken;
     }
     return objects;
   }

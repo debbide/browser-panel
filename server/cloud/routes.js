@@ -105,6 +105,14 @@ function createCloudBackupRouter(service = backupService) {
         if (patch.retention === undefined) delete patch.retention;
       }
 
+      // 新保存的备份密码至少 12 位；空值表示保留旧密码（resolveSecretValue 已处理）。
+      if (body.passphrase !== undefined) {
+        const incoming = String(body.passphrase ?? '').trim();
+        if (incoming && incoming.length < 12) {
+          return res.status(400).json({ message: '备份密码至少需要 12 位' });
+        }
+      }
+
       const saved = db.setS3BackupSettings(patch);
       // 改了启用状态/时间窗后立刻重算下次自动备份时间
       try {
@@ -217,6 +225,11 @@ function createCloudBackupRouter(service = backupService) {
         if (!passphrase) {
           res.status(400).json({ message: '缺少备份密码（请求头 x-backup-passphrase）' });
           return;
+        }
+        // F7：这里的密码是待恢复快照的原密码（“已有”），旧短密码必须仍能恢复，
+        // 只警告不拦截；12 位强制只针对“新保存”的密码（见 POST /settings）。
+        if (passphrase.length < 12) {
+          console.warn('[cloud-backup] 上传恢复使用的备份密码短于 12 位：仍可恢复，建议恢复后在设置页更换更长的密码');
         }
         const buffer = req.body;
         if (!Buffer.isBuffer(buffer) || buffer.length === 0) {

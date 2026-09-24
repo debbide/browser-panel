@@ -17,12 +17,12 @@ function createMaintenanceRouter(dependencies) {
   } = dependencies;
   const router = express.Router();
 
-  router.get('/storage/cleanup/preview', (req, res) => {
+  router.get('/storage/cleanup/preview', async (req, res) => {
     try {
       const categories = req.query.categories
         ? normalizeCategories(String(req.query.categories).split(',').filter(Boolean))
         : undefined;
-      const data = cleanupStorage(db, {
+      const data = await cleanupStorage(db, {
         dryRun: true,
         retentionDays: normalizeRetentionDays(req.query.retentionDays),
         categories,
@@ -34,10 +34,10 @@ function createMaintenanceRouter(dependencies) {
     }
   });
 
-  router.post('/storage/cleanup', (req, res) => {
+  router.post('/storage/cleanup', async (req, res) => {
     try {
       const body = req.body || {};
-      const data = cleanupStorage(db, {
+      const data = await cleanupStorage(db, {
         dryRun: body.dryRun === true,
         retentionDays: normalizeRetentionDays(body.retentionDays),
         categories: normalizeCategories(body.categories),

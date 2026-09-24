@@ -910,6 +910,23 @@ function interruptWarpJobs() {
     WHERE status IN ('queued', 'running')`).run();
 }
 
+/**
+ * Mark task runs left in 'running' by a previous panel process as interrupted.
+ * A run can only be 'running' while its owner process is alive, so any such
+ * row at startup is stale (crash / kill -9 / power loss). History and log
+ * files are kept; only the terminal state is fixed.
+ * @returns {number} rows updated.
+ */
+function interruptStaleTaskRuns() {
+  const info = db.prepare(`UPDATE task_runs
+    SET status = 'interrupted',
+        ended_at = CURRENT_TIMESTAMP,
+        error_code = 'interrupted',
+        error_text = COALESCE(error_text, 'Panel restarted while this run was active')
+    WHERE status = 'running'`).run();
+  return info.changes;
+}
+
 function saveWarpCredentialsMeta(meta) {
   db.prepare(`INSERT INTO warp_credentials_meta (generation, state_dir, fingerprint, created_at, activated_at)
     VALUES (@generation, @state_dir, @fingerprint, COALESCE(@created_at, CURRENT_TIMESTAMP), @activated_at)
@@ -1680,6 +1697,7 @@ module.exports = {
   updateWarpJob,
   listWarpJobs,
   interruptWarpJobs,
+  interruptStaleTaskRuns,
   saveWarpCredentialsMeta,
   getWarpCredentialsMeta,
   saveWarpProbeSnapshot,

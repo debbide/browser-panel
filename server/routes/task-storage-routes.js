@@ -351,17 +351,41 @@ router.delete('/scripts', (req, res) => {
   try {
     const raw = String((req.body && (req.body.path || req.body.name)) || req.query.path || req.query.name || '').trim();
     if (!raw) return res.status(400).json({ message: 'Script path is required' });
-    const fileName = path.basename(raw.replace(/^tasks[\\/]/, ''));
+    // Resolve the full relative path under tasks/ (no basename downgrade:
+    // tasks/sub/a.js must delete tasks/sub/a.js, not tasks/a.js).
+    let target;
+    let rel;
+    try {
+      ({ abs: target, rel } = resolveUnderTasks(raw));
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'Invalid path' });
+    }
+    if (!rel) return res.status(400).json({ message: 'Cannot delete tasks root' });
+    const fileName = path.basename(target);
     const ext = path.extname(fileName).toLowerCase();
     if (!['.js', '.py', '.php', '.sh'].includes(ext)) {
       return res.status(400).json({ message: 'Only .js, .py, .php and .sh scripts can be deleted' });
     }
-    const target = path.join(config.paths.tasksDir, fileName);
-    if (!fs.existsSync(target)) {
+    let st;
+    try {
+      st = fs.statSync(target);
+    } catch {
       return res.status(404).json({ message: 'Script not found' });
     }
-    const rel = `tasks/${fileName}`;
-    const bound = db.listTasks().filter((t) => String(t.script_path || '').replace(/\\/g, '/') === rel);
+    if (!st.isFile()) return res.status(400).json({ message: 'Not a script file' });
+    // realpath 二次检查：symlink 指到 tasks 目录外则拒绝删除。
+    const root = path.resolve(config.paths.tasksDir);
+    let realTarget = target;
+    try {
+      realTarget = fs.realpathSync(target);
+    } catch {
+      return res.status(404).json({ message: 'Script not found' });
+    }
+    if (realTarget !== root && !realTarget.startsWith(root + path.sep)) {
+      return res.status(400).json({ message: 'Path escapes tasks directory' });
+    }
+    const fullRel = `tasks/${rel}`;
+    const bound = db.listTasks().filter((t) => String(t.script_path || '').replace(/\\/g, '/') === fullRel);
     if (bound.length) {
       return res.status(409).json({
         message: `脚本仍被 ${bound.length} 个任务使用，请先改任务脚本或删任务`,
@@ -369,7 +393,7 @@ router.delete('/scripts', (req, res) => {
       });
     }
     fs.unlinkSync(target);
-    res.json({ ok: true, data: { name: fileName, path: rel } });
+    res.json({ ok: true, data: { name: fileName, path: fullRel } });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to delete script' });
   }

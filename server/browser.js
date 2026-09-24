@@ -406,6 +406,11 @@ function waitForManualBrowserReady(child, { timeoutMs = 45000 } = {}) {
       clearTimeout(timer);
       try { child.stdout && child.stdout.off('data', onOut); } catch { /* ignore */ }
       try { child.stderr && child.stderr.off('data', onErr); } catch { /* ignore */ }
+      // Keep draining both pipes after ready: with the listeners gone nobody
+      // reads them anymore, and a full pipe buffer would block the browser
+      // process on write forever. resume() discards the stream.
+      try { child.stdout && child.stdout.resume(); } catch { /* ignore */ }
+      try { child.stderr && child.stderr.resume(); } catch { /* ignore */ }
       try { child.off('exit', onExit); } catch { /* ignore */ }
       try { child.off('error', onError); } catch { /* ignore */ }
       fn(arg);
@@ -652,6 +657,10 @@ function getManualBrowserStatus() {
   return {
     open: Boolean(manualBrowserState.pid),
     openedAt: manualBrowserState.openedAt,
+    // Exposed so the scheduler can compare profiles precisely: a second
+    // Chrome on the SAME user-data-dir corrupts the profile lock, while a
+    // task with its own (temp) profile never contends with the manual browser.
+    userDataDir: manualBrowserState.userDataDir,
     warp: manualBrowserState.warpLease
       ? {
         generation: manualBrowserState.warpLease.snapshot.generation,
@@ -679,4 +688,6 @@ module.exports = {
   prepareBrowserWorkspace,
   ensureManualRuntimeFiles,
   getBrowserWorkDir,
+  // Exported for regression tests only.
+  _waitForManualBrowserReady: waitForManualBrowserReady,
 };

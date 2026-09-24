@@ -14,6 +14,7 @@
  */
 
 const fs = require('fs');
+const fsp = fs.promises;
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
@@ -54,10 +55,24 @@ function requireFields(settings, names, what) {
   }
 }
 
+let warnedShortPassphrase = false;
+
 function getPassphrase(settings) {
   const envPass = String(process.env.PANEL_S3_BACKUP_PASSPHRASE || '').trim();
-  if (envPass) return envPass;
-  return String(settings.passphrase || '').trim();
+  if (envPass) {
+    if (envPass.length < 12 && !warnedShortPassphrase) {
+      warnedShortPassphrase = true;
+      console.warn('[cloud-backup] 备份密码短于 12 位：现有备份仍可正常读写，建议更换更长的密码');
+    }
+    return envPass;
+  }
+  const saved = String(settings.passphrase || '').trim();
+  // 已有短密码仍允许读取/恢复，避免破坏旧备份；只警告一次。
+  if (saved && saved.length < 12 && !warnedShortPassphrase) {
+    warnedShortPassphrase = true;
+    console.warn('[cloud-backup] 已保存的备份密码短于 12 位：现有备份仍可正常读写，建议在设置页更换更长的密码');
+  }
+  return saved;
 }
 
 function buildClient(settings) {
@@ -318,7 +333,47 @@ function swapDataDir(stagingDir) {
     fs.copyFileSync(stagedKey, liveKey);
     fs.chmodSync(liveKey, 0o600);
   }
+  // F8: 恢复成功后异步清理旧的 pre-restore 目录，只保留最近 PRE_RESTORE_KEEP
+  // 个（含刚建的这个）。整目录删除；按 mtime 取最新，刚返回 UI 的回滚目录
+  // 一定保留。fire-and-forget：删的是旧目录，即使被重启打断也只是多留一份。
+  pruneOldPreRestoreDirs().catch((error) => {
+    console.error('[cloud-backup] 清理旧 pre-restore 目录失败:', error && error.message);
+  });
   return preRestoreDir;
+}
+
+// 最近保留的 pre-restore 回滚目录数（含刚建的）。
+const PRE_RESTORE_KEEP = 3;
+
+async function pruneOldPreRestoreDirs() {
+  const dataDir = config.paths.dataDir;
+  let entries;
+  try {
+    entries = await fsp.readdir(dataDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('pre-restore-')) continue;
+    const full = path.join(dataDir, entry.name);
+    try {
+      const st = await fsp.stat(full);
+      candidates.push({ name: entry.name, full, mtimeMs: Number(st.mtimeMs) || 0 });
+    } catch {
+      // 读不到状态的目录不动它，宁可多留。
+    }
+  }
+  // mtime 新的在前；mtime 相同用目录名（stamp 字典序即时间序）兜底。
+  candidates.sort((a, b) => (b.mtimeMs - a.mtimeMs) || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  const stale = candidates.slice(PRE_RESTORE_KEEP);
+  for (const { name, full } of stale) {
+    try {
+      await fsp.rm(full, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`[cloud-backup] 删除旧 pre-restore 目录 ${name} 失败:`, error && error.message);
+    }
+  }
 }
 
 function copyDirContents(srcDir, destDir) {
@@ -448,8 +503,10 @@ async function testConnection() {
 module.exports = {
   DEFAULT_PREFIX,
   DEFAULT_RETENTION,
+  PRE_RESTORE_KEEP,
   setPerformRestoreSwap,
   swapDataDir,
+  pruneOldPreRestoreDirs,
   runCloudBackup,
   listRemoteBackups,
   previewRemoteBackup,

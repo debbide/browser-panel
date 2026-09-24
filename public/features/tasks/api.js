@@ -13,8 +13,11 @@
     });
   }
 
-  function runTask(id, profileId) {
-    return global.fetchJson(`/api/tasks/${id}/run`, {
+  function runTask(id, profileId, options = {}) {
+    // Default is async (202 + runId); pass { wait: true } for the legacy
+    // blocking semantics (?wait=1, waits for the whole task to finish).
+    const wait = options && options.wait ? '?wait=1' : '';
+    return global.fetchJson(`/api/tasks/${id}/run${wait}`, {
       method: 'POST',
       headers: jsonHeaders,
       body: JSON.stringify({ profile_id: profileId || null }),
