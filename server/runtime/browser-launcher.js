@@ -459,6 +459,12 @@ function ensureRuntimeFiles(task) {
  *   1) launcher PID process tree (bash → setpriv → python/node → chrome children)
  *   2) processes whose environ/cmdline still carries this run's BAP_RUN_ID
  *   3) Chrome bound to this task's temp user-data-dir (task-N-tmp-profile is unique per task)
+ *   4) Firefox by binary name — gated: only when no OTHER browser task is active,
+ *      and never the panel-known manual browser. Firefox launchers (ruyipage,
+ *      playwright-firefox) routinely detach into their own session and scrub the
+ *      run marker from the browser's environment, so signals 1) and 2) cannot see
+ *      them; the binary name on the cmdline is the only reliable identity
+ *      (this is what the old global kill-by-name relied on).
  */
 function buildTerminateCommandsByTask(task) {
   const profile = task && task._profile;
@@ -476,13 +482,6 @@ function buildTerminateCommandsByTask(task) {
           : getTempProfileDir(task, runId || null)));
   const launcherPid = task && task._launcherPid ? Number(task._launcherPid) : 0;
   const taskId = task && task.id != null ? Number(task.id) : 0;
-  const runtimeStack = String(task && task._runtimeStack ? task._runtimeStack : '').trim().toLowerCase();
-  const ruyiPath = String(
-    (task && task._ruyiPath)
-    || config.browser.ruyiPath
-    || process.env.BROWSER_RUYI_PATH
-    || '/opt/ruyipage-firefox/firefox'
-  ).trim();
   // Unique token injected as BAP_RUN_ID env on the worker process tree.
   const runMarker = runId
     ? `BAP_RUN_ID=${runId}`
@@ -527,23 +526,20 @@ function buildTerminateCommandsByTask(task) {
     '    kill "-$sig" "$p" 2>/dev/null || true',
     '  done',
     '}',
-    'kill_ruyi_profile() {',
-    '  local sig="$1" profile="$2" ruyibin="$3" line p cmd matched',
-    '  [ -z "$profile" ] && [ -z "$ruyibin" ] && return 0',
+    'kill_task_firefox() {',
+    '  local sig="$1" line p cmd',
     '  pgrep -af -- "firefox|geckodriver" 2>/dev/null | while IFS= read -r line; do',
     '    p="${line%% *}"; cmd="${line#* }"',
     '    case "$p" in ""|*[!0-9]*) continue;; esac',
     '    owner_ok "$p" || continue',
     '    is_manual_excluded "$p" "$cmd" && continue',
-    '    matched=0',
-    '    if [ -n "$profile" ]; then printf "%s" "$cmd" | grep -Fq -- "$profile" && matched=1; fi',
-    '    # ruyipage detaches firefox into its own session and does not always',
-    '    # keep the profile path on the cmdline — the dedicated ruyi binary',
-    '    # path is the reliable identity (a desktop firefox lives elsewhere).',
-    '    if [ "$matched" = "0" ] && [ -n "$ruyibin" ]; then printf "%s" "$cmd" | grep -Fq -- "$ruyibin" && matched=1; fi',
-    '    [ "$matched" = "1" ] || continue',
-    '    echo "[terminate] ruyipage pid=$p signal=$sig"',
-    '    if [ "$sig" = "KILL" ]; then kill_tree_kill "$p"; else kill_tree "$p"; fi 2>/dev/null || true',
+    '    if [ "$sig" = "KILL" ]; then',
+    '      echo "[terminate] task-firefox pid=$p signal=KILL cmd=${cmd:0:120}"',
+    '      kill_tree_kill "$p"',
+    '    else',
+    '      echo "[terminate] task-firefox pid=$p signal=TERM cmd=${cmd:0:120}"',
+    '      kill_tree "$p"',
+    '    fi 2>/dev/null || true',
     '  done',
     '}',
   ];
@@ -572,8 +568,15 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -TERM -f -- ${shellEscape(udMarker)} || true`);
   }
-  if (runtimeStack === 'ruyipage' && (userDataDir || ruyiPath)) {
-    commands.push(`kill_ruyi_profile TERM ${shellEscape(userDataDir || '')} ${shellEscape(ruyiPath)} || true`);
+  // 3b) Firefox-family browsers, any stack (ruyipage / playwright-firefox /
+  //     seleniumbase-firefox). Name-based because these detach from the launcher
+  //     session and scrub BAP_RUN_ID from the browser's environment, defeating
+  //     signals 1) and 2). Gated: skip when another browser task is active so a
+  //     concurrent sibling's firefox is never touched, and the panel-known
+  //     manual browser is always excluded inside kill_task_firefox.
+  const allowBroadFirefoxKill = task._allowBroadFirefoxKill !== false;
+  if (allowBroadFirefoxKill) {
+    commands.push('kill_task_firefox TERM || true');
   }
 
   commands.push('sleep 1');
@@ -588,8 +591,8 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
   }
-  if (runtimeStack === 'ruyipage' && (userDataDir || ruyiPath)) {
-    commands.push(`kill_ruyi_profile KILL ${shellEscape(userDataDir || '')} ${shellEscape(ruyiPath)} || true`);
+  if (allowBroadFirefoxKill) {
+    commands.push('kill_task_firefox KILL || true');
   }
 
   // 4) SeleniumBase UC orphans: chrome reparented to init after python dies.
@@ -1485,9 +1488,12 @@ function killChildTree(pid, force) {
 }
 function stopBrowserTask(taskId, fallbackTask = null) {
   const state = activeBrowserRuns.get(Number(taskId));
+  // Broad firefox kill is only safe when no OTHER browser task is active —
+  // otherwise a concurrent sibling's firefox would be caught by the name match.
+  const allowBroadFirefoxKill = ![...activeBrowserRuns.keys()].some((id) => id !== Number(taskId));
   if (!state) {
     if (!fallbackTask) return false;
-    const snapshot = { ...fallbackTask };
+    const snapshot = { ...fallbackTask, _allowBroadFirefoxKill: allowBroadFirefoxKill };
     const gen = Number(snapshot._runGeneration) || 0;
     runTerminateCommands(buildTerminateCommandsByTask(snapshot));
     scheduleTerminateCommands(snapshot, 1500, gen);
@@ -1497,7 +1503,7 @@ function stopBrowserTask(taskId, fallbackTask = null) {
   }
   state.stoppedByUser = true;
   const child = state.child;
-  const taskSnapshot = state.task ? { ...state.task } : null;
+  const taskSnapshot = state.task ? { ...state.task, _allowBroadFirefoxKill: allowBroadFirefoxKill } : null;
   const groupPid = child && child.pid ? Number(child.pid) : 0;
   // Graceful then force, scoped to this run's own process tree only.
   const signalTree = (force) => {

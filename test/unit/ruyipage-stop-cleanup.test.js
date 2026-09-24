@@ -6,10 +6,12 @@ const test = require('node:test');
 const launcherPath = path.resolve(__dirname, '../../server/runtime/browser-launcher.js');
 const source = fs.readFileSync(launcherPath, 'utf8');
 
-test('stop never kills browsers by global process-name match', () => {
-  // The old killAllFirefoxProcesses() sledgehammer is gone: stopping one task
-  // must not murder every Firefox on the machine (other tasks, manual browser,
-  // the user's own browser).
+test('stop never kills browsers by UNGATED global process-name match', () => {
+  // The old killAllFirefoxProcesses() sledgehammer is gone. A firefox
+  // name-based kill exists again because detached firefoxes (ruyipage,
+  // playwright-firefox) defeat every scoped signal — but it is gated:
+  // never the panel-known manual browser, never while another browser
+  // task is active.
   assert.doesNotMatch(source, /function killAllFirefoxProcesses\(\)/);
   assert.doesNotMatch(source, /killAllFirefoxProcesses\(\)/);
   assert.doesNotMatch(source, /pkill.*-f.*firefox/);
@@ -17,6 +19,13 @@ test('stop never kills browsers by global process-name match', () => {
   assert.doesNotMatch(source, /commands\.push\('pkill -KILL -f firefox/);
   assert.doesNotMatch(source, /hasOtherRuyiRun/);
   assert.doesNotMatch(source, /_forceRuyiBinaryCleanup/);
+  // The name-based firefox kill must exist and must carry both gates.
+  assert.match(source, /kill_task_firefox\(\) \{/);
+  assert.match(source, /_allowBroadFirefoxKill/);
+  assert.match(
+    source,
+    /kill_task_firefox\(\) \{[\s\S]*?is_manual_excluded "\$p" "\$cmd" && continue/
+  );
 });
 
 test('stop uses the recorded child pid for a scoped tree kill', () => {

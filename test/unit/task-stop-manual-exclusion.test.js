@@ -153,89 +153,78 @@ test('orphan sweep: no manual browser -> empty exclusion, nothing skipped', () =
   assert.ok(out.includes('rc=1'), `nothing may be excluded when manual browser is closed:\n${out}`);
 });
 
-test('ruyi kill: binary path matches the task firefox, desktop firefox is spared', () => {
+test('task-firefox kill: emitted for any stack, not just ruyipage', () => {
   stubManualBrowser({ open: false, pid: 0, userDataDir: '' });
   let script;
   try {
     const task = {
       id: 7,
       _runId: 'run-9',
-      _runtimeStack: 'ruyipage',
-      _ruyiPath: '/opt/ruyipage-firefox/firefox',
+      _runtimeStack: 'playwright',
       _profile: null,
       _effectiveUserDataDir: '/tmp/profiles/task-7',
       _launcherPid: 0,
     };
-    const commands = buildTerminateCommandsByTask(task);
-    script = commands.join('\n');
+    script = buildTerminateCommandsByTask(task).join('\n');
   } finally {
     unstubManualBrowser();
   }
   assert.ok(
-    script.includes("kill_ruyi_profile TERM '/tmp/profiles/task-7' '/opt/ruyipage-firefox/firefox'"),
-    'ruyi binary path must be passed to kill_ruyi_profile'
+    script.includes('kill_task_firefox TERM || true'),
+    'firefox name-kill must run for non-ruyipage stacks too'
   );
-  const fn = extractFn(script, 'kill_ruyi_profile');
+  assert.ok(
+    script.includes('kill_task_firefox KILL || true'),
+    'firefox name-kill KILL pass must run for non-ruyipage stacks too'
+  );
+});
+
+test('task-firefox kill: name match kills detached firefox even without profile/binary on cmdline', () => {
+  stubManualBrowser({ open: false, pid: 0, userDataDir: '' });
+  let script;
+  try {
+    const task = {
+      id: 7,
+      _runId: 'run-9',
+      _runtimeStack: 'playwright',
+      _profile: null,
+      _effectiveUserDataDir: '/tmp/profiles/task-7',
+      _launcherPid: 0,
+    };
+    script = buildTerminateCommandsByTask(task).join('\n');
+  } finally {
+    unstubManualBrowser();
+  }
+  const fn = extractFn(script, 'kill_task_firefox');
   const stubs = [
     'pgrep() {',
-    // $1 = task firefox (ruyi binary, profile path NOT on cmdline — the old miss case)',
-    // $2 = user desktop firefox (must be spared)',
-    '  printf "%s\\n" "1234 /opt/ruyipage-firefox/firefox --marionette" "5678 /usr/bin/firefox --new-tab";',
+    // $1 = task firefox detached into its own session, env scrubbed, and the
+    //      cmdline carries NEITHER the task profile dir NOR the ruyi binary path
+    //      (the exact case the old profile/binary matching missed).
+    // $2 = geckodriver of the same run (must die too).
+    '  printf "%s\\n" "1234 /usr/local/bin/firefox-bin --headless --marionette" "2345 /usr/bin/geckodriver --port 4444";',
     '}',
     'owner_ok() { return 0; }',
     'is_manual_excluded() { return 1; }',
     'kill_tree() { echo "TREE_TERM $1"; }',
     'kill_tree_kill() { echo "TREE_KILL $1"; }',
   ];
-  const out = runBashHarness(
-    [...stubs, fn],
-    'kill_ruyi_profile TERM "" "/opt/ruyipage-firefox/firefox"'
+  const out = runBashHarness([...stubs, fn], 'kill_task_firefox TERM');
+  assert.ok(out.includes('TREE_TERM 1234'), `detached task firefox must be tree-killed:\n${out}`);
+  assert.ok(out.includes('TREE_TERM 2345'), `geckodriver must be tree-killed:\n${out}`);
+  assert.ok(
+    out.includes('[terminate] task-firefox pid=1234 signal=TERM'),
+    `kill must be logged for diagnostics:\n${out}`
   );
-  assert.ok(out.includes('TREE_TERM 1234'), `task firefox must be tree-killed:\n${out}`);
-  assert.ok(!out.includes('5678'), `desktop firefox must be spared:\n${out}`);
 });
 
-test('ruyi kill: profile-dir match still works', () => {
-  stubManualBrowser({ open: false, pid: 0, userDataDir: '' });
-  let script;
-  try {
-    const task = {
-      id: 7,
-      _runId: 'run-9',
-      _runtimeStack: 'ruyipage',
-      _ruyiPath: '/opt/ruyipage-firefox/firefox',
-      _profile: null,
-      _effectiveUserDataDir: '/tmp/profiles/task-7',
-      _launcherPid: 0,
-    };
-    script = buildTerminateCommandsByTask(task).join('\n');
-  } finally {
-    unstubManualBrowser();
-  }
-  const fn = extractFn(script, 'kill_ruyi_profile');
-  const stubs = [
-    'pgrep() { printf "%s\\n" "4321 /opt/ruyipage-firefox/firefox -profile /tmp/profiles/task-7"; }',
-    'owner_ok() { return 0; }',
-    'is_manual_excluded() { return 1; }',
-    'kill_tree() { echo "TREE_TERM $1"; }',
-    'kill_tree_kill() { echo "TREE_KILL $1"; }',
-  ];
-  const out = runBashHarness(
-    [...stubs, fn],
-    'kill_ruyi_profile KILL "/tmp/profiles/task-7" "/opt/ruyipage-firefox/firefox"'
-  );
-  assert.ok(out.includes('TREE_KILL 4321'), `profile match must tree-kill:\n${out}`);
-});
-
-test('ruyi kill: manual browser firefox is excluded', () => {
+test('task-firefox kill: manual browser firefox is excluded', () => {
   stubManualBrowser({ open: true, pid: 42424242, userDataDir: '' });
   let script;
   try {
     const task = {
       id: 7,
       _runId: 'run-9',
-      _runtimeStack: 'ruyipage',
-      _ruyiPath: '/opt/ruyipage-firefox/firefox',
       _profile: null,
       _effectiveUserDataDir: '/tmp/profiles/task-7',
       _launcherPid: 0,
@@ -244,7 +233,7 @@ test('ruyi kill: manual browser firefox is excluded', () => {
   } finally {
     unstubManualBrowser();
   }
-  const fn = extractFn(script, 'kill_ruyi_profile');
+  const fn = extractFn(script, 'kill_task_firefox');
   const stubs = [
     'pgrep() { printf "%s\\n" "42424242 /opt/ruyipage-firefox/firefox --marionette"; }',
     'owner_ok() { return 0; }',
@@ -253,9 +242,32 @@ test('ruyi kill: manual browser firefox is excluded', () => {
     'kill_tree() { echo "TREE_TERM $1"; }',
     'kill_tree_kill() { echo "TREE_KILL $1"; }',
   ];
-  const out = runBashHarness(
-    [...stubs, fn],
-    'kill_ruyi_profile TERM "" "/opt/ruyipage-firefox/firefox"; echo done'
+  const out = runBashHarness([...stubs, fn], 'kill_task_firefox TERM; echo done');
+  assert.ok(!out.includes('TREE_TERM'), `manual firefox must be spared:\n${out}`);
+});
+
+test('task-firefox kill: skipped while another browser task is active', () => {
+  stubManualBrowser({ open: false, pid: 0, userDataDir: '' });
+  let script;
+  try {
+    const task = {
+      id: 7,
+      _runId: 'run-9',
+      _profile: null,
+      _effectiveUserDataDir: '/tmp/profiles/task-7',
+      _launcherPid: 0,
+      _allowBroadFirefoxKill: false,
+    };
+    script = buildTerminateCommandsByTask(task).join('\n');
+  } finally {
+    unstubManualBrowser();
+  }
+  assert.ok(
+    !script.includes('kill_task_firefox TERM'),
+    'name-based firefox kill must be skipped when a sibling browser task is active'
   );
-  assert.ok(!out.includes('TREE_TERM'), `manual ruyi firefox must be spared:\n${out}`);
+  assert.ok(
+    !script.includes('kill_task_firefox KILL'),
+    'name-based firefox KILL must be skipped when a sibling browser task is active'
+  );
 });
