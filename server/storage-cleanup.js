@@ -189,7 +189,10 @@ function collectCleanupItems(db, options = {}) {
 
   if (selected.has('tmpArtifacts')) {
     for (const { entry, path: target } of listChildren('/tmp')) {
-      if (entry.name === 'node-openclaw') continue;
+      if (
+        entry.name === 'browser-automation-panel-node'
+        || entry.name === 'browser-automation-panel-node.meta.json'
+      ) continue;
       const appSpecific = /^bap-stop-[A-Za-z0-9_-]+$/i.test(entry.name)
         || /^(?:bap|browser-panel)[_-]captcha[_-][A-Za-z0-9_.-]+$/i.test(entry.name)
         || /^dp_chrome_yolo_[A-Za-z0-9_-]+$/i.test(entry.name)

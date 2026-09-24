@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const config = require('../../config');
 const db = require('../db');
+const { WORKER_NODE_PATH, ensureWorkerNodeBinary } = require('./worker-node');
 const {
   parseTaskParams,
   resolveUseTempProfile,
@@ -318,21 +319,8 @@ function ensureRuntimeFiles(task) {
     if (fs.existsSync(file.to)) fs.rmSync(file.to, { recursive: true, force: true });
     fs.cpSync(file.from, file.to, { recursive: true });
   }
-  // Worker node binary: copy current process node (portable; no hard-coded nvm path).
-  // Legacy name /tmp/node-openclaw kept so existing su/wrapper commands keep working.
-  const workerNodePath = '/tmp/node-openclaw';
-  const sourceNode = process.execPath;
-  try {
-    if (!fs.existsSync(sourceNode)) {
-      throw new Error(`Node binary not found: ${sourceNode}`);
-    }
-    fs.copyFileSync(sourceNode, workerNodePath);
-    fs.chmodSync(workerNodePath, 0o755);
-  } catch (err) {
-    throw new Error(
-      `Failed to prepare worker node (${sourceNode} -> ${workerNodePath}): ${err.message}`
-    );
-  }
+  // Prepare the shared worker Node binary only when missing or outdated.
+  ensureWorkerNodeBinary();
   const ch = spawnSync('chown', ['-R', `${browserUser}:${browserUser}`, workerRoot], { encoding: 'utf8' });
   if (ch.status !== 0) {
     console.warn('[browser-launcher] chown failed:', (ch.stderr || ch.stdout || '').trim());
@@ -903,7 +891,7 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       ? `php ${shellEscape(taskFile)}`
       : task.type === 'shell'
         ? `bash ${shellEscape(taskFile)}`
-        : `${shellEscape('/tmp/node-openclaw')} ${shellEscape(wrapperFile)} ${shellEscape(taskFile)}`;
+        : `${shellEscape(WORKER_NODE_PATH)} ${shellEscape(wrapperFile)} ${shellEscape(taskFile)}`;
   const profile = task && task._profile ? task._profile : null;
   const taskParams = parseTaskParams(task);
   const useTempProfile = resolveUseTempProfile(task, taskParams);

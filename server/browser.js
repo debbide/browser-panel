@@ -5,6 +5,7 @@ const config = require('../config');
 const db = require('./db');
 const events = require('./events');
 const { resolveProxyContract } = require('./runtime/runtime-contract');
+const { WORKER_NODE_PATH, ensureWorkerNodeBinary } = require('./runtime/worker-node');
 const { manager: warpManager } = require('./warp/manager');
 
 const manualBrowserState = {
@@ -239,14 +240,8 @@ function ensureManualRuntimeFiles(runtimeSettings) {
     }
   }
 
-  // Portable worker node: use current process binary (no hard-coded nvm path).
-  const workerNodePath = '/tmp/node-openclaw';
-  const sourceNode = process.execPath;
-  if (!fs.existsSync(sourceNode)) {
-    throw new Error(`Node binary not found: ${sourceNode}`);
-  }
-  fs.copyFileSync(sourceNode, workerNodePath);
-  fs.chmodSync(workerNodePath, 0o755);
+  // Prepare the shared worker Node binary only when missing or outdated.
+  ensureWorkerNodeBinary();
 
   // Ownership for browser user (required: SB creates locks under cwd as that user)
   try {
@@ -359,21 +354,13 @@ function sweepManualProcesses(userDataDir) {
 }
 
 function resolveWorkerNodeBinary() {
-  // Prefer portable copy for browser user; fall back to panel's own node.
-  const portable = '/tmp/node-openclaw';
   try {
-    if (fs.existsSync(portable)) {
-      try { fs.accessSync(portable, fs.constants.X_OK); } catch {
-        fs.chmodSync(portable, 0o755);
-      }
-      return portable;
-    }
+    return ensureWorkerNodeBinary();
   } catch {
-    // ignore
+    const self = process.execPath;
+    if (self && fs.existsSync(self)) return self;
+    throw new Error(`No usable Node binary for manual browser (tried ${WORKER_NODE_PATH} and process.execPath)`);
   }
-  const self = process.execPath;
-  if (self && fs.existsSync(self)) return self;
-  throw new Error('No usable Node binary for manual browser (tried /tmp/node-openclaw and process.execPath)');
 }
 
 function resolveManualChromePath(runtimeSettings) {
