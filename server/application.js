@@ -234,7 +234,11 @@ async function triggerTaskExecution(taskId, options = {}) {
   if (!task) {
     return { ok: false, status: 404, payload: { message: 'Task not found', code: 'task_not_found' } };
   }
-  if (task.use_browser && getManualBrowserStatus().open) {
+  if (
+    task.use_browser
+    && getManualBrowserStatus().open
+    && !db.isTaskParallelAllowed()
+  ) {
     return { ok: false, status: 409, payload: { message: 'Browser is open manually, close it before running tasks', code: 'browser_already_open' } };
   }
 
@@ -264,7 +268,11 @@ async function triggerTaskExecutionInBackground(taskId) {
   if (!task) {
     return { ok: false, message: '任务不存在或已被删除' };
   }
-  if (task.use_browser && getManualBrowserStatus().open) {
+  if (
+    task.use_browser
+    && getManualBrowserStatus().open
+    && !db.isTaskParallelAllowed()
+  ) {
     return { ok: false, message: '手动浏览器仍在运行，请先关闭后重试' };
   }
   const gate = canStartTask(taskIdNum, { task });
