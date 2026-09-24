@@ -1011,24 +1011,20 @@ app.use((req, res) => {
 });
 });
 
-// Loud startup warning when secret at-rest encryption is unavailable.
-// Without PANEL_MASTER_KEY, historical plaintext secrets stay readable but
-// any new/changed secret write is refused instead of silently stored plaintext.
-function warnOnMissingMasterKey() {
+// Loud startup warning only for real problems: the master key is auto-managed
+// (data/.master_key, generated on first boot), PANEL_MASTER_KEY is just an
+// optional override — warn when the override is set but malformed.
+function warnOnMasterKeyIssues() {
   const described = describeMasterKey();
-  if (described.state === 'missing') {
+  if (described.state === 'invalid') {
     console.warn(
-      '[security] PANEL_MASTER_KEY 未配置：敏感数据（Telegram/S3 凭据、TOTP 密钥、代理密码、任务密钥）'
-      + '将以明文读取历史数据，且拒绝写入新的敏感值。请生成 64 位十六进制主密钥并配置后重启，'
-      + '例如：openssl rand -hex 32'
+      '[security] PANEL_MASTER_KEY 格式无效（必须是 64 位十六进制字符），已忽略该环境变量，改用 data/.master_key 文件密钥。'
     );
-  } else if (described.state === 'invalid') {
-    console.warn('[security] PANEL_MASTER_KEY 格式无效：必须是 64 位十六进制字符（32 字节），敏感数据加解密将失败。');
   }
 }
 
 function onServerStarted() {
-    warnOnMissingMasterKey();
+    warnOnMasterKeyIssues();
     reloadJobs(executeTask);
     void ensureTelegramWebhook();
     void warpManager.restore();

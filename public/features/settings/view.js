@@ -66,6 +66,20 @@
     return editor.collect();
   }
 
+  function renderSecurity(elements, data = {}) {
+    if (elements.trustProxy) elements.trustProxy.value = data.trustProxy || '';
+    if (elements.status) {
+      const configured = Boolean((data.trustProxy || '').trim());
+      elements.status.textContent = configured ? '状态：已配置可信反向代理' : '状态：未配置（默认不信任 X-Forwarded-For）';
+    }
+  }
+
+  function collectSecurity(elements) {
+    return {
+      trustProxy: elements.trustProxy ? elements.trustProxy.value.trim() : '',
+    };
+  }
+
   global.SettingsView = {
     renderTelegram,
     collectTelegram,
@@ -73,5 +87,7 @@
     collectVisionChannels,
     renderGlobalEnv,
     collectGlobalEnv,
+    renderSecurity,
+    collectSecurity,
   };
 })(window);

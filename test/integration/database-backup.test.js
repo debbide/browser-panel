@@ -11,9 +11,9 @@ function runIsolated(source, prefix) {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const result = spawnSync(process.execPath, ['-e', source], {
     cwd: projectRoot,
-    // S4: secret env values are encrypted at rest; isolated runtimes need a
-    // master key like production does.
-    env: { ...process.env, PANEL_RUNTIME_ROOT: runtimeRoot, PANEL_MASTER_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' },
+    // S4: secret env values are encrypted at rest; the master key file is
+    // auto-generated in the isolated runtime root, no env vars needed.
+    env: { ...process.env, PANEL_RUNTIME_ROOT: runtimeRoot },
     encoding: 'utf8',
     timeout: 15000,
   });

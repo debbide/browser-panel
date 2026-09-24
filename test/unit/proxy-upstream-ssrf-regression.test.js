@@ -7,18 +7,13 @@ const {
   assertUpstreamHostAllowed,
   assertUpstreamDnsAllowed,
   blockedUpstreamIpReason,
+  parseUpstreamAllowlist,
+  validateUpstreamAllowlist,
 } = require('../../server/proxy-manager/port-manager');
 
-function withAllowlist(value, fn) {
-  const prev = process.env.PANEL_PROXY_UPSTREAM_ALLOWLIST;
-  process.env.PANEL_PROXY_UPSTREAM_ALLOWLIST = value;
-  try {
-    return fn();
-  } finally {
-    if (prev === undefined) delete process.env.PANEL_PROXY_UPSTREAM_ALLOWLIST;
-    else process.env.PANEL_PROXY_UPSTREAM_ALLOWLIST = prev;
-  }
-}
+// The SSRF allowlist now comes from the panel setting (proxy_upstream_allowlist),
+// passed in as a parsed array; the module-level default is empty (secure default).
+// No environment variables are involved.
 
 test('S9: self-reference check covers 0.0.0.0 / :: / [::] spellings', () => {
   const managed = new Set([8001]);
@@ -63,17 +58,49 @@ test('S9: public upstreams keep working', () => {
 });
 
 test('S9: allowlist re-enables internal upstreams explicitly', () => {
-  withAllowlist('10.0.0.0/8, 127.0.0.1', () => {
-    assert.doesNotThrow(() => assertUpstreamHostAllowed('http://10.9.9.9:8080'));
-    assert.doesNotThrow(() => assertUpstreamHostAllowed('http://127.0.0.1:1080'));
-    // Not allowlisted: still blocked.
-    assert.throws(() => assertUpstreamHostAllowed('http://192.168.1.1:8080'), /默认拒绝/);
-    assert.throws(() => assertUpstreamHostAllowed('http://169.254.169.254:8080'), /默认拒绝/);
+  const allowlist = parseUpstreamAllowlist('10.0.0.0/8, 127.0.0.1');
+  assert.doesNotThrow(() => assertUpstreamHostAllowed('http://10.9.9.9:8080', allowlist));
+  assert.doesNotThrow(() => assertUpstreamHostAllowed('http://127.0.0.1:1080', allowlist));
+  // Not allowlisted: still blocked.
+  assert.throws(() => assertUpstreamHostAllowed('http://192.168.1.1:8080', allowlist), /默认拒绝/);
+  assert.throws(() => assertUpstreamHostAllowed('http://169.254.169.254:8080', allowlist), /默认拒绝/);
+
+  const hostAllowlist = parseUpstreamAllowlist('proxy.internal');
+  assert.doesNotThrow(() => assertUpstreamHostAllowed('http://proxy.internal:8080', hostAllowlist));
+  assert.throws(() => assertUpstreamHostAllowed('http://10.0.0.1:8080', hostAllowlist), /默认拒绝/);
+});
+
+test('S9: PortManager reads the allowlist from panel settings, effective immediately', () => {
+  const store = { value: '' };
+  const pm = new PortManager({
+    database: { getUsedPorts: () => new Set(), setRunning: () => {} },
+    getSetting: (key) => (key === 'proxy_upstream_allowlist' ? store.value : null),
   });
-  withAllowlist('proxy.internal', () => {
-    assert.doesNotThrow(() => assertUpstreamHostAllowed('http://proxy.internal:8080'));
-    assert.throws(() => assertUpstreamHostAllowed('http://10.0.0.1:8080'), /默认拒绝/);
-  });
+  assert.deepEqual(pm.getUpstreamAllowlist(), []);
+  assert.throws(
+    () => assertUpstreamHostAllowed('http://10.9.9.9:8080', pm.getUpstreamAllowlist()),
+    /默认拒绝/
+  );
+  // Change the setting: no restart, no cache — the next check sees it.
+  store.value = '10.0.0.0/8';
+  assert.doesNotThrow(() => assertUpstreamHostAllowed('http://10.9.9.9:8080', pm.getUpstreamAllowlist()));
+  store.value = '';
+  assert.throws(
+    () => assertUpstreamHostAllowed('http://10.9.9.9:8080', pm.getUpstreamAllowlist()),
+    /默认拒绝/
+  );
+});
+
+test('S9: validateUpstreamAllowlist accepts hostnames/IPs/CIDRs and rejects junk', () => {
+  assert.equal(validateUpstreamAllowlist(''), '');
+  assert.equal(validateUpstreamAllowlist('  '), '');
+  assert.equal(
+    validateUpstreamAllowlist('proxy.internal, 10.0.0.0/8,::1'),
+    'proxy.internal,10.0.0.0/8,::1'
+  );
+  for (const bad of ['not a host!', '10.0.0.0/33', '10.0.0.0/abc', 'http://x:1', 'a b']) {
+    assert.throws(() => validateUpstreamAllowlist(bad), /无效/, bad);
+  }
 });
 
 test('S9: blockedUpstreamIpReason classifies ranges', () => {

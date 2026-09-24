@@ -31,6 +31,7 @@ const config = require('../../config');
 const db = require('../db');
 const { getVersion } = require('../version');
 const { SCHEMA_VERSION, ASSET_EXCLUDED_NAMES } = require('../backup');
+const { masterKeyFilePath, MASTER_KEY_FILE_NAME } = require('../secret-crypto');
 
 const SNAP_MAGIC = 'BPSNAP1';
 const SNAP_VERSION = 1;
@@ -179,12 +180,13 @@ function countTaskFiles(rootDir) {
   )).length;
 }
 
-function runTar(cwd, tarPath) {
+function runTar(cwd, tarPath, extraEntries = []) {
   const args = [
     '-czf', tarPath,
     '--exclude=node_modules', '--exclude=.git', '--exclude=.venv', '--exclude=venv',
     '--exclude=__pycache__', '--exclude=*.pyc',
     'app.db', 'tasks', 'manifest.json',
+    ...extraEntries,
   ];
   const result = spawnSync('tar', args, { cwd, encoding: 'utf8' });
   if (result.error || result.status !== 0) {
@@ -271,13 +273,31 @@ async function createSnapshot({ outPath, passphrase, meta = {} } = {}) {
     // 2) tasks/ 整目录（含排除集过滤）
     copyTaskDir(config.paths.tasksDir, path.join(staging, 'tasks'));
 
+    // 2b) 主密钥文件：加密数据随库走，密钥也要跟着走，否则换机器恢复后解不开旧密文。
+    const includes = ['app.db', 'tasks/', 'manifest.json'];
+    const extraTarEntries = [];
+    try {
+      const keySrc = masterKeyFilePath();
+      if (fs.existsSync(keySrc)) {
+        const keyDest = path.join(staging, MASTER_KEY_FILE_NAME);
+        fs.copyFileSync(keySrc, keyDest);
+        fs.chmodSync(keyDest, 0o600);
+        extraTarEntries.push(MASTER_KEY_FILE_NAME);
+        includes.push(MASTER_KEY_FILE_NAME);
+      } else {
+        console.warn('[snapshot] data/.master_key 不存在，快照将不含主密钥文件');
+      }
+    } catch (err) {
+      console.warn(`[snapshot] 主密钥文件打包失败（不影响快照其余内容）: ${err && err.message}`);
+    }
+
     // 3) manifest
-    const manifest = baseManifest(meta);
+    const manifest = baseManifest({ ...meta, includes });
     fs.writeFileSync(path.join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
     // 4) 打包
     const tarPath = path.join(staging, 'snapshot.tar.gz');
-    runTar(staging, tarPath);
+    runTar(staging, tarPath, extraTarEntries);
 
     // 5) 流式加密
     await encryptFileToFile(tarPath, outPath, passphrase);

@@ -7,50 +7,72 @@ const { spawnSync } = require('node:child_process');
 
 const projectRoot = path.resolve(__dirname, '../..');
 
-// S4: secrets are stored as versioned AES-256-GCM envelopes, never plaintext,
-// once PANEL_MASTER_KEY is configured. Legacy plaintext stays readable and is
-// lazily re-encrypted; without a master key, new secret writes are refused.
-test('S4: secret at-rest encryption envelope and compat behavior', () => {
+// S4: secrets are stored as versioned AES-256-GCM envelopes, never plaintext.
+// The master key is auto-managed: generated at data/.master_key (0600) on
+// first boot when PANEL_MASTER_KEY is not set. Zero required env vars.
+// Legacy plaintext stays readable and is lazily re-encrypted on read.
+test('S4: master key auto-generation, env override, and at-rest encryption', () => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-panel-s4-'));
   try {
     const script = String.raw`
       (async () => {
         const assert = require('node:assert/strict');
+        const fs = require('node:fs');
+        const path = require('node:path');
         const MASTER = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+        const keyFile = path.join(process.env.PANEL_RUNTIME_ROOT, 'data', '.master_key');
+        const freshCrypto = () => {
+          delete require.cache[require.resolve('./server/secret-crypto')];
+          return require('./server/secret-crypto');
+        };
         const fail = (m) => { throw new Error(m); };
 
-        // --- Part 1: no master key ---
+        // --- Part 1: no env -> key file auto-generated on first require ---
         delete process.env.PANEL_MASTER_KEY;
-        const crypto1 = require('./server/secret-crypto');
-        assert.equal(crypto1.describeMasterKey().state, 'missing');
+        const crypto1 = freshCrypto();
+        if (!fs.existsSync(keyFile)) fail('key file was not auto-generated');
+        const stat = fs.statSync(keyFile);
+        assert.equal(stat.size, 32, 'key file must be 32 bytes');
+        assert.equal(stat.mode & 0o777, 0o600, 'key file must be 0600');
+        assert.equal(crypto1.describeMasterKey().state, 'ok');
+        assert.equal(crypto1.describeMasterKey().source, 'file');
         assert.equal(crypto1.isEncryptedEnvelope('plain'), false);
         assert.equal(crypto1.decryptSecret('plain-legacy'), 'plain-legacy');
-        assert.throws(() => crypto1.encryptSecret('x'), /PANEL_MASTER_KEY/);
+        // No refusal anymore: encryption works out of the box.
+        const env1 = crypto1.encryptSecret('auto-key-secret');
+        assert.ok(env1.startsWith('enc:v1:'), 'not encrypted: ' + env1);
+        assert.equal(crypto1.decryptSecret(env1), 'auto-key-secret');
 
-        const db = require('./server/db');
-        // Legacy plaintext stays readable without a key, and is NOT migrated.
-        db.setSetting('telegram_bot_token', 'legacy-token-plain');
-        assert.equal(db.getSecretSetting('telegram_bot_token'), 'legacy-token-plain');
-        assert.equal(db.getSetting('telegram_bot_token'), 'legacy-token-plain');
-        // New secret writes are refused instead of silently stored plaintext.
-        assert.throws(() => db.setSecretSetting('telegram_bot_token', 'brand-new-token'), /PANEL_MASTER_KEY/);
-        // Re-saving the unchanged legacy value is a no-op (unrelated edits keep working).
-        assert.doesNotThrow(() => db.setSecretSetting('telegram_bot_token', 'legacy-token-plain'));
-        // Clearing still works without a key.
-        db.setSecretSetting('telegram_bot_token', '');
-        assert.equal(db.getSetting('telegram_bot_token'), null);
+        // --- Part 2: deleting the key file regenerates it on next load ---
+        fs.rmSync(keyFile);
+        const crypto2 = freshCrypto();
+        if (!fs.existsSync(keyFile)) fail('key file was not regenerated');
+        const env2 = crypto2.encryptSecret('regenerated-key-secret');
+        assert.equal(crypto2.decryptSecret(env2), 'regenerated-key-secret');
 
-        // --- Part 2: with master key ---
+        // --- Part 3: valid PANEL_MASTER_KEY overrides the file key ---
         process.env.PANEL_MASTER_KEY = MASTER;
-        const crypto = require('./server/secret-crypto');
-        assert.equal(crypto.describeMasterKey().state, 'ok');
-        const env = crypto.encryptSecret('hello-secret');
-        assert.ok(env.startsWith('enc:v1:'), 'envelope prefix, got: ' + env);
-        assert.equal(crypto.decryptSecret(env), 'hello-secret');
-        assert.throws(() => crypto.decryptSecret(env.slice(0, -4) + 'AAAA'), /./); // tampered
+        const crypto3 = freshCrypto();
+        assert.equal(crypto3.describeMasterKey().state, 'ok');
+        assert.equal(crypto3.describeMasterKey().source, 'env');
+        const env3 = crypto3.encryptSecret('env-key-secret');
+        assert.equal(crypto3.decryptSecret(env3), 'env-key-secret');
+        assert.throws(() => crypto3.decryptSecret(env3.slice(0, -4) + 'AAAA'), /./); // tampered
         process.env.PANEL_MASTER_KEY = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-        assert.throws(() => crypto.decryptSecret(env), /./); // wrong key
-        process.env.PANEL_MASTER_KEY = MASTER;
+        assert.throws(() => crypto3.decryptSecret(env3), /./); // wrong key
+
+        // --- Part 4: invalid PANEL_MASTER_KEY is ignored (file key fallback) ---
+        process.env.PANEL_MASTER_KEY = 'not-hex-at-all';
+        const crypto4 = freshCrypto();
+        assert.equal(crypto4.describeMasterKey().state, 'invalid');
+        const env4 = crypto4.encryptSecret('fallback-secret');
+        assert.ok(env4.startsWith('enc:v1:'), 'invalid env should fall back to file key');
+        assert.equal(crypto4.decryptSecret(env4), 'fallback-secret');
+        delete process.env.PANEL_MASTER_KEY;
+
+        // --- Part 5: db-level behavior with ZERO env vars (file key) ---
+        delete require.cache[require.resolve('./server/db')];
+        const db = require('./server/db');
 
         // Secret settings land encrypted on disk, read back plaintext.
         db.setSecretSetting('telegram_bot_token', 'bot-token-123');
@@ -62,6 +84,9 @@ test('S4: secret at-rest encryption envelope and compat behavior', () => {
         // Non-secret settings are untouched.
         db.setSetting('telegram_chat_id', '42');
         assert.equal(db.getSetting('telegram_chat_id'), '42');
+        // Clearing still works.
+        db.setSecretSetting('telegram_bot_token', '');
+        assert.equal(db.getSetting('telegram_bot_token'), null);
 
         // Legacy plaintext migrates lazily on read.
         db.setSetting('s3_backup_secret_key', 'legacy-s3-plain');
@@ -86,7 +111,6 @@ test('S4: secret at-rest encryption envelope and compat behavior', () => {
 
         // Task secret env values: encrypted at rest, plaintext at runtime.
         const taskId = db.db.prepare("INSERT INTO tasks (name, type, script_path) VALUES ('s4task', 'python', 'tasks/a.py')").run().lastInsertRowid;
-        const task = { id: taskId };
         db.replaceEnvEntries('task', taskId, [
           { name: 'API_TOKEN', value: 'super-secret-value', is_secret: 1 },
           { name: 'PLAIN_VAR', value: 'visible', is_secret: 0 },
@@ -132,6 +156,8 @@ test('S4: secret at-rest encryption envelope and compat behavior', () => {
       encoding: 'utf8',
       timeout: 60000,
     });
+    // The key file must never require PANEL_MASTER_KEY to exist: the subprocess
+    // deletes it before anything else runs.
     assert.ok(
       result.status === 0 && /S4-OK/.test(result.stdout),
       `S4 subprocess failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`

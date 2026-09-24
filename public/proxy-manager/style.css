@@ -485,3 +485,28 @@
   #proxy-manager-app .pm-modal-actions { display: grid; grid-template-columns: 1fr 1fr; }
   #proxy-manager-app .pm-modal-actions .button { width: 100%; }
 }
+
+/* 面板新增：上游白名单设置块 */
+#proxy-manager-app .pm-allowlist {
+  margin: 12px 0 4px;
+  border: 1px solid var(--pm-border, #e2e8f0);
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--pm-card, #fff);
+}
+#proxy-manager-app .pm-allowlist summary { cursor: pointer; font-weight: 600; }
+#proxy-manager-app .pm-allowlist-body { margin-top: 8px; }
+#proxy-manager-app .pm-allowlist-body p { margin: 0 0 10px; font-size: 13px; }
+#proxy-manager-app .pm-allowlist-form { display: flex; gap: 8px; }
+#proxy-manager-app .pm-allowlist-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--pm-border, #e2e8f0);
+  border-radius: 8px;
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  #proxy-manager-app .pm-allowlist-form { flex-direction: column; }
+  #proxy-manager-app .pm-allowlist-form > .button { width: 100%; }
+}

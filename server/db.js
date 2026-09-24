@@ -969,7 +969,7 @@ function setSetting(key, value) {
 }
 
 // Read a secret setting: envelopes are decrypted, legacy plaintext passes
-// through (and is lazily re-encrypted when a master key is configured).
+// through (and is lazily re-encrypted on read).
 function getSecretSetting(key) {
   const raw = getSetting(key);
   if (!raw) return raw;
@@ -986,10 +986,9 @@ function getSecretSetting(key) {
   return decryptSecret(raw);
 }
 
-// Write a secret setting. New/changed values are always encrypted — without
-// a master key this throws instead of silently storing plaintext.
-// Re-saving an unchanged legacy plaintext value is a no-op so unrelated
-// settings edits keep working without a master key.
+// Write a secret setting. New/changed values are always encrypted with the
+// auto-managed master key. Re-saving an unchanged legacy plaintext value is
+// a no-op so unrelated settings edits never churn stored data.
 function setSecretSetting(key, value) {
   const text = String(value ?? '').trim();
   if (!text) {
@@ -1022,7 +1021,7 @@ function getBrowserProfile(id) {
 
 // Decrypt the row's proxy_value for callers (runtime + API both expect the
 // plaintext form, as before). Legacy plaintext rows are lazily re-encrypted
-// when a master key is configured.
+// on read.
 function decryptProfileRow(row) {
   if (!row) return row;
   const raw = row.proxy_value ? String(row.proxy_value) : '';
@@ -1532,7 +1531,7 @@ function getUserTotpSecret(userId) {
   const raw = row && row.totp_secret ? String(row.totp_secret) : null;
   if (!raw) return null;
   if (!isEncryptedEnvelope(raw)) {
-    // Legacy plaintext: lazily re-encrypt on read when a master key exists.
+    // Legacy plaintext: lazily re-encrypt on read.
     if (hasMasterKey()) {
       try {
         db.prepare('UPDATE panel_users SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')

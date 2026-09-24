@@ -4,6 +4,8 @@ logs/
 screenshots/
 runtime-data/
 data/*.db*
+# 自动生成的数据加密主密钥（0600），跟着机器不跟着仓库
+data/.master_key
 # 装机脚本写的版本戳,跟着机器不跟着仓库
 data/version.json
 *.log

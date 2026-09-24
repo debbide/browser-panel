@@ -24,7 +24,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 
 const { ProxyDatabase } = require('./database');
-const { PortManager, parseProxyUri, sanitizeProxy, normalizeNodeName } = require('./port-manager');
+const { PortManager, parseProxyUri, sanitizeProxy, normalizeNodeName, validateUpstreamAllowlist } = require('./port-manager');
 const { createProxyCrypto } = require('./proxy-crypto');
 const { parseVlessLink, isVlessLink } = require('./vless/link');
 const { badRequest, notFound, serviceUnavailable } = require('./http-error');
@@ -89,12 +89,32 @@ function createProxyManager({ panelDb, dataDir, host = '127.0.0.1' }) {
   // letting every later request fail with an opaque crypto error.
   database.verifyEncryptionKey();
 
-  const portManager = new PortManager({ database, host });
+  const portManager = new PortManager({
+    database,
+    host,
+    getSetting: (key) => panelDb.getSetting(key),
+  });
 
   const router = express.Router();
 
   router.get('/proxies', (req, res) => {
     res.json(database.listProxies().map(sanitizeProxy));
+  });
+
+  // 上游白名单（SSRF 防护）：默认拒绝内网/回环/link-local 上游，如确需内网
+  // 上游，在此显式放行。逗号分隔，支持域名、IP、IPv4 CIDR；默认空。
+  router.get('/settings/upstream-allowlist', (req, res) => {
+    res.json({ allowlist: panelDb.getSetting('proxy_upstream_allowlist') || '' });
+  });
+
+  router.put('/settings/upstream-allowlist', (req, res, next) => {
+    try {
+      const normalized = validate(() => validateUpstreamAllowlist(req.body && req.body.allowlist));
+      panelDb.setSetting('proxy_upstream_allowlist', normalized || null);
+      return res.json({ allowlist: panelDb.getSetting('proxy_upstream_allowlist') || '' });
+    } catch (error) {
+      return next(error);
+    }
   });
 
   router.post('/proxies', async (req, res, next) => {

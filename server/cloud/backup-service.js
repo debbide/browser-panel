@@ -24,6 +24,7 @@ const scheduler = require('../scheduler');
 const { sanitizeExportFilenamePart } = require('../backup');
 const { createS3Client } = require('./s3-client');
 const { createSnapshot, restoreSnapshot, peekManifest } = require('./snapshot');
+const { masterKeyFilePath, MASTER_KEY_FILE_NAME } = require('../secret-crypto');
 
 const DEFAULT_PREFIX = 'panel-backups';
 const DEFAULT_RETENTION = 7;
@@ -286,7 +287,7 @@ async function performSwap(stagingDir) {
 
 /**
  * 把当前 data 目录挪到 pre-restore-<stamp>/（绝不删除，这是回滚路径），
- * 再把 staging 里的 app.db + tasks/ 落盘。调用方负责先关掉数据库。
+ * 再把 staging 里的 app.db + tasks/ + .master_key 落盘。调用方负责先关掉数据库。
  */
 function swapDataDir(stagingDir) {
   const stamp = buildStamp();
@@ -306,6 +307,17 @@ function swapDataDir(stagingDir) {
   fs.mkdirSync(config.paths.tasksDir, { recursive: true });
   copyDirContents(path.join(stagingDir, 'tasks'), config.paths.tasksDir);
   fs.copyFileSync(path.join(stagingDir, 'app.db'), path.join(dataDir, 'app.db'));
+  // 主密钥文件：快照里有就换上（0600；旧文件进 pre-restore 做回滚），没有就保留
+  // 现有的（兼容此次改动之前的老快照）。
+  const stagedKey = path.join(stagingDir, MASTER_KEY_FILE_NAME);
+  const liveKey = masterKeyFilePath();
+  if (fs.existsSync(stagedKey)) {
+    if (fs.existsSync(liveKey)) {
+      fs.renameSync(liveKey, path.join(preRestoreDir, MASTER_KEY_FILE_NAME));
+    }
+    fs.copyFileSync(stagedKey, liveKey);
+    fs.chmodSync(liveKey, 0o600);
+  }
   return preRestoreDir;
 }
 

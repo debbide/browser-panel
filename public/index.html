@@ -259,6 +259,21 @@
               </button>
             </div>
 
+            <!-- 面板新增：上游白名单（SSRF 防护）。默认拒绝内网/回环/link-local 上游，如确需内网上游在此显式放行。 -->
+            <details class="pm-allowlist">
+              <summary>上游白名单 <span class="muted">（SSRF 防护，默认拒绝内网 / 回环上游）</span></summary>
+              <div class="pm-allowlist-body">
+                <p class="muted">默认拒绝把内网、回环、link-local 地址作为代理上游。如确需内网上游，在此显式放行，逗号分隔，支持域名、IP、IPv4 CIDR（例如：<code>proxy.internal,10.0.0.0/8</code>）。公网代理不受影响，保存后立即生效。</p>
+                <div class="pm-allowlist-form">
+                  <input v-model.trim="allowlist" type="text" placeholder="proxy.internal,10.0.0.0/8" :disabled="allowlistLoading || allowlistSaving" spellcheck="false" autocomplete="off">
+                  <button class="button button-secondary" type="button" @click="saveAllowlist" :disabled="allowlistSaving">
+                    <span v-if="allowlistSaving" class="spinner spinner-dark"></span>
+                    {{ allowlistSaving ? '保存中…' : '保存白名单' }}
+                  </button>
+                </div>
+              </div>
+            </details>
+
             <div class="stats-grid" aria-label="运行概览">
               <article class="stat-card"><span>全部节点</span><strong>{{ proxies.length }}</strong><small>已分配端口</small></article>
               <article class="stat-card active"><span>运行中</span><strong>{{ runningCount }}</strong><small>正在转发流量</small></article>
@@ -488,6 +503,7 @@
               <button type="button" class="config-subnav-btn" data-config-target="cfg-vision">Vision</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量与密钥</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-cloud-backup">云端备份</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-security">安全</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
               <span class="config-subnav-group">高级设置</span>
               <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-runtime" data-config-parent="cfg-advanced">运行时插件</button>
@@ -731,6 +747,36 @@
               还原同样会把当前数据挪到 <code>data/pre-restore-&lt;时间戳&gt;/</code> 留作回滚，不会删除；面板随后自动重启。
             </p>
           </div>
+        </section>
+
+        <section id="cfg-security" class="modal-panel config-panel config-section" data-config-section="security" data-config-title="安全" data-config-path="安全" data-config-keywords="security 安全 可信代理 trust proxy x-forwarded-for xff 反向代理 限流 登录">
+          <div class="section-header compact">
+            <div>
+              <h2>安全</h2>
+              <p class="muted" id="security-status-text">状态：加载中...</p>
+            </div>
+          </div>
+          <form id="security-form" class="grid single-col">
+            <div>
+              <label class="field-label" for="security-trust-proxy">可信反向代理（登录限流用）</label>
+              <input
+                type="text"
+                id="security-trust-proxy"
+                name="trustProxy"
+                placeholder="例如：127.0.0.1,10.0.0.0/8"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div class="schedule-note" style="margin-top:4px;">
+                只有这里列出的反向代理带来的 <code>X-Forwarded-For</code> 才会被采信，用于登录限流识别客户端 IP。留空 = 不信任任何代理，直接取 TCP 对端地址（默认，最安全）。面板前面有可信反代（如 nginx / CF Tunnel）且需要透传真实 IP 时再填，逗号分隔，支持 IP 或 IPv4 CIDR。
+              </div>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button type="submit" id="security-save-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> 保存安全设置
+              </button>
+            </div>
+          </form>
         </section>
 
         <section id="cfg-advanced" class="modal-panel config-panel config-section config-advanced" data-config-section="advanced" data-config-title="高级设置" data-config-path="高级" data-config-keywords="advanced 高级 运行时 插件 存储 清理 github 兼容">

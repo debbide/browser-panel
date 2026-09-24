@@ -126,6 +126,10 @@ const brUsePlaywrightExtra = document.getElementById('br-use-playwright-extra');
 const brPluginPackages = document.getElementById('br-plugin-packages');
 const brExtensionDirs = document.getElementById('br-extension-dirs');
 const brSaveBtn = document.getElementById('br-save-btn');
+const securityForm = document.getElementById('security-form');
+const securityStatusText = document.getElementById('security-status-text');
+const securityTrustProxy = document.getElementById('security-trust-proxy');
+const securitySaveBtn = document.getElementById('security-save-btn');
 const brInstallBtn = document.getElementById('br-install-btn');
 const brInstallBrowserBtn = document.getElementById('br-install-browser-btn');
 const storageCleanupDays = document.getElementById('storage-cleanup-days');
@@ -785,6 +789,12 @@ const settingsController = SettingsController.create({
       collect: visionSettingsUi.collect,
       updateStatus: visionSettingsUi.updateStatus,
       openTestModal: openVisionTestModal,
+    },
+    security: {
+      form: securityForm,
+      status: securityStatusText,
+      trustProxy: securityTrustProxy,
+      saveButton: securitySaveBtn,
     },
   },
   actions: {

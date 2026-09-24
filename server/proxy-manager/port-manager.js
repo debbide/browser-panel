@@ -186,17 +186,46 @@ function blockedUpstreamIpReason(ip) {
 }
 
 // Explicit allowlist for internal upstreams, off by default. Comma-separated
-// entries: exact hostnames, IPs, or IPv4 CIDRs, e.g.
-// PANEL_PROXY_UPSTREAM_ALLOWLIST="proxy.internal,10.0.0.0/8".
-function getUpstreamAllowlist() {
-  return String(process.env.PANEL_PROXY_UPSTREAM_ALLOWLIST || '')
+// entries: exact hostnames, IPs, or IPv4 CIDRs, e.g. "proxy.internal,10.0.0.0/8".
+// Stored in the panel settings (proxy_upstream_allowlist, edited in the node
+// console UI); there is intentionally no environment variable for it.
+function parseUpstreamAllowlist(raw) {
+  return String(raw || '')
     .split(',')
     .map((s) => normalizeUpstreamHostname(s.trim()))
     .filter(Boolean);
 }
 
-function upstreamAllowlisted(hostname, ipInt) {
-  for (const entry of getUpstreamAllowlist()) {
+// Validate a user-supplied upstream allowlist (comma-separated hostnames, IPs
+// or IPv4 CIDRs). Returns the normalized string; throws on the first bad entry.
+function validateUpstreamAllowlist(raw) {
+  const input = String(raw || '');
+  if (!input.trim()) return '';
+  const entries = input.split(',').map((s) => s.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const normalized = normalizeUpstreamHostname(entry);
+    if (!normalized || /[\s]/.test(entry)) {
+      throw badRequest(`上游白名单条目无效：${entry}`);
+    }
+    if (normalized.includes('/')) {
+      const parts = normalized.split('/');
+      const [base, bitsRaw] = parts;
+      const bits = Number((bitsRaw || '').trim());
+      if (parts.length !== 2 || net.isIP(base.trim()) !== 4 || !Number.isInteger(bits) || bits < 0 || bits > 32) {
+        throw badRequest(`上游白名单条目无效：${entry}（CIDR 仅支持 IPv4，如 10.0.0.0/8）`);
+      }
+      continue;
+    }
+    if (net.isIP(normalized)) continue;
+    if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(normalized)) {
+      throw badRequest(`上游白名单条目无效：${entry}（填写域名、IP 或 IPv4 CIDR）`);
+    }
+  }
+  return entries.map((s) => normalizeUpstreamHostname(s)).join(',');
+}
+
+function upstreamAllowlisted(hostname, ipInt, allowlist) {
+  for (const entry of allowlist) {
     if (entry.includes('/')) {
       const [base, bitsRaw] = entry.split('/');
       const baseInt = ipv4ToInt(base);
@@ -215,19 +244,20 @@ function upstreamAllowlisted(hostname, ipInt) {
 // Default-deny SSRF guard for proxy upstreams. Public upstreams keep working;
 // loopback / unspecified / private / link-local targets are rejected unless
 // explicitly allowlisted. Call this wherever a user-supplied upstream URI is
-// accepted (add/start/test).
-function assertUpstreamHostAllowed(uri) {
+// accepted (add/start/test). The allowlist comes from the panel setting
+// (PortManager#getUpstreamAllowlist); the module-level default is empty.
+function assertUpstreamHostAllowed(uri, allowlist = []) {
   const parsed = parseProxyUri(uri);
   const hostname = normalizeUpstreamHostname(parsed.hostname);
   const ipVersion = net.isIP(hostname);
   const ipInt = ipVersion === 4 ? ipv4ToInt(hostname) : null;
-  if (upstreamAllowlisted(hostname, ipInt)) return;
+  if (upstreamAllowlisted(hostname, ipInt, allowlist)) return;
   if (hostname === 'localhost') {
-    throw badRequest('上游代理指向 localhost，默认拒绝；内网上游请配置 PANEL_PROXY_UPSTREAM_ALLOWLIST 显式放行');
+    throw badRequest('上游代理指向 localhost，默认拒绝；内网上游请在节点控制台的「上游白名单」设置中显式放行');
   }
   const reason = blockedUpstreamIpReason(hostname);
   if (reason) {
-    throw badRequest(`上游代理指向上游受限地址 ${reason}，默认拒绝；内网上游请配置 PANEL_PROXY_UPSTREAM_ALLOWLIST 显式放行`);
+    throw badRequest(`上游代理指向上游受限地址 ${reason}，默认拒绝；内网上游请在节点控制台的「上游白名单」设置中显式放行`);
   }
 }
 
@@ -235,11 +265,11 @@ function assertUpstreamHostAllowed(uri) {
 // resolves into a blocked range is rejected too. This cannot stop DNS
 // rebinding at runtime (records can change after the check), it only stops
 // the naive "evil name -> internal IP" configuration.
-async function assertUpstreamDnsAllowed(uri) {
+async function assertUpstreamDnsAllowed(uri, allowlist = []) {
   const parsed = parseProxyUri(uri);
   const hostname = normalizeUpstreamHostname(parsed.hostname);
   if (net.isIP(hostname)) return;
-  if (upstreamAllowlisted(hostname, null)) return;
+  if (upstreamAllowlisted(hostname, null, allowlist)) return;
   let addresses;
   try {
     addresses = await dns.lookup(hostname, { all: true });
@@ -255,13 +285,23 @@ async function assertUpstreamDnsAllowed(uri) {
 }
 
 class PortManager {
-  constructor({ database, host = '127.0.0.1', portStart = 8001, portEnd = 8999 }) {
+  constructor({ database, host = '127.0.0.1', portStart = 8001, portEnd = 8999, getSetting = null } = {}) {
     this.database = database;
     this.host = host;
     this.portStart = portStart;
     this.portEnd = portEnd;
+    // Panel settings reader, e.g. (key) => panelDb.getSetting(key). Optional so
+    // the module stays usable standalone (tests); without it the SSRF allowlist
+    // is empty, i.e. the secure default.
+    this.getSetting = typeof getSetting === 'function' ? getSetting : null;
     this.servers = new Map();
     this.operations = new Map();
+  }
+
+  // SSRF allowlist from the panel setting (proxy_upstream_allowlist), read
+  // fresh on every check so setting changes take effect without a restart.
+  getUpstreamAllowlist() {
+    return this.getSetting ? parseUpstreamAllowlist(this.getSetting('proxy_upstream_allowlist')) : [];
   }
 
   serialize(id, operation) {
@@ -308,11 +348,11 @@ class PortManager {
       }
       parseProxyUri(proxy.uri);
       assertNotSelfReferential(proxy.uri, this.database.getUsedPorts());
-      assertUpstreamHostAllowed(proxy.uri);
+      assertUpstreamHostAllowed(proxy.uri, this.getUpstreamAllowlist());
       // start() is the path imported/stored configs go through; resolve the
       // hostname too so a stored domain pointing at an internal address is
       // rejected here, not only in the manual probe path.
-      await assertUpstreamDnsAllowed(proxy.uri);
+      await assertUpstreamDnsAllowed(proxy.uri, this.getUpstreamAllowlist());
       if (!await checkPortAvailable(this.host, proxy.local_port)) {
         throw new Error(`本地端口 ${proxy.local_port} 已被占用`);
       }
@@ -375,8 +415,8 @@ class PortManager {
 
   async testProxy(uri, targetUrl, timeoutMs = 15000) {
     parseProxyUri(uri);
-    assertUpstreamHostAllowed(uri);
-    await assertUpstreamDnsAllowed(uri);
+    assertUpstreamHostAllowed(uri, this.getUpstreamAllowlist());
+    await assertUpstreamDnsAllowed(uri, this.getUpstreamAllowlist());
     const port = await this.findTemporaryPort();
     const server = isVlessLink(uri)
       ? new VlessHttpProxy({
@@ -507,6 +547,8 @@ module.exports = {
   assertNotSelfReferential,
   assertUpstreamHostAllowed,
   assertUpstreamDnsAllowed,
+  parseUpstreamAllowlist,
+  validateUpstreamAllowlist,
   blockedUpstreamIpReason,
   checkPortAvailable,
   createTunnelAgent

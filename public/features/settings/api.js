@@ -61,6 +61,14 @@
     return post('/api/settings/browser-runtime', payload);
   }
 
+  function loadSecurity() {
+    return global.fetchJson('/api/settings/security');
+  }
+
+  function saveSecurity(payload) {
+    return post('/api/settings/security', payload);
+  }
+
   global.SettingsApi = {
     loadTelegram,
     saveTelegram,
@@ -75,5 +83,7 @@
     saveSuccessHeuristics,
     loadBrowserRuntime,
     saveBrowserRuntime,
+    loadSecurity,
+    saveSecurity,
   };
 })(window);

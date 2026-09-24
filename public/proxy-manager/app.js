@@ -2,10 +2,11 @@ const { createApp } = Vue;
 
 // ---------------------------------------------------------------------------
 // 本文件来自 E:\ck\ProxyManager\frontend\app.js，代理节点的增删改查/测速/启停
-// 逻辑保持原样，仅做嵌入面板所需的三处适配：
+// 逻辑保持原样，仅做嵌入面板所需的适配：
 //   1. 去掉独立登录：面板已有自己的会话鉴权，token 用固定哨兵值跳过登录页；
 //   2. request() 统一改写路径到 /api/proxy-manager 前缀，并携带面板会话 Cookie；
-//   3. 去掉自带版本检查与自更新（面板统一更新），相关 UI 已移除。
+//   3. 去掉自带版本检查与自更新（面板统一更新），相关 UI 已移除；
+//   4. 新增「上游白名单」设置块（SSRF 防护），读/写 /api/proxy-manager/settings/upstream-allowlist。
 // 挂载点从原来的 #app 改为面板标签内的 #proxy-manager-app。
 // ---------------------------------------------------------------------------
 
@@ -37,6 +38,7 @@ createApp({
   },
   mounted() {
     this.loadProxies();
+    this.loadAllowlist();
   },
   methods: {
     async request(path, options = {}) {
@@ -156,6 +158,32 @@ createApp({
         this.notify(error.message, 'error');
       } finally {
         this.deleteLoading = false;
+      }
+    },
+    async loadAllowlist() {
+      this.allowlistLoading = true;
+      try {
+        const payload = await this.request('/api/settings/upstream-allowlist');
+        this.allowlist = (payload && payload.allowlist) || '';
+      } catch (error) {
+        this.notify(`上游白名单加载失败：${error.message}`, 'error');
+      } finally {
+        this.allowlistLoading = false;
+      }
+    },
+    async saveAllowlist() {
+      this.allowlistSaving = true;
+      try {
+        const payload = await this.request('/api/settings/upstream-allowlist', {
+          method: 'PUT',
+          body: JSON.stringify({ allowlist: this.allowlist })
+        });
+        this.allowlist = (payload && payload.allowlist) || '';
+        this.notify('上游白名单已保存，立即生效', 'success');
+      } catch (error) {
+        this.notify(`上游白名单保存失败：${error.message}`, 'error');
+      } finally {
+        this.allowlistSaving = false;
       }
     },
     notify(message, type = 'info') {

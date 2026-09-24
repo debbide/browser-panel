@@ -15,8 +15,8 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const net = require('node:net');
 
-const config = require('../config');
 const db = require('./db');
 const totp = require('./totp');
 const {
@@ -172,11 +172,46 @@ function cidrContains(cidr, ip) {
 // X-Forwarded-For is client-controlled. Only honor it when the direct peer
 // (socket address) is an explicitly trusted reverse proxy; otherwise an
 // attacker can rotate the header value to bypass login rate limiting.
+//
+// The trusted proxy list lives in the panel settings (security_trust_proxy,
+// edited at 设置 → 安全), default empty = never trust XFF. It is read once
+// and cached; the settings route calls refreshTrustProxyCache() after saving
+// so changes take effect immediately without a restart.
+let trustProxyEntriesCache = null;
+
+function getTrustProxyEntries() {
+  if (!trustProxyEntriesCache) {
+    const raw = String(db.getSetting('security_trust_proxy') || '');
+    trustProxyEntriesCache = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  return trustProxyEntriesCache;
+}
+
+function refreshTrustProxyCache() {
+  trustProxyEntriesCache = null;
+}
+
+// Validate a user-supplied trusted-proxy list (comma-separated IPs or IPv4
+// CIDRs). Returns the normalized string; throws on the first bad entry.
+function validateTrustProxyValue(value) {
+  const entries = String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
+  for (const entry of entries) {
+    if (entry.includes('/')) {
+      const parts = entry.split('/');
+      const [base, bitsRaw] = parts;
+      const bits = Number((bitsRaw || '').trim());
+      if (parts.length !== 2 || net.isIP(base.trim()) !== 4 || !Number.isInteger(bits) || bits < 0 || bits > 32) {
+        throw new Error(`可信代理地址无效：${entry}（仅支持 IP 或 IPv4 CIDR）`);
+      }
+    } else if (!net.isIP(entry)) {
+      throw new Error(`可信代理地址无效：${entry}（仅支持 IP 或 IPv4 CIDR）`);
+    }
+  }
+  return entries.join(',');
+}
+
 function isTrustedProxyIp(ip) {
-  const list = String((config.server && config.server.trustProxy) || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const list = getTrustProxyEntries();
   if (!list.length) return false;
   const norm = normalizeClientIp(ip);
   return list.some((entry) => {
@@ -784,6 +819,8 @@ module.exports = {
   parseCookies,
   isPublicPath,
   clientIp,
+  validateTrustProxyValue,
+  refreshTrustProxyCache,
   COOKIE_NAME,
   SESSION_TTL_MS,
   REMEMBER_TTL_MS,
