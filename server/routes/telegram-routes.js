@@ -119,11 +119,11 @@ function createTelegramRouteHandlers({
         return res.status(400).json({ message });
       }
 
-      db.setSetting('telegram_bot_token', botToken);
+      db.setSecretSetting('telegram_bot_token', botToken);
       db.setSetting('telegram_chat_id', chatId);
       db.setSetting('telegram_receive_mode', receiveMode);
-      if (payload.proxy !== undefined) db.setSetting('telegram_proxy', String(payload.proxy).trim());
-      if (receiveMode === 'webhook') db.setSetting('telegram_webhook_url', webhookUrl);
+      if (payload.proxy !== undefined) db.setSecretSetting('telegram_proxy', String(payload.proxy).trim());
+      if (receiveMode === 'webhook') db.setSecretSetting('telegram_webhook_url', webhookUrl);
       db.setSetting('telegram_webhook_status', receiveMode === 'webhook' ? 'registered' : receiveMode);
       db.setSetting('telegram_webhook_error', '');
       return res.json({ data: normalizeSettingsResponse() });

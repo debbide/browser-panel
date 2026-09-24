@@ -11,6 +11,10 @@ module.exports = {
   server: {
     port: Number(process.env.PORT || 3210),
     host: process.env.HOST || '0.0.0.0',
+    // Trusted reverse-proxy peers for X-Forwarded-For (comma-separated IPs or
+    // IPv4 CIDRs, e.g. "127.0.0.1,10.0.0.0/8"). Empty (default) = never trust
+    // XFF; the socket peer address is used for login rate limiting instead.
+    trustProxy: process.env.PANEL_TRUST_PROXY || '',
   },
   browser: {
     display: process.env.BROWSER_DISPLAY || ':1.0',

@@ -228,6 +228,41 @@ function getBrowserWorkDir() {
     : path.join('/home', config.browser.user || 'browser', 'browser-work');
 }
 
+// Resolve a task script for staging into the low-privilege worker directory.
+// The staged copy is chown'ed to the browser user, so the source MUST stay
+// inside tasks/: an absolute path, a ".." escape or a symlink escape would
+// otherwise expose arbitrary root-owned files to the browser user.
+function resolveTaskScriptForRuntime(scriptPath) {
+  const normalized = String(scriptPath || '').replace(/\\/g, '/').trim();
+  if (!normalized) throw new Error('任务脚本路径不能为空');
+  if (!normalized.startsWith('tasks/')) {
+    throw new Error(`任务脚本必须位于 tasks/ 下: ${normalized}`);
+  }
+  const relative = normalized.slice('tasks/'.length);
+  if (!relative || relative.split('/').some((seg) => !seg || seg === '.' || seg === '..')) {
+    throw new Error(`任务脚本路径不合法: ${normalized}`);
+  }
+  const base = path.resolve(config.paths.tasksDir);
+  const target = path.resolve(base, relative);
+  const insideBase = (p) => {
+    if (process.platform === 'win32') {
+      const lower = p.toLowerCase();
+      const baseLower = `${base}${path.sep}`.toLowerCase();
+      return lower === base.toLowerCase() || lower.startsWith(baseLower);
+    }
+    return p === base || p.startsWith(`${base}${path.sep}`);
+  };
+  if (!insideBase(target)) throw new Error(`任务脚本路径越界: ${normalized}`);
+  let real;
+  try {
+    real = fs.realpathSync(target);
+  } catch {
+    throw new Error(`任务脚本不存在: ${normalized}`);
+  }
+  if (!insideBase(real)) throw new Error(`任务脚本路径越界(symlink): ${normalized}`);
+  return { absPath: target, realPath: real, baseName: path.basename(target) };
+}
+
 function ensureRuntimeFiles(task) {
   const workerRoot = getBrowserWorkDir();
   const browserUser = String(config.browser.user || 'browser');
@@ -248,9 +283,10 @@ function ensureRuntimeFiles(task) {
   }
   fs.mkdirSync(path.join(getRuntimeDataDir(), 'profiles'), { recursive: true });
   const moduleCopies = collectModuleCopyPairs(getRuntimeNodeModules(), workerNodeModules);
-  const taskSourcePath = path.resolve(config.paths.root, task.script_path);
-  const taskSourceDir = path.dirname(taskSourcePath);
-  const taskBaseName = path.basename(taskSourcePath);
+  const taskScript = resolveTaskScriptForRuntime(task.script_path);
+  const taskSourcePath = taskScript.realPath;
+  const taskSourceDir = path.dirname(taskScript.realPath);
+  const taskBaseName = taskScript.baseName;
   const files = [
     ...moduleCopies,
     { from: path.join(config.paths.root, 'server', 'runtime', 'browser-runtime.js'), to: path.join(workerRoot, 'browser-runtime.js') },
@@ -515,7 +551,7 @@ function buildOrphanSbChromeCleanupCommands(opts = {}) {
     '  is_target_udir() {',
     '    # $1 = full cmdline',
     `    case "$1" in`,
-    ...matchHints.map((hint) => `      *${hint.replace(/'/g, '')}*) return 0 ;;`),
+    ...matchHints.map((hint) => `      *${shellEscape(hint)}*) return 0 ;;`),
     '      *) return 1 ;;',
     '    esac',
     '  }',
@@ -1407,6 +1443,7 @@ module.exports = {
   cleanupBrowserTempDirs,
   buildOrphanSbChromeCleanupCommands,
   scheduleOrphanSbChromeSweep,
+  resolveTaskScriptForRuntime,
   getBrowserWorkDir,
   getRuntimeDataDir,
   getTempProfileDir,

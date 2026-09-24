@@ -8,6 +8,7 @@ const { createEnvRouter } = require('./routes/env-routes');
 const { spawnSync } = require('child_process');
 const config = require('../config');
 const db = require('./db');
+const { describeMasterKey } = require('./secret-crypto');
 const { getVersion, refreshTags } = require('./version');
 const { runTask, stopTask, prepareLogForTask } = require('./task-runner');
 /** 按字节读取 UTF-8 文本块，nextOffset 始终落在完整字符边界。 */
@@ -449,7 +450,9 @@ function decorateTaskForApi(task) {
     // ignore
   }
   const env = db.listEnvEntriesPublic('task', task.id);
-  const params = db.getTaskEnvMap(task);
+  // Never return plaintext secrets: mask them in the legacy params view
+  // (runtime keeps using the raw map via getTaskEnvMap).
+  const params = db.maskSecretParams(db.getTaskEnvMap(task), db.getTaskSecretNames(task.id));
   const condition = parseConditionJson(task.condition_json);
   return {
     ...task,
@@ -1008,7 +1011,24 @@ app.use((req, res) => {
 });
 });
 
+// Loud startup warning when secret at-rest encryption is unavailable.
+// Without PANEL_MASTER_KEY, historical plaintext secrets stay readable but
+// any new/changed secret write is refused instead of silently stored plaintext.
+function warnOnMissingMasterKey() {
+  const described = describeMasterKey();
+  if (described.state === 'missing') {
+    console.warn(
+      '[security] PANEL_MASTER_KEY 未配置：敏感数据（Telegram/S3 凭据、TOTP 密钥、代理密码、任务密钥）'
+      + '将以明文读取历史数据，且拒绝写入新的敏感值。请生成 64 位十六进制主密钥并配置后重启，'
+      + '例如：openssl rand -hex 32'
+    );
+  } else if (described.state === 'invalid') {
+    console.warn('[security] PANEL_MASTER_KEY 格式无效：必须是 64 位十六进制字符（32 字节），敏感数据加解密将失败。');
+  }
+}
+
 function onServerStarted() {
+    warnOnMissingMasterKey();
     reloadJobs(executeTask);
     void ensureTelegramWebhook();
     void warpManager.restore();
@@ -1029,6 +1049,16 @@ function onServerStarted() {
       db.purgeExpiredSessions();
     } catch (err) {
       console.error('[boot] purge sessions failed:', err.message || err);
+    }
+    // One-time hygiene: historical tasks.params_json rows may hold plaintext
+    // secrets synced before API masking existed. Only rewrites the derived
+    // cache for tasks that already have env entries; never touches rows where
+    // params_json is still the source of truth.
+    try {
+      const scrubbed = db.scrubParamsJsonSecrets();
+      if (scrubbed) console.log(`[boot] scrubbed plaintext secrets from ${scrubbed} params_json row(s)`);
+    } catch (err) {
+      console.error('[boot] params_json secret scrub failed:', err.message || err);
     }
     // 异步补一次 tag,不等它 —— 拉到之前面板显示的是旧标签,拉完自动刷新
     refreshTags();

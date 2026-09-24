@@ -13,8 +13,14 @@ function normalizeProfileLocale(value) {
   return String(value || '').trim();
 }
 
-function normalizeProfileUserDataDir(value) {
-  return String(value || '').trim();
+function normalizeProfileUserDataDir(value, fieldName = 'user_data_dir') {
+  const dir = String(value || '').trim();
+  // Defense in depth: this value is interpolated into shell cleanup scripts
+  // (see buildTerminateCommandsByTask); reject shell metacharacters at the API boundary.
+  if (/[`$;&|(){}[\]!*?~#<>\r\n\0'"\\]/.test(dir)) {
+    throw new Error(`${fieldName} 含非法字符`);
+  }
+  return dir;
 }
 
 function normalizeProfileProxy(value) {
@@ -70,6 +76,7 @@ function normalizePluginPackages(value) {
 }
 
 function validatePluginPackageName(pkg) {
+  if (pkg.startsWith('-')) return false;
   return /^(?:@[\w.-]+\/)?[\w.-]+$/.test(pkg);
 }
 
@@ -191,7 +198,7 @@ function createBrowserRuntimeRouter({ db, config, spawnSync, resolveNpmCommand, 
     if (npmCommand.nodeDir) {
       env.PATH = `${npmCommand.nodeDir}:${env.PATH || ''}`;
     }
-    const result = spawnSync(npmCommand.command, [...npmCommand.args, 'install', '--no-audit', '--no-fund', ...installList], {
+    const result = spawnSync(npmCommand.command, [...npmCommand.args, 'install', '--no-audit', '--no-fund', '--', ...installList], {
       cwd: config.paths.root,
       encoding: 'utf8',
       timeout: 5 * 60 * 1000,
@@ -345,7 +352,7 @@ function createBrowserProfileRouter({ db, isAnyBrowserTaskRunning, buildSchedule
     const legacyProxy = normalizeProfileProxy(proxy);
     const proxy_mode = normalizeProfileProxyMode(req.body?.proxy_mode ?? req.body?.proxyMode, legacyProxy);
     const proxy_value = proxy_mode === 'warp' ? '' : normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
-    const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile);
+    const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile, 'ruyi_fpfile');
     const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
     const locale = normalizeProfileLocale(req.body?.locale);
     const timezone_id = normalizeProfileTimezone(req.body?.timezone_id ?? req.body?.timezoneId);
@@ -373,7 +380,7 @@ function createBrowserProfileRouter({ db, isAnyBrowserTaskRunning, buildSchedule
     const legacyProxy = normalizeProfileProxy(proxy);
     const proxy_mode = normalizeProfileProxyMode(req.body?.proxy_mode ?? req.body?.proxyMode, legacyProxy);
     const proxy_value = proxy_mode === 'warp' ? '' : normalizeProfileProxy(req.body?.proxy_value ?? req.body?.proxyValue ?? legacyProxy);
-    const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile);
+    const ruyi_fpfile = normalizeProfileUserDataDir(req.body?.ruyi_fpfile ?? req.body?.ruyiFpfile, 'ruyi_fpfile');
     const runtime_stack = normalizeProfileRuntimeStack(req.body?.runtime_stack ?? req.body?.runtimeStack);
     const locale = normalizeProfileLocale(req.body?.locale);
     const timezone_id = normalizeProfileTimezone(req.body?.timezone_id ?? req.body?.timezoneId);

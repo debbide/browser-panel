@@ -1,4 +1,5 @@
 const net = require('node:net');
+const dns = require('node:dns').promises;
 const { request } = require('node:http');
 const https = require('node:https');
 const tls = require('node:tls');
@@ -86,13 +87,16 @@ function normalizeNodeName(value, { maxLength = 80 } = {}) {
 
 // A node whose upstream points at one of our own managed ports would forward
 // into itself and spin at full CPU until the request times out. Remote hosts
-// and unrelated local ports (say a separate local proxy on 1080) stay allowed.
+// and unrelated local ports (say a separate local proxy on 1080) stay allowed
+// here — the SSRF guard below (assertUpstreamHostAllowed) is what decides
+// whether loopback upstreams are acceptable at all.
 function assertNotSelfReferential(uri, managedPorts) {
   const parsed = parseProxyUri(uri);
   const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  const isLocal = hostname === 'localhost' || hostname === '::1'
-    || (net.isIP(hostname) === 4 && hostname.split('.')[0] === '127')
-    || (net.isIP(hostname) === 6 && hostname === '0:0:0:0:0:0:0:1');
+  const isLocal = hostname === 'localhost' || hostname === '::1' || hostname === '::'
+    || hostname === '0.0.0.0'
+    || (net.isIP(hostname) === 4 && (hostname.split('.')[0] === '127' || hostname.split('.')[0] === '0'))
+    || (net.isIP(hostname) === 6 && (hostname === '0:0:0:0:0:0:0:1' || hostname === '0:0:0:0:0:0:0:0'));
   if (!isLocal) {
     return;
   }
@@ -100,6 +104,153 @@ function assertNotSelfReferential(uri, managedPorts) {
   const upstreamPort = Number(parsed.port);
   if (managedPorts.has(upstreamPort)) {
     throw badRequest(`上游代理指向本机托管端口 ${upstreamPort}，会形成代理回环`);
+  }
+}
+
+function normalizeUpstreamHostname(hostname) {
+  return String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+}
+
+function ipv4ToInt(ip) {
+  const parts = String(ip).split('.');
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return null;
+    const v = Number(part);
+    if (v < 0 || v > 255) return null;
+    n = n * 256 + v;
+  }
+  return n >>> 0;
+}
+
+function ipv4InCidr(ipInt, base, bits) {
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return ((ipInt & mask) >>> 0) === ((base & mask) >>> 0);
+}
+
+// Expand an IPv6 literal into 8 numeric hextets (handles "::" compression
+// and embedded IPv4, dotted or hex). Returns null when unparseable.
+function ipv6ToHextets(ip) {
+  let s = String(ip).toLowerCase();
+  const v4match = s.match(/:(\d+\.\d+\.\d+\.\d+)$/);
+  if (v4match) {
+    const n = ipv4ToInt(v4match[1]);
+    if (n === null) return null;
+    s = `${s.slice(0, -v4match[1].length)}${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`;
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  if (halves.length === 1 && head.length !== 8) return null;
+  if (head.length + tail.length > 8) return null;
+  const zeros = new Array(8 - head.length - tail.length).fill('0');
+  const hextets = [...head, ...zeros, ...tail].map((h) => parseInt(h, 16));
+  if (hextets.some((h) => !Number.isFinite(h) || h < 0 || h > 0xffff)) return null;
+  return hextets;
+}
+
+// Returns a block reason when a literal IP is not safe as a proxy upstream:
+// loopback, unspecified, RFC1918 private, link-local (which also covers the
+// cloud metadata address 169.254.169.254). Returns null for public IPs.
+function blockedUpstreamIpReason(ip) {
+  const lower = String(ip).toLowerCase();
+  if (net.isIP(lower) === 4) {
+    const n = ipv4ToInt(lower);
+    if (n === null) return null;
+    if (ipv4InCidr(n, ipv4ToInt('127.0.0.0'), 8)) return 'loopback (127.0.0.0/8)';
+    if (ipv4InCidr(n, ipv4ToInt('0.0.0.0'), 8)) return '未指定地址 (0.0.0.0/8)';
+    if (ipv4InCidr(n, ipv4ToInt('10.0.0.0'), 8)
+      || ipv4InCidr(n, ipv4ToInt('172.16.0.0'), 12)
+      || ipv4InCidr(n, ipv4ToInt('192.168.0.0'), 16)) return '内网地址 (RFC1918)';
+    if (ipv4InCidr(n, ipv4ToInt('169.254.0.0'), 16)) return 'link-local (169.254.0.0/16，含云元数据地址)';
+    return null;
+  }
+  if (net.isIP(lower) === 6) {
+    const hextets = ipv6ToHextets(lower);
+    if (!hextets) return null;
+    // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1, normalized to ::ffff:7f00:1):
+    // judge the embedded IPv4.
+    if (hextets.slice(0, 5).every((h) => h === 0) && hextets[5] === 0xffff) {
+      const v4 = `${hextets[6] >>> 8}.${hextets[6] & 0xff}.${hextets[7] >>> 8}.${hextets[7] & 0xff}`;
+      return blockedUpstreamIpReason(v4);
+    }
+    if (hextets.every((h) => h === 0)) return '未指定地址 (::)';
+    if (hextets.slice(0, 7).every((h) => h === 0) && hextets[7] === 1) return 'loopback (::1)';
+    if ((hextets[0] & 0xffc0) === 0xfe80) return 'link-local (fe80::/10)';
+    if ((hextets[0] & 0xfe00) === 0xfc00) return '内网地址 (fc00::/7)';
+    return null;
+  }
+  return null;
+}
+
+// Explicit allowlist for internal upstreams, off by default. Comma-separated
+// entries: exact hostnames, IPs, or IPv4 CIDRs, e.g.
+// PANEL_PROXY_UPSTREAM_ALLOWLIST="proxy.internal,10.0.0.0/8".
+function getUpstreamAllowlist() {
+  return String(process.env.PANEL_PROXY_UPSTREAM_ALLOWLIST || '')
+    .split(',')
+    .map((s) => normalizeUpstreamHostname(s.trim()))
+    .filter(Boolean);
+}
+
+function upstreamAllowlisted(hostname, ipInt) {
+  for (const entry of getUpstreamAllowlist()) {
+    if (entry.includes('/')) {
+      const [base, bitsRaw] = entry.split('/');
+      const baseInt = ipv4ToInt(base);
+      const bits = Number(bitsRaw);
+      if (baseInt !== null && ipInt !== null && Number.isInteger(bits) && bits >= 0 && bits <= 32
+        && ipv4InCidr(ipInt, baseInt, bits)) {
+        return true;
+      }
+      continue;
+    }
+    if (entry === hostname) return true;
+  }
+  return false;
+}
+
+// Default-deny SSRF guard for proxy upstreams. Public upstreams keep working;
+// loopback / unspecified / private / link-local targets are rejected unless
+// explicitly allowlisted. Call this wherever a user-supplied upstream URI is
+// accepted (add/start/test).
+function assertUpstreamHostAllowed(uri) {
+  const parsed = parseProxyUri(uri);
+  const hostname = normalizeUpstreamHostname(parsed.hostname);
+  const ipVersion = net.isIP(hostname);
+  const ipInt = ipVersion === 4 ? ipv4ToInt(hostname) : null;
+  if (upstreamAllowlisted(hostname, ipInt)) return;
+  if (hostname === 'localhost') {
+    throw badRequest('上游代理指向 localhost，默认拒绝；内网上游请配置 PANEL_PROXY_UPSTREAM_ALLOWLIST 显式放行');
+  }
+  const reason = blockedUpstreamIpReason(hostname);
+  if (reason) {
+    throw badRequest(`上游代理指向上游受限地址 ${reason}，默认拒绝；内网上游请配置 PANEL_PROXY_UPSTREAM_ALLOWLIST 显式放行`);
+  }
+}
+
+// Best-effort DNS check for the probe path: a hostname that currently
+// resolves into a blocked range is rejected too. This cannot stop DNS
+// rebinding at runtime (records can change after the check), it only stops
+// the naive "evil name -> internal IP" configuration.
+async function assertUpstreamDnsAllowed(uri) {
+  const parsed = parseProxyUri(uri);
+  const hostname = normalizeUpstreamHostname(parsed.hostname);
+  if (net.isIP(hostname)) return;
+  if (upstreamAllowlisted(hostname, null)) return;
+  let addresses;
+  try {
+    addresses = await dns.lookup(hostname, { all: true });
+  } catch {
+    return;
+  }
+  for (const { address } of addresses) {
+    const reason = blockedUpstreamIpReason(address);
+    if (reason) {
+      throw badRequest(`上游代理域名 ${hostname} 解析到受限地址 ${address}（${reason}），默认拒绝`);
+    }
   }
 }
 
@@ -157,6 +308,11 @@ class PortManager {
       }
       parseProxyUri(proxy.uri);
       assertNotSelfReferential(proxy.uri, this.database.getUsedPorts());
+      assertUpstreamHostAllowed(proxy.uri);
+      // start() is the path imported/stored configs go through; resolve the
+      // hostname too so a stored domain pointing at an internal address is
+      // rejected here, not only in the manual probe path.
+      await assertUpstreamDnsAllowed(proxy.uri);
       if (!await checkPortAvailable(this.host, proxy.local_port)) {
         throw new Error(`本地端口 ${proxy.local_port} 已被占用`);
       }
@@ -219,6 +375,8 @@ class PortManager {
 
   async testProxy(uri, targetUrl, timeoutMs = 15000) {
     parseProxyUri(uri);
+    assertUpstreamHostAllowed(uri);
+    await assertUpstreamDnsAllowed(uri);
     const port = await this.findTemporaryPort();
     const server = isVlessLink(uri)
       ? new VlessHttpProxy({
@@ -347,6 +505,9 @@ module.exports = {
   sanitizeProxy,
   normalizeNodeName,
   assertNotSelfReferential,
+  assertUpstreamHostAllowed,
+  assertUpstreamDnsAllowed,
+  blockedUpstreamIpReason,
   checkPortAvailable,
   createTunnelAgent
 };

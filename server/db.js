@@ -2,6 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const config = require('../config');
+const {
+  isEncryptedEnvelope,
+  encryptSecret,
+  decryptSecret,
+  tryDecryptSecret,
+  hasMasterKey,
+} = require('./secret-crypto');
 
 fs.mkdirSync(config.paths.dataDir, { recursive: true });
 
@@ -488,15 +495,21 @@ function publicEnvEntry(row) {
   if (!row) return null;
   const isSecret = Boolean(row.is_secret);
   const ownerId = row.owner_id === 0 || row.owner_id === null ? null : row.owner_id;
+  // Secrets are decrypted for masking; if decryption fails (e.g. no master
+  // key) the value stays hidden and has_value falls back to the stored form.
+  const secretPlain = isSecret ? tryDecryptSecret(row.value) : '';
+  const hasValue = isSecret
+    ? Boolean(secretPlain.length || String(row.value || '').length)
+    : Boolean(String(row.value || '').length);
   return {
     id: row.id,
     scope: row.scope,
     owner_id: ownerId,
     name: row.name,
     value: isSecret ? '' : row.value,
-    valueMasked: isSecret ? maskSecret(row.value) : '',
+    valueMasked: isSecret ? (secretPlain ? maskSecret(secretPlain) : '') : '',
     is_secret: isSecret ? 1 : 0,
-    has_value: Boolean(String(row.value || '').length),
+    has_value: hasValue,
     updated_at: row.updated_at,
   };
 }
@@ -507,9 +520,36 @@ function listEnvEntriesPublic(scope, ownerId = null) {
 
 function envEntriesToObject(rows) {
   const out = {};
+  const migrateIds = [];
   for (const row of rows || []) {
     if (!row || !row.name) continue;
-    out[String(row.name)] = row.value == null ? '' : String(row.value);
+    let value = row.value == null ? '' : String(row.value);
+    if (row.is_secret && value) {
+      if (isEncryptedEnvelope(value)) {
+        value = decryptSecret(value);
+      } else if (hasMasterKey()) {
+        // Legacy plaintext secret: lazily re-encrypt on read.
+        migrateIds.push(row.id);
+      }
+    }
+    out[String(row.name)] = value;
+  }
+  if (migrateIds.length) {
+    try {
+      db.transaction((ids) => {
+        const getValue = db.prepare('SELECT value FROM env_entries WHERE id = ?');
+        const updateValue = db.prepare('UPDATE env_entries SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+        for (const id of ids) {
+          const current = getValue.get(id);
+          const stored = current && current.value ? String(current.value) : '';
+          if (stored && !isEncryptedEnvelope(stored)) {
+            updateValue.run(encryptSecret(stored), id);
+          }
+        }
+      })(migrateIds);
+    } catch {
+      // Leave legacy values readable; the next read retries.
+    }
   }
   return out;
 }
@@ -530,15 +570,17 @@ function parseParamsJsonObject(raw) {
   return {};
 }
 
+function isSecretEnvName(name) {
+  return /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE)/i.test(String(name || '').toUpperCase());
+}
+
 function paramsObjectToEntries(params) {
   const entries = [];
   const obj = params && typeof params === 'object' && !Array.isArray(params) ? params : {};
   for (const [name, value] of Object.entries(obj)) {
     if (!name) continue;
     if (value === null || value === undefined || value === '') continue;
-    let isSecret = 0;
-    const upper = String(name).toUpperCase();
-    if (/(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE)/i.test(upper)) isSecret = 1;
+    const isSecret = isSecretEnvName(name) ? 1 : 0;
     entries.push({
       name: String(name),
       value: normalizeEnvValue(value),
@@ -611,18 +653,19 @@ const replaceEnvEntriesTxn = db.transaction((scope, ownerId, entriesInput) => {
         scope: normalizedScope,
         owner_id: normalizedOwnerId,
         name,
-        value,
+        value: encryptSecretForWrite(value, prev.value),
         is_secret: 1,
       });
       continue;
     }
     // 空值也是有效配置：未加密备份只携带变量名，导入后需要保留这一行，
     // 前端才能显示“（空）”并让用户补填；数据库字段本身也允许空字符串。
+    // Secret 值落盘前加密；无主密钥时拒绝写入新的明文（未改动的旧值原样保留）。
     upsert.run({
       scope: normalizedScope,
       owner_id: normalizedOwnerId,
       name,
-      value,
+      value: isSecret ? encryptSecretForWrite(value, prev && prev.value) : value,
       is_secret: isSecret ? 1 : 0,
     });
   }
@@ -657,9 +700,63 @@ function syncTaskParamsJsonFromEnv(taskId) {
   const id = Number(taskId);
   if (!Number.isInteger(id) || id <= 0) return null;
   const map = getEnvMap('task', id);
-  const paramsJson = JSON.stringify(map);
+  // params_json is a derived cache, not the source of truth (env_entries is).
+  // Never persist plaintext secrets in it.
+  const paramsJson = JSON.stringify(maskSecretParams(map, getTaskSecretNames(id)));
   db.prepare('UPDATE tasks SET params_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(paramsJson, id);
   return getTask(id);
+}
+
+// Names flagged as secret for a task: explicit is_secret flags plus the
+// name heuristic, so API responses never leak plaintext secrets.
+function getTaskSecretNames(taskId) {
+  const names = new Set();
+  try {
+    for (const row of listEnvEntriesRaw('task', Number(taskId))) {
+      if (!row || !row.name) continue;
+      if (row.is_secret || isSecretEnvName(row.name)) names.add(String(row.name));
+    }
+  } catch {
+    // ignore — callers treat this as best-effort masking metadata
+  }
+  return names;
+}
+
+// Return a copy of params with secret values blanked (same convention as
+// publicEnvEntry: value '' for secrets). The raw map stays untouched for
+// runtime use (env-builder needs real values to execute tasks).
+function maskSecretParams(params, secretNames) {
+  const out = {};
+  for (const [key, value] of Object.entries(params || {})) {
+    out[key] = secretNames && secretNames.has(String(key)) ? '' : value;
+  }
+  return out;
+}
+
+// One-time hygiene: historical params_json rows synced before masking may
+// hold plaintext secrets. Only rewrite rows whose task already has env
+// entries (there params_json is a pure cache); tasks without env entries
+// still use params_json as the source of truth and are left untouched.
+function scrubParamsJsonSecrets() {
+  const rows = db.prepare('SELECT id, params_json FROM tasks').all();
+  let scrubbed = 0;
+  const update = db.prepare('UPDATE tasks SET params_json = ? WHERE id = ?');
+  for (const row of rows) {
+    const id = Number(row.id);
+    const secretNames = getTaskSecretNames(id);
+    if (!secretNames.size) continue;
+    let hasEnvEntries = false;
+    try {
+      hasEnvEntries = listEnvEntriesRaw('task', id).length > 0;
+    } catch {
+      continue;
+    }
+    if (!hasEnvEntries) continue;
+    const masked = maskSecretParams(parseParamsJsonObject(row.params_json), secretNames);
+    update.run(JSON.stringify(masked), id);
+    scrubbed++;
+  }
+  return scrubbed;
 }
 
 function migrateTaskParamsToEnvIfNeeded(task) {
@@ -871,15 +968,85 @@ function setSetting(key, value) {
   return getSetting(key);
 }
 
+// Read a secret setting: envelopes are decrypted, legacy plaintext passes
+// through (and is lazily re-encrypted when a master key is configured).
+function getSecretSetting(key) {
+  const raw = getSetting(key);
+  if (!raw) return raw;
+  if (!isEncryptedEnvelope(raw)) {
+    if (hasMasterKey()) {
+      try {
+        setSetting(key, encryptSecret(raw));
+      } catch {
+        // Leave the legacy value readable; the next read retries.
+      }
+    }
+    return raw;
+  }
+  return decryptSecret(raw);
+}
+
+// Write a secret setting. New/changed values are always encrypted — without
+// a master key this throws instead of silently storing plaintext.
+// Re-saving an unchanged legacy plaintext value is a no-op so unrelated
+// settings edits keep working without a master key.
+function setSecretSetting(key, value) {
+  const text = String(value ?? '').trim();
+  if (!text) {
+    setSetting(key, null);
+    return null;
+  }
+  const prev = getSetting(key);
+  if (prev && !isEncryptedEnvelope(prev) && prev === text) return prev;
+  setSetting(key, encryptSecret(text));
+  return getSetting(key);
+}
+
+// Encrypt a secret for a non-settings table. Same no-op-when-unchanged rule
+// as setSecretSetting; prevStored is the currently stored DB value (or null).
+function encryptSecretForWrite(newValue, prevStored) {
+  const text = String(newValue ?? '');
+  if (!text || isEncryptedEnvelope(text)) return text;
+  const prev = prevStored ? String(prevStored) : '';
+  if (prev && !isEncryptedEnvelope(prev) && prev === text) return prev;
+  return encryptSecret(text);
+}
+
 function listBrowserProfiles() {
-  return db.prepare('SELECT * FROM browser_profiles ORDER BY id ASC').all();
+  return db.prepare('SELECT * FROM browser_profiles ORDER BY id ASC').all().map(decryptProfileRow);
 }
 
 function getBrowserProfile(id) {
-  return db.prepare('SELECT * FROM browser_profiles WHERE id = ?').get(id);
+  return decryptProfileRow(db.prepare('SELECT * FROM browser_profiles WHERE id = ?').get(id));
+}
+
+// Decrypt the row's proxy_value for callers (runtime + API both expect the
+// plaintext form, as before). Legacy plaintext rows are lazily re-encrypted
+// when a master key is configured.
+function decryptProfileRow(row) {
+  if (!row) return row;
+  const raw = row.proxy_value ? String(row.proxy_value) : '';
+  if (!raw) return row;
+  if (isEncryptedEnvelope(raw)) {
+    row.proxy_value = decryptSecret(raw);
+    return row;
+  }
+  if (hasMasterKey()) {
+    try {
+      const encrypted = encryptSecret(raw);
+      db.prepare('UPDATE browser_profiles SET proxy_value = ? WHERE id = ?').run(encrypted, row.id);
+    } catch {
+      // Leave the legacy value readable; the next read retries.
+    }
+  }
+  return row;
 }
 
 function createBrowserProfile(payload) {
+  const data = { ...payload };
+  if (data.proxy_value !== undefined) {
+    data.proxy_value = encryptSecretForWrite(data.proxy_value, null);
+  }
   const stmt = db.prepare(`
     INSERT INTO browser_profiles (name, user_data_dir, proxy, proxy_mode, proxy_value, ruyi_fpfile, runtime_stack, locale, timezone_id)
     VALUES (@name, @user_data_dir, @proxy, @proxy_mode, @proxy_value, @ruyi_fpfile, @runtime_stack, @locale, @timezone_id)
@@ -894,12 +1061,17 @@ function createBrowserProfile(payload) {
     runtime_stack: '',
     locale: '',
     timezone_id: '',
-    ...payload,
+    ...data,
   });
   return getBrowserProfile(result.lastInsertRowid);
 }
 
 function updateBrowserProfile(id, payload) {
+  const data = { ...payload };
+  if (data.proxy_value !== undefined) {
+    const prev = db.prepare('SELECT proxy_value FROM browser_profiles WHERE id = ?').get(id);
+    data.proxy_value = encryptSecretForWrite(data.proxy_value, prev && prev.proxy_value);
+  }
   db.prepare(`
     UPDATE browser_profiles
     SET name = @name, user_data_dir = @user_data_dir, proxy = @proxy, proxy_mode = @proxy_mode,
@@ -916,7 +1088,7 @@ function updateBrowserProfile(id, payload) {
     runtime_stack: '',
     locale: '',
     timezone_id: '',
-    ...payload,
+    ...data,
     id,
   });
   return getBrowserProfile(id);
@@ -930,11 +1102,11 @@ function deleteBrowserProfile(id) {
 
 function getTelegramSettings() {
   return {
-    botToken: getSetting('telegram_bot_token'),
+    botToken: getSecretSetting('telegram_bot_token'),
     chatId: getSetting('telegram_chat_id'),
-    proxy: getSetting('telegram_proxy'),
+    proxy: getSecretSetting('telegram_proxy'),
     receiveMode: getSetting('telegram_receive_mode') || 'notify',
-    webhookUrl: getSetting('telegram_webhook_url'),
+    webhookUrl: getSecretSetting('telegram_webhook_url'),
     webhookStatus: getSetting('telegram_webhook_status'),
     webhookError: getSetting('telegram_webhook_error'),
   };
@@ -967,18 +1139,22 @@ const S3_BACKUP_KEY_MAP = Object.freeze({
   passphrase: 's3_backup_passphrase',
 });
 
+// S3 设置里的敏感字段：落盘加密；无主密钥时拒绝新增/更新明文。
+const S3_BACKUP_SECRET_FIELDS = new Set(['accessKey', 'secretKey', 'token', 'proxy', 'passphrase']);
+
 function getS3BackupSettings() {
   const read = (key) => getSetting(key);
+  const readSecret = (key) => getSecretSetting(key);
   const pathStyleRaw = read('s3_backup_path_style');
   return {
     enabled: toBool(read('s3_backup_enabled')),
     endpoint: read('s3_backup_endpoint') || '',
     region: read('s3_backup_region') || '',
     bucket: read('s3_backup_bucket') || '',
-    accessKey: read('s3_backup_access_key') || '',
-    secretKey: read('s3_backup_secret_key') || '',
-    token: read('s3_backup_token') || '',
-    proxy: read('s3_backup_proxy') || '',
+    accessKey: readSecret('s3_backup_access_key') || '',
+    secretKey: readSecret('s3_backup_secret_key') || '',
+    token: readSecret('s3_backup_token') || '',
+    proxy: readSecret('s3_backup_proxy') || '',
     pathStyle: pathStyleRaw === null || pathStyleRaw === undefined || pathStyleRaw === ''
       ? true : toBool(pathStyleRaw),
     prefix: read('s3_backup_prefix') || '',
@@ -987,7 +1163,7 @@ function getS3BackupSettings() {
     hour: read('s3_backup_hour') || '',
     minute: read('s3_backup_minute') || '',
     nextAt: read('s3_backup_next_at') || null,
-    passphrase: read('s3_backup_passphrase') || null,
+    passphrase: readSecret('s3_backup_passphrase') || null,
   };
 }
 
@@ -995,7 +1171,8 @@ function getS3BackupSettings() {
 function setS3BackupSettings(patch = {}) {
   for (const [field, key] of Object.entries(S3_BACKUP_KEY_MAP)) {
     if (patch[field] === undefined) continue;
-    setSetting(key, patch[field]);
+    if (S3_BACKUP_SECRET_FIELDS.has(field)) setSecretSetting(key, patch[field]);
+    else setSetting(key, patch[field]);
   }
   return getS3BackupSettings();
 }
@@ -1058,7 +1235,7 @@ function getBrowserRuntimeSettings() {
   const proxyMode = ['direct', 'launch', 'ruyi_fpfile', 'script', 'warp'].includes(proxyModeRaw)
     ? proxyModeRaw
     : (legacyProxy ? 'launch' : 'direct');
-  const proxyValue = String(getSetting('browser_proxy_value') || legacyProxy).trim();
+  const proxyValue = String(getSecretSetting('browser_proxy_value') || legacyProxy).trim();
   const ruyiFpfile = String(getSetting('browser_ruyi_fpfile') || '').trim();
   return {
     runtimeStack,
@@ -1099,7 +1276,7 @@ function setBrowserRuntimeSettings(payload = {}) {
     if (normalizedProxyMode === 'warp') setSetting('browser_proxy_value', null);
   }
   if (payload.proxyValue !== undefined && String(payload.proxyMode || '').trim().toLowerCase() !== 'warp') {
-    setSetting('browser_proxy_value', String(payload.proxyValue || '').trim() || null);
+    setSecretSetting('browser_proxy_value', String(payload.proxyValue || '').trim());
   }
   if (payload.ruyiFpfile !== undefined) {
     setSetting('browser_ruyi_fpfile', normalizeChromePath(payload.ruyiFpfile, '') || null);
@@ -1352,13 +1529,29 @@ function updateUserPassword(userId, passwordHash) {
 
 function getUserTotpSecret(userId) {
   const row = db.prepare('SELECT totp_secret FROM panel_users WHERE id = ?').get(Number(userId));
-  return row && row.totp_secret ? String(row.totp_secret) : null;
+  const raw = row && row.totp_secret ? String(row.totp_secret) : null;
+  if (!raw) return null;
+  if (!isEncryptedEnvelope(raw)) {
+    // Legacy plaintext: lazily re-encrypt on read when a master key exists.
+    if (hasMasterKey()) {
+      try {
+        db.prepare('UPDATE panel_users SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(encryptSecret(raw), Number(userId));
+      } catch {
+        // Leave the legacy value readable; the next read retries.
+      }
+    }
+    return raw;
+  }
+  return decryptSecret(raw);
 }
 
 function setUserTotpSecret(userId, secret) {
   if (secret) {
+    const prev = db.prepare('SELECT totp_secret FROM panel_users WHERE id = ?').get(Number(userId));
+    const stored = encryptSecretForWrite(String(secret), prev && prev.totp_secret);
     db.prepare('UPDATE panel_users SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(String(secret), Number(userId));
+      .run(stored, Number(userId));
   } else {
     db.prepare('UPDATE panel_users SET totp_secret = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
       .run(Number(userId));
@@ -1495,6 +1688,8 @@ module.exports = {
   listWarpProbeSnapshots,
   getSetting,
   setSetting,
+  getSecretSetting,
+  setSecretSetting,
   getTelegramSettings,
   getS3BackupSettings,
   setS3BackupSettings,
@@ -1522,6 +1717,10 @@ module.exports = {
   replaceEnvEntriesTxn,
   setTaskEnvFromParams,
   syncTaskParamsJsonFromEnv,
+  isSecretEnvName,
+  getTaskSecretNames,
+  maskSecretParams,
+  scrubParamsJsonSecrets,
   migrateTaskParamsToEnvIfNeeded,
   paramsObjectToEntries,
   parseParamsJsonObject,

@@ -143,16 +143,24 @@ function getProxyFromEnv() {
   ).trim();
 }
 
-function proxyCurlArgs(proxy) {
+// Escape a value for embedding in a double-quoted curl --config string.
+function curlConfigEscape(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+// Secrets (proxy credentials, Authorization signature, session token) must
+// NEVER go in argv — argv is visible to any local user via ps. They travel
+// in a curl --config document piped over stdin instead.
+function proxyCurlSecretLines(proxy) {
   const norm = normalizeProxyForCurl(proxy);
-  if (norm.mode === 'socks5' && norm.value) return ['--socks5-hostname', norm.value];
-  if (norm.mode === 'http' && norm.value) return ['-x', norm.value];
+  if (norm.mode === 'socks5' && norm.value) return [`socks5-hostname = "${curlConfigEscape(norm.value)}"`];
+  if (norm.mode === 'http' && norm.value) return [`proxy = "${curlConfigEscape(norm.value)}"`];
   return [];
 }
 
-function runCurl(args, timeoutMs = S3_TIMEOUT_MS) {
+function runCurl(args, timeoutMs = S3_TIMEOUT_MS, stdinText = null) {
   return new Promise((resolve, reject) => {
-    const child = spawn('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('curl', args, { stdio: [stdinText ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     let stdout = Buffer.alloc(0);
     let stderr = '';
     const timer = setTimeout(() => {
@@ -170,6 +178,12 @@ function runCurl(args, timeoutMs = S3_TIMEOUT_MS) {
       clearTimeout(timer);
       reject(err);
     });
+    if (stdinText) {
+      child.stdin.on('error', () => {
+        // child may exit before reading stdin; close error is already reported
+      });
+      child.stdin.end(`${stdinText}\n`);
+    }
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
@@ -257,15 +271,29 @@ function createS3Client(config) {
     };
   }
 
+  // Splits headers into argv-safe parts and secret parts. The secret parts
+  // (proxy credentials, SigV4 Authorization, session token) are returned as
+  // curl --config lines to be piped over stdin — never in argv.
   function curlHeaders(headers, method) {
-    return [
-      ...proxyCurlArgs(proxy),
+    const argv = [
       '-X', method,
-      '-H', `Authorization: ${headers.authorization}`,
       '-H', `x-amz-date: ${headers.amzDate}`,
-      '-H', `x-amz-content-sha256: UNSIGNED-PAYLOAD`,
-      ...(headers.token ? ['-H', `x-amz-security-token: ${headers.token}`] : []),
+      '-H', 'x-amz-content-sha256: UNSIGNED-PAYLOAD',
     ];
+    const secretLines = [
+      ...proxyCurlSecretLines(proxy),
+      `header = "${curlConfigEscape(`Authorization: ${headers.authorization}`)}"`,
+      ...(headers.token ? [`header = "${curlConfigEscape(`x-amz-security-token: ${headers.token}`)}"`] : []),
+    ];
+    return { argv, secretLines };
+  }
+
+  // Builds the full curl invocation for a signed request: secrets travel in
+  // the --config document on stdin, everything else stays in argv.
+  function buildCurlCall(headers, method, extraArgs, url) {
+    const { argv, secretLines } = curlHeaders(headers, method);
+    const args = ['--config', '-', ...argv, ...extraArgs, url];
+    return { args, stdinText: secretLines.join('\n') };
   }
 
   async function putObject({ key, filePath }) {
@@ -280,15 +308,13 @@ function createS3Client(config) {
 
     if (curlAvailable) {
       try {
-        const args = [
+        const { args, stdinText } = buildCurlCall(s, 'PUT', [
           '-sS', '-f', '--max-time', String(CURL_MAX_TIME_SEC),
-          ...curlHeaders(s, 'PUT'),
           '-H', `Content-Length: ${stat.size}`,
           '-H', 'Content-Type: application/octet-stream',
           '--data-binary', `@${filePath}`,
-          url,
-        ];
-        await runCurl(args);
+        ], url);
+        await runCurl(args, S3_TIMEOUT_MS, stdinText);
         return { status: 200 };
       } catch (curlError) {
         if (!proxy) {
@@ -329,13 +355,11 @@ function createS3Client(config) {
     if (curlAvailable) {
       try {
         fs.mkdirSync(path.dirname(destPath), { recursive: true });
-        const args = [
+        const { args, stdinText } = buildCurlCall(s, 'GET', [
           '-sS', '-f', '--max-time', String(CURL_MAX_TIME_SEC),
-          ...curlHeaders(s, 'GET'),
           '-o', destPath,
-          url,
-        ];
-        await runCurl(args);
+        ], url);
+        await runCurl(args, S3_TIMEOUT_MS, stdinText);
         if (!fs.existsSync(destPath) || fs.statSync(destPath).size === 0) {
           throw new Error('S3 下载结果为空文件');
         }
@@ -385,12 +409,10 @@ function createS3Client(config) {
     let body;
     if (curlAvailable) {
       try {
-        const args = [
+        const { args, stdinText } = buildCurlCall(s, 'GET', [
           '-sS', '-f', '--max-time', String(CURL_MAX_TIME_SEC),
-          ...curlHeaders(s, 'GET'),
-          url,
-        ];
-        body = (await runCurl(args)).toString('utf8');
+        ], url);
+        body = (await runCurl(args, S3_TIMEOUT_MS, stdinText)).toString('utf8');
       } catch (curlError) {
         if (!proxy) {
           try { body = await listViaFetch(url, s); } catch (fetchError) {
@@ -443,7 +465,10 @@ function createS3Client(config) {
 
     if (curlAvailable) {
       try {
-        await runCurl(['-sS', '--max-time', String(CURL_MAX_TIME_SEC), ...curlHeaders(s, 'DELETE'), url]);
+        const { args, stdinText } = buildCurlCall(s, 'DELETE', [
+          '-sS', '--max-time', String(CURL_MAX_TIME_SEC),
+        ], url);
+        await runCurl(args, S3_TIMEOUT_MS, stdinText);
         return { status: 204 };
       } catch (curlError) {
         if (!proxy) {

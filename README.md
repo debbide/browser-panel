@@ -107,6 +107,16 @@ curl -fsSL https://raw.githubusercontent.com/debbide/browser-panel/master/script
 
 > 两步验证是面板自身账号体系的第二道锁，与前面的 **CF Access**（面板外面多一层 CF 身份校验）互不冲突，可叠加使用。
 
+### 安全相关环境变量
+
+写在 `.env.panel` 里（systemd 会加载），改完重启面板生效。
+
+| 变量 | 作用 |
+|---|---|
+| `PANEL_MASTER_KEY` | 敏感数据落盘加密的主密钥：**64 位十六进制字符**（32 字节），如 `openssl rand -hex 32` 的输出。配置后 Telegram/S3 凭据、TOTP 密钥、代理密码、任务密钥以 AES-256-GCM 信封存进数据库；历史明文数据仍可读取，并在读取时惰性迁移为密文。**未配置时**：历史明文可读，但新增/修改敏感值会被拒绝（避免静默写明文），启动时也会打警告。务必备份该密钥 —— 丢了，已加密的数据谁也解不开。 |
+| `PANEL_PROXY_UPSTREAM_ALLOWLIST` | 代理上游 SSRF 白名单，默认关闭。面板默认拒绝把内网/回环/link-local 地址（`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16` 含云元数据地址等）配成代理上游；如确需内网上游，在此显式放行，逗号分隔，支持域名、IP 和 IPv4 CIDR，例如 `proxy.internal,10.0.0.0/8`。公网代理不受影响。 |
+| `PANEL_TRUST_PROXY` | 登录限流取客户端 IP 时信任的上游代理，默认不信任任何代理（直接取 TCP 对端地址，伪造的 `X-Forwarded-For` 会被忽略）。面板前面有可信反代（如 nginx/CF Tunnel）且需要透传真实 IP 时，在此填反代的 IP 或 IPv4 CIDR，逗号分隔。 |
+
 ### 单独重装/修复运行环境
 
 如果需要重新安装 Chrome、Xvfb、Node.js、Python 或浏览器任务依赖，可以随时重新执行（**系统级 pip，不用 venv**；**只装一个系统 Chrome**，不装 Playwright 自带浏览器）：

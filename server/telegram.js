@@ -336,9 +336,17 @@ function normalizeProxyForCurl(proxy) {
   return { mode: 'socks5', value };
 }
 
-function runCurl(args, timeoutMs = TELEGRAM_TIMEOUT_MS + 7000) {
+// Escape a value for embedding in a double-quoted curl --config string.
+function curlConfigEscape(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+// Run curl with its full configuration on stdin. Secrets (bot token in the
+// URL, proxy credentials) must NEVER go in argv — argv is visible to any
+// local user via ps / /proc/<pid>/cmdline.
+function runCurlWithConfig(configText, timeoutMs = TELEGRAM_TIMEOUT_MS + 7000) {
   return new Promise((resolve, reject) => {
-    const child = spawn('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('curl', ['--config', '-'], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -356,6 +364,10 @@ function runCurl(args, timeoutMs = TELEGRAM_TIMEOUT_MS + 7000) {
       clearTimeout(timer);
       reject(err);
     });
+    child.stdin.on('error', () => {
+      // child may exit before reading stdin; close error is already reported
+    });
+    child.stdin.end(`${configText}\n`);
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
@@ -381,17 +393,22 @@ function parseCurlTelegramJson(raw) {
   return payload.result;
 }
 
-async function telegramCurlRequest(method, botToken, argsBuilder) {
-  const baseArgs = ['-sS', '--max-time', String(TELEGRAM_CURL_TIMEOUT_SEC)];
+async function telegramCurlRequest(method, botToken, configBuilder) {
+  const lines = [
+    'silent = true',
+    'show-error = true',
+    `max-time = ${TELEGRAM_CURL_TIMEOUT_SEC}`,
+  ];
   const proxy = normalizeProxyForCurl(getTelegramProxy());
   if (proxy.mode === 'socks5' && proxy.value) {
-    baseArgs.push('--socks5-hostname', proxy.value);
+    lines.push(`socks5-hostname = "${curlConfigEscape(proxy.value)}"`);
   } else if (proxy.mode === 'http' && proxy.value) {
-    baseArgs.push('-x', proxy.value);
+    lines.push(`proxy = "${curlConfigEscape(proxy.value)}"`);
   }
-  const url = `https://api.telegram.org/bot${botToken}/${method}`;
-  const args = [...baseArgs, ...argsBuilder(url)];
-  const raw = await runCurl(args);
+  // The bot token lives in the URL: keep it in the stdin config, never argv.
+  lines.push(`url = "${curlConfigEscape(`https://api.telegram.org/bot${botToken}/${method}`)}"`);
+  lines.push(...configBuilder());
+  const raw = await runCurlWithConfig(lines.join('\n'));
   return parseCurlTelegramJson(raw);
 }
 
@@ -433,7 +450,7 @@ async function telegramRequest(method, botToken, options) {
 
 async function deleteTelegramWebhook(botToken) {
   try {
-    await telegramCurlRequest('deleteWebhook', botToken, (url) => ['-X', 'POST', url]);
+    await telegramCurlRequest('deleteWebhook', botToken, () => ['request = "POST"']);
   } catch (error) {
     console.warn('[telegram] curl deleteWebhook failed, fallback to fetch:', error.message);
     await telegramRequest('deleteWebhook', botToken, { method: 'POST' });
@@ -487,11 +504,11 @@ function startTelegramPolling(botToken) {
 async function registerTelegramWebhook(botToken, publicUrl) {
   const webhookUrl = buildTelegramWebhookUrl(publicUrl, botToken);
   try {
-    await telegramCurlRequest('setWebhook', botToken, (url) => [
-      '-X', 'POST',
-      url,
-      '--data-urlencode', `url=${webhookUrl}`,
-      '--data-urlencode', 'allowed_updates=["callback_query"]',
+    // The webhook URL embeds the bot token: keep it in the stdin config.
+    await telegramCurlRequest('setWebhook', botToken, () => [
+      'request = "POST"',
+      `data-urlencode = "${curlConfigEscape(`url=${webhookUrl}`)}"`,
+      `data-urlencode = "${curlConfigEscape('allowed_updates=["callback_query"]')}"`,
     ]);
   } catch (error) {
     console.warn('[telegram] curl setWebhook failed, fallback to fetch:', error.message);
@@ -515,11 +532,10 @@ async function sendTelegramMessage(botToken, chatId, text, replyMarkup = null) {
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
   };
   try {
-    return await telegramCurlRequest('sendMessage', botToken, (url) => [
-      '-X', 'POST',
-      url,
-      '-H', 'Content-Type: application/json',
-      '--data-raw', JSON.stringify(payload),
+    return await telegramCurlRequest('sendMessage', botToken, () => [
+      'request = "POST"',
+      'header = "Content-Type: application/json"',
+      `data-raw = "${curlConfigEscape(JSON.stringify(payload))}"`,
     ]);
   } catch (error) {
     console.warn('[telegram] curl sendMessage failed, fallback to fetch:', error.message);
@@ -533,21 +549,20 @@ async function sendTelegramMessage(botToken, chatId, text, replyMarkup = null) {
 
 async function sendTelegramPhoto(botToken, chatId, filePath, caption, replyMarkup = null) {
   try {
-    return await telegramCurlRequest('sendPhoto', botToken, (url) => {
-      const args = [
-        '-X', 'POST',
-        url,
-        '-F', `chat_id=${chatId}`,
-        '-F', `photo=@${filePath}`,
+    return await telegramCurlRequest('sendPhoto', botToken, () => {
+      const lines = [
+        'request = "POST"',
+        `form = "${curlConfigEscape(`chat_id=${chatId}`)}"`,
+        `form = "${curlConfigEscape(`photo=@${filePath}`)}"`,
       ];
       if (caption) {
-        args.push('-F', `caption=${limitText(caption, 1024)}`);
-        args.push('-F', 'parse_mode=HTML');
+        lines.push(`form = "${curlConfigEscape(`caption=${limitText(caption, 1024)}`)}"`);
+        lines.push('form = "parse_mode=HTML"');
       }
       if (replyMarkup) {
-        args.push('-F', `reply_markup=${JSON.stringify(replyMarkup)}`);
+        lines.push(`form = "${curlConfigEscape(`reply_markup=${JSON.stringify(replyMarkup)}`)}"`);
       }
-      return args;
+      return lines;
     });
   } catch (error) {
     console.warn('[telegram] curl sendPhoto failed, fallback to fetch:', error.message);

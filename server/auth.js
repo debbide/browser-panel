@@ -16,6 +16,7 @@
 const crypto = require('crypto');
 const express = require('express');
 
+const config = require('../config');
 const db = require('./db');
 const totp = require('./totp');
 const {
@@ -138,9 +139,58 @@ function readToken(req) {
 // 限流
 // ---------------------------------------------------------------------------
 
+function normalizeClientIp(ip) {
+  let s = String(ip || '').trim();
+  if (s.startsWith('::ffff:')) s = s.slice('::ffff:'.length);
+  return s.replace(/^\[|\]$/g, '').split('%')[0];
+}
+
+function ipv4ToInt(s) {
+  const parts = String(s).split('.');
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const p of parts) {
+    if (!/^\d{1,3}$/.test(p)) return null;
+    const v = Number(p);
+    if (v > 255) return null;
+    n = (n << 8) + v;
+  }
+  return n >>> 0;
+}
+
+function cidrContains(cidr, ip) {
+  const idx = cidr.indexOf('/');
+  const base = idx >= 0 ? cidr.slice(0, idx) : cidr;
+  const mask = Number(idx >= 0 ? cidr.slice(idx + 1) : '32');
+  const a = ipv4ToInt(base.trim());
+  const b = ipv4ToInt(ip);
+  if (a === null || b === null || !Number.isInteger(mask) || mask < 0 || mask > 32) return false;
+  const m = mask === 0 ? 0 : (0xffffffff << (32 - mask)) >>> 0;
+  return (a & m) === (b & m);
+}
+
+// X-Forwarded-For is client-controlled. Only honor it when the direct peer
+// (socket address) is an explicitly trusted reverse proxy; otherwise an
+// attacker can rotate the header value to bypass login rate limiting.
+function isTrustedProxyIp(ip) {
+  const list = String((config.server && config.server.trustProxy) || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!list.length) return false;
+  const norm = normalizeClientIp(ip);
+  return list.some((entry) => {
+    // No wildcard: every trusted proxy must be an explicit IP or CIDR.
+    if (entry.includes('/')) return cidrContains(entry, norm);
+    return normalizeClientIp(entry) === norm;
+  });
+}
+
 function clientIp(req) {
+  const socketIp = req.socket?.remoteAddress || req.ip || 'unknown';
+  if (!isTrustedProxyIp(socketIp)) return normalizeClientIp(socketIp);
   const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || req.ip || req.socket?.remoteAddress || 'unknown';
+  return normalizeClientIp(fwd) || normalizeClientIp(socketIp);
 }
 
 function loginLockRemainingMs(ip) {
@@ -733,6 +783,7 @@ module.exports = {
   hashToken,
   parseCookies,
   isPublicPath,
+  clientIp,
   COOKIE_NAME,
   SESSION_TTL_MS,
   REMEMBER_TTL_MS,

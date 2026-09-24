@@ -65,7 +65,9 @@ test('telegram settings and webhook routes preserve auth, responses, and lifecyc
     `;
     const result = spawnSync(process.execPath, ['-e', script], {
       cwd: projectRoot,
-      env: { ...process.env, PANEL_RUNTIME_ROOT: runtimeRoot, HOST: '127.0.0.1', PORT: '0' },
+      // S4: secret settings (bot token / proxy) are encrypted at rest; the
+      // test runtime needs a master key like production does.
+      env: { ...process.env, PANEL_RUNTIME_ROOT: runtimeRoot, HOST: '127.0.0.1', PORT: '0', PANEL_MASTER_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' },
       encoding: 'utf8',
       timeout: 30000,
     });
