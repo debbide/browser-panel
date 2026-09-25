@@ -38,3 +38,18 @@ test('stop uses the recorded child pid for a scoped tree kill', () => {
   assert.match(source, /signalTree\(false\)/);
   assert.match(source, /setTimeout\(\(\) => signalTree\(true\), 1500\)/);
 });
+
+test('every run-end path gates the broad firefox kill on sibling tasks', () => {
+  // c94deae regression: the sibling gate lived only in stopBrowserTask, so a
+  // naturally-ending run fired kill_task_firefox and murdered a concurrent
+  // sibling's firefox. The gate helper must exist and every run-end path
+  // (natural close, timeout/grace kill, launch error) must use it.
+  assert.match(source, /function allowBroadFirefoxKillFor\(taskId\)/);
+  const uses = source.match(/_allowBroadFirefoxKill: allowBroadFirefoxKillFor\(task\.id\)/g) || [];
+  assert.ok(uses.length >= 3, `expected >=3 gated run-end paths, found ${uses.length}`);
+  // stopBrowserTask itself uses the shared helper (one algorithm, not two).
+  assert.match(source, /const allowBroadFirefoxKill = allowBroadFirefoxKillFor\(taskId\);/);
+  // Delayed cleanup re-checks siblings at fire time: a task starting between
+  // schedule and fire must not get its firefox killed.
+  assert.match(source, /const fireSnapshot = allowBroadFirefoxKillFor\(taskId\)/);
+});

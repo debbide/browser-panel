@@ -852,7 +852,13 @@ function scheduleTerminateCommands(task, delayMs, generation = 0) {
           return;
         }
       }
-      runTerminateCommands(buildTerminateCommandsByTask(snapshot));
+      // Sibling guard at fire time: a *different* task may have started after
+      // this cleanup was scheduled — never broad-kill firefox then, even if
+      // the snapshot was taken when no sibling was active.
+      const fireSnapshot = allowBroadFirefoxKillFor(taskId)
+        ? snapshot
+        : { ...snapshot, _allowBroadFirefoxKill: false };
+      runTerminateCommands(buildTerminateCommandsByTask(fireSnapshot));
     } catch {
       // ignore cleanup failures
     }
@@ -1311,7 +1317,13 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
     };
 
     const requestKill = (reason) => {
-      const cleanupTask = { ...task, _runGeneration: runGeneration };
+      // Gate the broad firefox kill like every other run-end path: a
+      // concurrent sibling's firefox must never be touched.
+      const cleanupTask = {
+        ...task,
+        _runGeneration: runGeneration,
+        _allowBroadFirefoxKill: allowBroadFirefoxKillFor(task.id),
+      };
       try {
         process.kill(-child.pid, 'SIGTERM');
       } catch {
@@ -1389,9 +1401,12 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       clearRunTimers();
       const state = activeBrowserRuns.get(Number(task.id));
       const stoppedByUser = Boolean(state && state.stoppedByUser);
-      const cleanupTask = state && state.task
-        ? state.task
-        : { ...task, _runGeneration: runGeneration };
+      // Gate the broad firefox kill: never touch a concurrent sibling's browser.
+      const cleanupTask = {
+        ...(state && state.task ? state.task : task),
+        _runGeneration: runGeneration,
+        _allowBroadFirefoxKill: allowBroadFirefoxKillFor(task.id),
+      };
       // Only clear active map if this generation still owns the slot
       if (state && Number(state.runGeneration) === runGeneration) {
         activeBrowserRuns.delete(Number(task.id));
@@ -1423,12 +1438,17 @@ async function launchBrowserTaskAndWait(task, runId, hooks = {}) {
       clearRunTimers();
       const state = activeBrowserRuns.get(Number(task.id));
       const stoppedByUser = Boolean(state && state.stoppedByUser);
-      const cleanupTask = state && state.task
-        ? state.task
-        : { ...task, _runGeneration: runGeneration };
+      const baseTask = state && state.task ? state.task : task;
       if (state && Number(state.runGeneration) === runGeneration) {
         activeBrowserRuns.delete(Number(task.id));
       }
+      // Gate the broad firefox kill AFTER removing self from the active map:
+      // only a *sibling* task still present may disable it.
+      const cleanupTask = {
+        ...baseTask,
+        _runGeneration: runGeneration,
+        _allowBroadFirefoxKill: allowBroadFirefoxKillFor(task.id),
+      };
       scheduleTerminateCommands(cleanupTask, 0, runGeneration);
       scheduleTerminateCommands(cleanupTask, 1800, runGeneration);
       scheduleOrphanSbChromeSweep(3000);
@@ -1486,11 +1506,22 @@ function killChildTree(pid, force) {
     return false;
   }
 }
+/**
+ * Broad firefox kill (by process name) is only safe when no OTHER browser task
+ * is active — otherwise a concurrent sibling's firefox would be caught by the
+ * name match. Every run-end path (manual stop, natural close, timeout/grace
+ * kill, launch error) must apply this gate, not just stopBrowserTask.
+ */
+function allowBroadFirefoxKillFor(taskId) {
+  const id = Number(taskId);
+  return ![...activeBrowserRuns.keys()].some((k) => k !== id);
+}
+
 function stopBrowserTask(taskId, fallbackTask = null) {
   const state = activeBrowserRuns.get(Number(taskId));
   // Broad firefox kill is only safe when no OTHER browser task is active —
   // otherwise a concurrent sibling's firefox would be caught by the name match.
-  const allowBroadFirefoxKill = ![...activeBrowserRuns.keys()].some((id) => id !== Number(taskId));
+  const allowBroadFirefoxKill = allowBroadFirefoxKillFor(taskId);
   if (!state) {
     if (!fallbackTask) return false;
     const snapshot = { ...fallbackTask, _allowBroadFirefoxKill: allowBroadFirefoxKill };
