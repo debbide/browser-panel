@@ -6,7 +6,6 @@ const db = require('../db');
 const { WORKER_NODE_PATH, ensureWorkerNodeBinary } = require('./worker-node');
 const {
   parseTaskParams,
-  resolveFirefoxDebugPort,
   resolveUseTempProfile,
   resolveEffectiveProxyContract,
   resolveEffectiveLocale,
@@ -543,7 +542,7 @@ function buildTerminateCommandsByTask(task) {
     '    fi 2>/dev/null || true',
     '  done',
     '}',
-    'kill_firefox_by_port() {',
+    'kill_firefox_by_profile() {',
     '  local sig="$1" pat="$2" line p cmd',
     '  [ -z "$pat" ] && return 0',
     '  pgrep -af -- "$pat" 2>/dev/null | while IFS= read -r line; do',
@@ -551,11 +550,12 @@ function buildTerminateCommandsByTask(task) {
     '    case "$p" in ""|*[!0-9]*) continue;; esac',
     '    owner_ok "$p" || continue',
     '    is_manual_excluded "$p" "$cmd" && continue',
+    '    case "$cmd" in *-contentproc*) continue;; esac',
     '    if [ "$sig" = "KILL" ]; then',
-    '      echo "[terminate] task-firefox-by-port pid=$p signal=KILL cmd=${cmd:0:120}"',
+    '      echo "[terminate] task-firefox-by-profile pid=$p signal=KILL cmd=${cmd:0:120}"',
     '      kill_tree_kill "$p"',
     '    else',
-    '      echo "[terminate] task-firefox-by-port pid=$p signal=TERM cmd=${cmd:0:120}"',
+    '      echo "[terminate] task-firefox-by-profile pid=$p signal=TERM cmd=${cmd:0:120}"',
     '      kill_tree "$p"',
     '    fi 2>/dev/null || true',
     '  done',
@@ -586,23 +586,29 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -TERM -f -- ${shellEscape(udMarker)} || true`);
   }
-  // 3b) Precise per-task firefox kill by remote-debugging port (cmdline match).
-  //    The port is panel-assigned (fixed per task) and appears verbatim in the
-  //    firefox cmdline as --remote-debugging-port=<port>. Unlike the name-based
-  //    fallback below, this can never touch a sibling task's firefox, so it is
-  //    NOT gated on sibling activity. (BAP_RUN_ID environ matching would be
-  //    equally precise, but firefox's environ is unreadable even for root on
-  //    hardened hosts, so kill_run_marker can never match it.)
-  const firefoxDebugPort = resolveFirefoxDebugPort(task);
-  const firefoxPortPattern = firefoxDebugPort
-    ? `--remote-debugging-port=${firefoxDebugPort}([^0-9]|$)`
+  // 3b) Precise per-run firefox kill by profile dir (cmdline match on --profile).
+  //    The panel assigns a unique profile dir per run (temp) or per task
+  //    (persistent); it appears verbatim in the firefox cmdline. This mirrors
+  //    ruyipage's own process identification, which prefers the profile dir
+  //    over the debug port ("more reliable than port lookup": ports collide
+  //    and get auto-rewritten, profile dirs are unique per instance).
+  //    Unlike the name-based fallback below, this can never touch a sibling
+  //    task's firefox, so it is NOT gated on sibling activity. Content
+  //    processes (-contentproc) carry no --profile flag and are skipped
+  //    explicitly; they die with the main process tree anyway.
+  //    (BAP_RUN_ID environ matching would be equally precise, but firefox's
+  //    environ is unreadable even for root on hardened hosts, so
+  //    kill_run_marker can never match it.)
+  const escapeEre = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const firefoxProfilePattern = userDataDir
+    ? `--profile[= ]${escapeEre(userDataDir)}([^a-zA-Z0-9/._-]|$)`
     : '';
-  if (firefoxPortPattern) {
-    commands.push(`kill_firefox_by_port TERM ${shellEscape(firefoxPortPattern)} || true`);
+  if (firefoxProfilePattern) {
+    commands.push(`kill_firefox_by_profile TERM ${shellEscape(firefoxProfilePattern)} || true`);
   }
   // 3c) Firefox-family browsers, any stack (ruyipage / playwright-firefox /
-  //     seleniumbase-firefox). Name-based last resort for tasks without a fixed
-  //     debug port (ruyipage random port) or when ruyipage auto-switched ports.
+  //     seleniumbase-firefox). Name-based last resort for tasks whose firefox
+  //     does not carry the panel profile dir (script uses a custom user_dir).
   //     Gated: skip when another browser task is active so a concurrent
   //     sibling's firefox is never touched, and the panel-known manual browser
   //     is always excluded inside kill_task_firefox.
@@ -623,8 +629,8 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
   }
-  if (firefoxPortPattern) {
-    commands.push(`kill_firefox_by_port KILL ${shellEscape(firefoxPortPattern)} || true`);
+  if (firefoxProfilePattern) {
+    commands.push(`kill_firefox_by_profile KILL ${shellEscape(firefoxProfilePattern)} || true`);
   }
   if (allowBroadFirefoxKill) {
     commands.push('kill_task_firefox KILL || true');
