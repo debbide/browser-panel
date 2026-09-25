@@ -6,6 +6,7 @@ const db = require('../db');
 const { WORKER_NODE_PATH, ensureWorkerNodeBinary } = require('./worker-node');
 const {
   parseTaskParams,
+  resolveFirefoxDebugPort,
   resolveUseTempProfile,
   resolveEffectiveProxyContract,
   resolveEffectiveLocale,
@@ -542,6 +543,23 @@ function buildTerminateCommandsByTask(task) {
     '    fi 2>/dev/null || true',
     '  done',
     '}',
+    'kill_firefox_by_port() {',
+    '  local sig="$1" pat="$2" line p cmd',
+    '  [ -z "$pat" ] && return 0',
+    '  pgrep -af -- "$pat" 2>/dev/null | while IFS= read -r line; do',
+    '    p="${line%% *}"; cmd="${line#* }"',
+    '    case "$p" in ""|*[!0-9]*) continue;; esac',
+    '    owner_ok "$p" || continue',
+    '    is_manual_excluded "$p" "$cmd" && continue',
+    '    if [ "$sig" = "KILL" ]; then',
+    '      echo "[terminate] task-firefox-by-port pid=$p signal=KILL cmd=${cmd:0:120}"',
+    '      kill_tree_kill "$p"',
+    '    else',
+    '      echo "[terminate] task-firefox-by-port pid=$p signal=TERM cmd=${cmd:0:120}"',
+    '      kill_tree "$p"',
+    '    fi 2>/dev/null || true',
+    '  done',
+    '}',
   ];
 
   const commands = [
@@ -568,12 +586,26 @@ function buildTerminateCommandsByTask(task) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -TERM -f -- ${shellEscape(udMarker)} || true`);
   }
-  // 3b) Firefox-family browsers, any stack (ruyipage / playwright-firefox /
-  //     seleniumbase-firefox). Name-based because these detach from the launcher
-  //     session and scrub BAP_RUN_ID from the browser's environment, defeating
-  //     signals 1) and 2). Gated: skip when another browser task is active so a
-  //     concurrent sibling's firefox is never touched, and the panel-known
-  //     manual browser is always excluded inside kill_task_firefox.
+  // 3b) Precise per-task firefox kill by remote-debugging port (cmdline match).
+  //    The port is panel-assigned (fixed per task) and appears verbatim in the
+  //    firefox cmdline as --remote-debugging-port=<port>. Unlike the name-based
+  //    fallback below, this can never touch a sibling task's firefox, so it is
+  //    NOT gated on sibling activity. (BAP_RUN_ID environ matching would be
+  //    equally precise, but firefox's environ is unreadable even for root on
+  //    hardened hosts, so kill_run_marker can never match it.)
+  const firefoxDebugPort = resolveFirefoxDebugPort(task);
+  const firefoxPortPattern = firefoxDebugPort
+    ? `--remote-debugging-port=${firefoxDebugPort}([^0-9]|$)`
+    : '';
+  if (firefoxPortPattern) {
+    commands.push(`kill_firefox_by_port TERM ${shellEscape(firefoxPortPattern)} || true`);
+  }
+  // 3c) Firefox-family browsers, any stack (ruyipage / playwright-firefox /
+  //     seleniumbase-firefox). Name-based last resort for tasks without a fixed
+  //     debug port (ruyipage random port) or when ruyipage auto-switched ports.
+  //     Gated: skip when another browser task is active so a concurrent
+  //     sibling's firefox is never touched, and the panel-known manual browser
+  //     is always excluded inside kill_task_firefox.
   const allowBroadFirefoxKill = task._allowBroadFirefoxKill !== false;
   if (allowBroadFirefoxKill) {
     commands.push('kill_task_firefox TERM || true');
@@ -590,6 +622,9 @@ function buildTerminateCommandsByTask(task) {
   if (userDataDir) {
     const udMarker = `--user-data-dir=${userDataDir}`;
     commands.push(`pkill -KILL -f -- ${shellEscape(udMarker)} || true`);
+  }
+  if (firefoxPortPattern) {
+    commands.push(`kill_firefox_by_port KILL ${shellEscape(firefoxPortPattern)} || true`);
   }
   if (allowBroadFirefoxKill) {
     commands.push('kill_task_firefox KILL || true');

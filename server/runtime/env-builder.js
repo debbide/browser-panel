@@ -127,6 +127,29 @@ function parseTaskParams(task) {
   return db.getTaskEnvMap(task);
 }
 
+/**
+ * Effective fixed Firefox remote-debugging port for a task, merged over
+ * global → profile → task layers (task wins). Returns '' when the task uses
+ * ruyipage's random port. Used by the terminate path for a precise per-task
+ * firefox kill via cmdline match (`--remote-debugging-port=<port>`).
+ * Side-effect free (no params_json migration) so it is safe on kill paths.
+ */
+function resolveFirefoxDebugPort(task) {
+  const merged = {};
+  try { assignMap(merged, db.getGlobalEnvMap()); } catch { /* ignore */ }
+  try {
+    const profileId = task && (task.browser_profile_id || (task._profile && task._profile.id));
+    if (profileId) assignMap(merged, db.getProfileEnvMap(profileId));
+  } catch { /* ignore */ }
+  try { assignMap(merged, parseTaskParams(task)); } catch { /* ignore */ }
+  const raw = pickNonEmptyString(
+    merged.browser_firefox_debug_port,
+    merged.FIREFOX_DEBUG_PORT,
+    merged.BROWSER_FIREFOX_DEBUG_PORT
+  );
+  return /^\d{2,5}$/.test(raw) ? raw : '';
+}
+
 function resolveUseTempProfile(task, params = parseTaskParams(task)) {
   if (isTruthyEnv(params.USE_TEMP_PROFILE)) return true;
   if (isTruthyEnv(params.use_temp_profile)) return true;
@@ -487,6 +510,7 @@ module.exports = {
   isTruthyEnv,
   redactEnvValue,
   parseTaskParams,
+  resolveFirefoxDebugPort,
   resolveUseTempProfile,
   resolveEffectiveProxyContract,
   resolveEffectiveProxy,

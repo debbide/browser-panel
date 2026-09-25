@@ -53,3 +53,20 @@ test('every run-end path gates the broad firefox kill on sibling tasks', () => {
   // schedule and fire must not get its firefox killed.
   assert.match(source, /const fireSnapshot = allowBroadFirefoxKillFor\(taskId\)/);
 });
+
+test('terminate kills firefox precisely by remote-debugging port', () => {
+  // Precise per-task kill: the panel-assigned fixed debug port appears verbatim
+  // in the firefox cmdline. Unlike the name-based fallback it can never touch a
+  // sibling task's firefox, so it must NOT be gated on sibling activity.
+  // (BAP_RUN_ID environ matching would be equally precise, but firefox's
+  // environ is unreadable even for root on hardened hosts.)
+  assert.match(source, /kill_firefox_by_port\(\) \{/);
+  assert.match(source, /resolveFirefoxDebugPort\(task\)/);
+  assert.match(source, /--remote-debugging-port=\$\{firefoxDebugPort\}/);
+  // Boundary guard: port 2036 must not prefix-match 20362.
+  assert.match(source, /\(\[\^0-9\]\|\$\)/);
+  assert.match(source, /kill_firefox_by_port TERM/);
+  assert.match(source, /kill_firefox_by_port KILL/);
+  // The name-based fallback stays, still gated, for random-port tasks.
+  assert.match(source, /kill_task_firefox TERM \|\| true/);
+});
