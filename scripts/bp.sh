@@ -329,6 +329,12 @@ EOF
   log "restart services"
   systemctl reset-failed "${XVFB_SERVICE}.service" 2>/dev/null || true
   systemctl restart "${XVFB_SERVICE}.service" 2>/dev/null || true
+  # 杀掉残留的浏览器进程：面板"关闭浏览器"可能没杀干净，或手动启动的残留；
+  # 不杀的话，旧 Chrome（可能是错的 DISPLAY）会继续占着，新的起不来或显示错乱
+  # （用 user-data-dir 定位，只杀本面板的浏览器，不误伤用户自己的 Chrome）
+  pkill -f "user-data-dir=.*browser-work" 2>/dev/null || true
+  pkill -f "firefox.*browser-work" 2>/dev/null || true
+  sleep 1
   # :1 被占用时不强求
   systemctl restart "${SERVICE}.service"
   sleep 1
