@@ -224,6 +224,14 @@ SCRIPT_EOF
     log "服务器模式：无物理显示，使用 Xvfb :1"
   fi
 
+  # BROWSER_DISPLAY 改由 bp.sh 自动检测统一管理（写进 systemd unit），
+  # 从 .env.panel 里删掉——否则 EnvironmentFile 在 unit 里排在 Environment=
+  # 后面，systemd 按"后出现的生效"，.env.panel 的旧值会把 unit 的覆盖掉。
+  if [[ -f "${ROOT}/.env.panel" ]] && grep -q "^BROWSER_DISPLAY=" "${ROOT}/.env.panel" 2>/dev/null; then
+    log "从 .env.panel 移除 BROWSER_DISPLAY（改由 bp.sh 自动检测管理）"
+    sed -i '/^BROWSER_DISPLAY=/d' "${ROOT}/.env.panel"
+  fi
+
   # Prefer packaged unit templates when present (keeps disk units in sync after upgrades).
   if [[ -f "$ROOT/deploy/xvfb-browser.service" ]]; then
     if [[ ! -f "$unit_xvfb" ]] || ! cmp -s "$ROOT/deploy/xvfb-browser.service" "$unit_xvfb" 2>/dev/null; then
