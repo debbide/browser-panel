@@ -428,7 +428,8 @@ else
     set_kv PLAYWRIGHT_CHROME_PATH "$CHROME_PATH"
   fi
   # Non-chrome keys: only fill if missing (do not thrash operator overrides)
-  set_kv_if_missing BROWSER_DISPLAY "$DISPLAY_NUM"
+  # NOTE: BROWSER_DISPLAY 不再写进 env 文件，改由 bp.sh 自动检测
+  # （桌面 :0 / 服务器 :1）并写进 systemd unit，避免双源头打架。
   set_kv_if_missing BROWSER_USER "$BROWSER_USER"
   set_kv_if_missing BROWSER_HOME "$BROWSER_HOME"
   set_kv_if_missing BROWSER_WORK_DIR "$BROWSER_WORK"

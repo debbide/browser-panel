@@ -48,11 +48,12 @@ if [[ ! -f "$ROOT/.env.panel" ]]; then
     cat >"$ROOT/.env.panel" <<EOF
 PORT=3210
 HOST=0.0.0.0
-BROWSER_DISPLAY=:1.0
 BROWSER_CHROME_PATH=${_chrome}
 BROWSER_USER=browser
 BROWSER_WORK_DIR=/home/browser/browser-work
 EOF
+    # NOTE: BROWSER_DISPLAY 不再写进 .env.panel，改由 bp.sh 自动检测
+    # （桌面 :0 / 服务器 :1）并写进 systemd unit，避免双源头打架。
   fi
 fi
 
