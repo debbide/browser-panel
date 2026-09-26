@@ -198,7 +198,7 @@ test('current runtime opens create modal and preserves create, env, toast, close
   assert.match(dialog.textContent, /配置级变量/);
   const form = dialog.querySelector('#profile-form');
   form.elements.name.value = 'Created';
-  form.elements.user_data_dir.value = '/profiles/created';
+  form.elements.user_data_dir_name.value = 'created';
   form.elements.runtime_stack.value = 'playwright';
   form.elements.proxy_mode.value = 'launch';
   form.elements.proxy_mode.dispatchEvent(new harness.dom.window.Event('change', { bubbles: true }));
@@ -209,7 +209,7 @@ test('current runtime opens create modal and preserves create, env, toast, close
   assert.equal(harness.calls[0][1].method, 'POST');
   assert.equal(harness.calls[0][1].headers['Content-Type'], 'application/json');
   assert.deepEqual(JSON.parse(harness.calls[0][1].body), {
-    name: 'Created', user_data_dir: '/profiles/created', proxy_mode: 'launch',
+    name: 'Created', user_data_dir: '/home/browser/browser-work/profiles/created', proxy_mode: 'launch',
     proxy: 'http://proxy.test:8080', proxy_value: 'http://proxy.test:8080',
     runtime_stack: 'playwright', locale: '', timezone_id: '',
   });

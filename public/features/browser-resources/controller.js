@@ -1,4 +1,19 @@
 (function exposeBrowserResourcesController(global) {
+  // 浏览器数据目录前缀写死：一键脚本固定安装到此目录
+  const PROFILE_DIR_PREFIX = '/home/browser/browser-work/profiles/';
+  // 编辑时把已存的全路径剥掉前缀，只显示目录名；
+  // 兼容老数据：非标准前缀的全路径取最后一段
+  function profileDirName(fullPath) {
+    const v = String(fullPath || '').trim();
+    if (v.startsWith(PROFILE_DIR_PREFIX)) return v.slice(PROFILE_DIR_PREFIX.length);
+    const parts = v.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : v;
+  }
+  // 目录名只允许安全字符，防止路径穿越
+  function isSafeProfileDirName(name) {
+    return /^[A-Za-z0-9_-]+$/.test(name);
+  }
+
   function createState(initial = {}) {
     const profileStore = initial.profileStore || {
       profiles: [],
@@ -144,7 +159,10 @@
             </div>
             <div>
               <label class="field-label">USER_DATA_DIR \u76ee\u5f55</label>
-              <input name="user_data_dir" placeholder="/home/browser/browser-work/profiles/account-a" value="${actions.escapeHtml(profile?.user_data_dir || '')}" />
+              <div class="profile-dir-wrap">
+                <span class="profile-dir-prefix">/home/browser/browser-work/profiles/</span>
+                <input name="user_data_dir_name" placeholder="account-a" value="${actions.escapeHtml(profileDirName(profile?.user_data_dir))}" />
+              </div>
             </div>
             <div>
               <label class="field-label">\u6d4f\u89c8\u5668</label>
@@ -240,9 +258,14 @@
         }
         const proxyMode = fd.get('proxy_mode') || 'inherit';
         const proxyValue = proxyMode === 'launch' ? String(fd.get('proxy_value') || '').trim() : '';
+        const dirName = String(fd.get('user_data_dir_name') || '').trim();
+        if (dirName && !isSafeProfileDirName(dirName)) {
+          actions.toast('\u76ee\u5f55\u540d\u53ea\u5141\u8bb8\u5b57\u6bcd\u3001\u6570\u5b57\u3001\u4e0b\u5212\u7ebf\u3001\u4e2d\u5212\u7ebf', 'error');
+          return;
+        }
         const body = {
           name: fd.get('name'),
-          user_data_dir: fd.get('user_data_dir'),
+          user_data_dir: dirName ? PROFILE_DIR_PREFIX + dirName : '',
           proxy_mode: proxyMode,
           proxy: proxyValue,
           proxy_value: proxyValue,
