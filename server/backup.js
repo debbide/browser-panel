@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const config = require('../config');
 const db = require('./db');
+const { decryptSecret, isEncryptedEnvelope: isSecretEnvelope } = require('./secret-crypto');
 
 const SCHEMA_VERSION = 4;
 
@@ -514,7 +515,18 @@ function exportBackup({ taskIds = null, passphrase = null } = {}) {
     const config_ = pick(task, TASK_CONFIG_COLUMNS);
     const env = filterBackupEnvEntries(db.listEnvEntriesRaw('task', Number(task.id))).map((row) => {
       if (encrypt) {
-        return { name: row.name, value: row.value == null ? '' : String(row.value), is_secret: row.is_secret ? 1 : 0 };
+        let value = row.value == null ? '' : String(row.value);
+        // 跨面板迁移：敏感值先用本机主密钥解密成明文，备份里不带源面板的信封
+        //（外层已用用户密码整体加密）；导入时目标面板会用自己的主密钥重新加密入库。
+        if (row.is_secret && value && isSecretEnvelope(value)) {
+          try {
+            value = decryptSecret(value);
+          } catch (error) {
+            warnings.push(`任务「${task.name}」的环境变量「${row.name}」本机解密失败，已置空（请在目标面板重填）`);
+            value = '';
+          }
+        }
+        return { name: row.name, value, is_secret: row.is_secret ? 1 : 0 };
       }
       // 仅名称模式：所有环境变量只保留变量名
       return { name: row.name, value: '', is_secret: row.is_secret ? 1 : 0 };
