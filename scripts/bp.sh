@@ -15,6 +15,57 @@ export https_proxy="${https_proxy:-${HTTPS_PROXY:-}}"
 log() { echo "[bp] $*"; }
 die() { echo "[bp] ERROR: $*" >&2; exit 1; }
 
+# 显示模式自动检测：物理桌面(:0) → 直显；无头服务器 → Xvfb(:1)
+# 原理：Xorg 在 :0 上跑时，/tmp/.X11-unix/X0 这个 socket 一定存在（X11 固定位置），
+# 且 Xorg 进程在跑。Xvfb 用的是 X1，不会误判。
+detect_display() {
+  if [[ -S /tmp/.X11-unix/X0 ]] && pgrep -x Xorg >/dev/null 2>&1; then
+    echo ":0"
+  else
+    echo ":1.0"
+  fi
+}
+
+# 桌面模式：把 :0 的 X cookie 同步给 browser 用户，否则浏览器连不上 :0
+# （面板以 browser 用户跑浏览器，读不到 root/lightdm 的 auth 文件）
+sync_xauthority() {
+  local auth=""
+  local f
+  # 常见位置：lightdm / gdm / 当前用户
+  for f in /var/run/lightdm/*/:0 /run/user/*/gdm/Xauthority "$HOME/.Xauthority"; do
+    [[ -f "$f" ]] && { auth="$f"; break; }
+  done
+  # 兜底：从 Xorg 命令行的 -auth 参数里找
+  if [[ -z "$auth" ]] && command -v pgrep >/dev/null 2>&1; then
+    auth="$(pgrep -a Xorg 2>/dev/null | grep -o '\-auth [^ ]*' | awk '{print $2}' | head -1)"
+  fi
+  [[ -n "$auth" && -f "$auth" ]] || { log "WARN: 找不到 :0 的 Xauthority，浏览器可能无法显示"; return 1; }
+  id browser >/dev/null 2>&1 || useradd -m -s /bin/bash browser 2>/dev/null || true
+  cp "$auth" /home/browser/.Xauthority 2>/dev/null || return 1
+  chown browser:browser /home/browser/.Xauthority 2>/dev/null || true
+  chmod 600 /home/browser/.Xauthority 2>/dev/null || true
+  log "Xauthority 已从 $auth 同步给 browser 用户"
+}
+
+# 给 panel 的 systemd unit 打显示模式补丁（幂等，可反复跑）
+# $1: unit 文件路径；依赖外层的 DISPLAY_VAL 和 ROOT
+patch_unit_display() {
+  local unit="$1"
+  # BROWSER_DISPLAY 按本机检测结果（桌面 :0 / 服务器 :1.0）
+  if grep -q "^Environment=BROWSER_DISPLAY=" "$unit" 2>/dev/null; then
+    sed -i "s|^Environment=BROWSER_DISPLAY=.*|Environment=BROWSER_DISPLAY=${DISPLAY_VAL}|" "$unit"
+  fi
+  # 桌面模式：每次启动服务前同步 X cookie（开机后 cookie 会变）；
+  # 服务器模式：删掉残留的 ExecStartPre
+  if [[ "$DISPLAY_VAL" == ":0" ]]; then
+    if ! grep -q "sync-xauthority.sh" "$unit" 2>/dev/null; then
+      sed -i "s|^ExecStart=|ExecStartPre=${ROOT}/sync-xauthority.sh\nExecStart=|" "$unit"
+    fi
+  else
+    sed -i '/sync-xauthority.sh/d' "$unit" 2>/dev/null || true
+  fi
+}
+
 command -v curl >/dev/null || die "need curl"
 command -v tar >/dev/null || die "need tar"
 command -v node >/dev/null || die "need Node.js >= 18 (install node first)"
@@ -147,6 +198,32 @@ restart_panel() {
   local unit_xvfb="/etc/systemd/system/${XVFB_SERVICE}.service"
   local units_changed=0
 
+  # 显示模式自动检测：有物理桌面(:0) → 浏览器直显；无头服务器 → Xvfb(:1)
+  local DISPLAY_VAL
+  DISPLAY_VAL="$(detect_display)"
+  if [[ "$DISPLAY_VAL" == ":0" ]]; then
+    log "桌面模式：检测到物理显示 :0，浏览器将直接显示到桌面"
+    sync_xauthority || log "WARN: Xauthority 同步失败，浏览器可能无法显示到桌面"
+    # 生成开机同步脚本：X cookie 重启会变，systemd 每次启动服务前重新同步
+    # （此文件不在 release 包里，一键脚本升级不会删它）
+    cat >"${ROOT}/sync-xauthority.sh" <<'SCRIPT_EOF'
+#!/bin/bash
+# 桌面模式：把 :0 的 X cookie 同步给 browser 用户
+for f in /var/run/lightdm/*/:0 /run/user/*/gdm/Xauthority; do
+  [[ -f "$f" ]] && cp "$f" /home/browser/.Xauthority 2>/dev/null && break
+done
+if [[ ! -s /home/browser/.Xauthority ]] && command -v pgrep >/dev/null 2>&1; then
+  auth="$(pgrep -a Xorg 2>/dev/null | grep -o '\-auth [^ ]*' | awk '{print $2}' | head -1)"
+  [[ -n "$auth" && -f "$auth" ]] && cp "$auth" /home/browser/.Xauthority 2>/dev/null
+fi
+chown browser:browser /home/browser/.Xauthority 2>/dev/null
+chmod 600 /home/browser/.Xauthority 2>/dev/null
+SCRIPT_EOF
+    chmod +x "${ROOT}/sync-xauthority.sh"
+  else
+    log "服务器模式：无物理显示，使用 Xvfb :1"
+  fi
+
   # Prefer packaged unit templates when present (keeps disk units in sync after upgrades).
   if [[ -f "$ROOT/deploy/xvfb-browser.service" ]]; then
     if [[ ! -f "$unit_xvfb" ]] || ! cmp -s "$ROOT/deploy/xvfb-browser.service" "$unit_xvfb" 2>/dev/null; then
@@ -182,6 +259,8 @@ EOF
       # and google-chrome-stable does not exist on ARM / snap-only hosts.
       sed -i '/^Environment=BROWSER_CHROME_PATH=/d' "$unit_panel" 2>/dev/null || true
       sed -i '/^Environment=PLAYWRIGHT_CHROME_PATH=/d' "$unit_panel" 2>/dev/null || true
+      # 显示模式：BROWSER_DISPLAY + ExecStartPre（桌面 :0 / 服务器 :1.0）
+      patch_unit_display "$unit_panel"
     else
       # Minimal unit: Chrome path only from .env.panel (do not hard-code amd64 Chrome).
       cat >"$unit_panel" <<EOF
@@ -192,7 +271,7 @@ Wants=${XVFB_SERVICE}.service
 [Service]
 WorkingDirectory=${ROOT}
 Environment=PORT=3210
-Environment=BROWSER_DISPLAY=:1.0
+Environment=BROWSER_DISPLAY=${DISPLAY_VAL}
 Environment=BROWSER_USER=browser
 Environment=BROWSER_WORK_DIR=/home/browser/browser-work
 EnvironmentFile=-${ROOT}/.env.panel
@@ -202,6 +281,8 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+      # 显示模式：BROWSER_DISPLAY + ExecStartPre（桌面 :0 / 服务器 :1.0）
+      patch_unit_display "$unit_panel"
     fi
     units_changed=1
     # browser 用户
@@ -219,6 +300,8 @@ EOF
     # Strip hard-coded chrome paths from old units / templates so .env.panel wins
     sed -i '/^Environment=BROWSER_CHROME_PATH=/d' "$tmp_unit" 2>/dev/null || true
     sed -i '/^Environment=PLAYWRIGHT_CHROME_PATH=/d' "$tmp_unit" 2>/dev/null || true
+    # 显示模式：BROWSER_DISPLAY + ExecStartPre（桌面 :0 / 服务器 :1.0）
+    patch_unit_display "$tmp_unit"
     # Also strip from the live unit when refreshing, even if other fields match
     if [[ -f "$unit_panel" ]]; then
       if grep -qE '^Environment=BROWSER_CHROME_PATH=|^Environment=PLAYWRIGHT_CHROME_PATH=' "$unit_panel" 2>/dev/null; then
