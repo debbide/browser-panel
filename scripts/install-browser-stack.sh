@@ -500,8 +500,17 @@ python3 -m pip uninstall -y --break-system-packages PyAutoGUI pyautogui 2>/dev/n
 # them hours later.
 log "verify Python runtime imports"
 python3 - <<'PY'
+import asyncio
 import importlib
 import sys
+
+# 兼容 Python 3.14+：asyncio.get_event_loop() 不再隐式创建 event loop，
+# pyrogram 2.0.x 等库在 import 时依赖旧行为。旧版 Python 上 get_event_loop()
+# 本来就能拿到（或自动建好），这里是 no-op；新版上缺 loop 才显式建一个。
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 modules = [
     "DrissionPage", "seleniumbase", "selenium", "playwright",
@@ -617,7 +626,15 @@ echo "User:       $BROWSER_USER"
 echo "Work dir:   $BROWSER_WORK"
 echo "Env file:   $ENV_FILE"
 python3 - <<'PY'
+import asyncio
 import importlib
+
+# 同上：兼容 Python 3.14+ 移除隐式 event loop 创建的行为
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 mods = [
   "DrissionPage", "seleniumbase", "selenium", "playwright",
   "pyrogram", "PIL", "requests", "speech_recognition", "pydub",
