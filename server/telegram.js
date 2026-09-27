@@ -6,7 +6,6 @@ const db = require('./db');
 const TELEGRAM_TIMEOUT_MS = 5000;
 const SUCCESS_STATUSES = new Set(['success', 'failed']);
 const TELEGRAM_RETRY_PREFIX = 'retry';
-const TELEGRAM_CURL_TIMEOUT_SEC = Math.max(8, Math.ceil(TELEGRAM_TIMEOUT_MS / 1000) + 5);
 
 /**
  * Panel Telegram = environment / runner faults ONLY.
@@ -336,93 +335,94 @@ function normalizeProxyForCurl(proxy) {
   return { mode: 'socks5', value };
 }
 
-// Escape a value for embedding in a double-quoted curl --config string.
-function curlConfigEscape(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-// Run curl with its full configuration from a 0600 temp file (never argv).
-// Secrets (bot token in the URL, proxy credentials) must NEVER go in argv —
-// argv is visible to any local user via ps / /proc/<pid>/cmdline.
-// NOTE: 不用 --config - (stdin)，某些环境下 Node 异步 spawn 的 stdin 时机
-// 会导致 curl 8.18+ 报 "option --config: had unsupported trailing garbage"。
-function runCurlWithConfig(configText, timeoutMs = TELEGRAM_TIMEOUT_MS + 7000) {
-  return new Promise((resolve, reject) => {
-    const fs = require('fs');
-    const os = require('os');
-    const path = require('path');
-    const crypto = require('crypto');
-    const tmpFile = path.join(os.tmpdir(), `tg-curl-${process.pid}-${crypto.randomBytes(8).toString('hex')}.conf`);
-    try {
-      fs.writeFileSync(tmpFile, `${configText}\n`, { mode: 0o600 });
-    } catch (err) {
-      reject(err);
-      return;
-    }
-    const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (_) {} };
-    const child = spawn('curl', ['--config', tmpFile], { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      cleanup();
-      reject(new Error('curl timeout'));
-    }, timeoutMs);
-
-    child.stdout.on('data', (buf) => {
-      stdout += buf.toString();
-    });
-    child.stderr.on('data', (buf) => {
-      stderr += buf.toString();
-    });
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      cleanup();
-      reject(err);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      cleanup();
-      if (code !== 0) {
-        const msg = (stderr || stdout || `curl exit ${code}`).trim();
-        reject(new Error(msg));
-        return;
-      }
-      resolve(stdout.trim());
-    });
-  });
-}
-
-function parseCurlTelegramJson(raw) {
-  let payload = null;
-  try {
-    payload = raw ? JSON.parse(raw) : null;
-  } catch (_err) {
-    throw new Error(`telegram curl non-json response: ${(raw || '').slice(0, 200)}`);
-  }
-  if (!payload?.ok) {
-    throw new Error(payload?.description || `telegram curl response not ok: ${(raw || '').slice(0, 200)}`);
-  }
-  return payload.result;
-}
-
-async function telegramCurlRequest(method, botToken, configBuilder) {
-  const lines = [
-    'silent = true',
-    'show-error = true',
-    `max-time = ${TELEGRAM_CURL_TIMEOUT_SEC}`,
-  ];
+// Telegram Bot API via Node https + proxy agent. No curl, no --config, no temp files.
+// Proxy (http / socks5) comes from panel settings; direct connect when unset.
+function getTelegramProxyAgent() {
   const proxy = normalizeProxyForCurl(getTelegramProxy());
-  if (proxy.mode === 'socks5' && proxy.value) {
-    lines.push(`socks5-hostname = "${curlConfigEscape(proxy.value)}"`);
-  } else if (proxy.mode === 'http' && proxy.value) {
-    lines.push(`proxy = "${curlConfigEscape(proxy.value)}"`);
+  if (proxy.mode === 'http' && proxy.value) {
+    const { HttpsProxyAgent } = require('https-proxy-agent');
+    return new HttpsProxyAgent(proxy.value);
   }
-  // The bot token lives in the URL: keep it in the stdin config, never argv.
-  lines.push(`url = "${curlConfigEscape(`https://api.telegram.org/bot${botToken}/${method}`)}"`);
-  lines.push(...configBuilder());
-  const raw = await runCurlWithConfig(lines.join('\n'));
-  return parseCurlTelegramJson(raw);
+  if (proxy.mode === 'socks5' && proxy.value) {
+    const { SocksProxyAgent } = require('socks-proxy-agent');
+    return new SocksProxyAgent(proxy.value);
+  }
+  return undefined;
+}
+
+function buildMultipartBody(fields, files) {
+  const crypto = require('crypto');
+  const boundary = '----TgForm' + crypto.randomBytes(16).toString('hex');
+  const parts = [];
+  for (const [name, value] of Object.entries(fields || {})) {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`
+    ));
+  }
+  for (const f of files || []) {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${f.fieldName}"; filename="${f.fileName}"\r\n` +
+      `Content-Type: ${f.contentType}\r\n\r\n`
+    ));
+    parts.push(Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data));
+    parts.push(Buffer.from('\r\n'));
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  return { body: Buffer.concat(parts), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+// Unified Telegram API call that honors the configured proxy.
+// opts: { json } | { formUrlEncoded } | { multipart: { fields, files } } | {} (empty POST)
+async function telegramProxyRequest(method, botToken, opts = {}) {
+  const https = require('https');
+  const url = `https://api.telegram.org/bot${botToken}/${method}`;
+  const agent = getTelegramProxyAgent();
+
+  let body = null;
+  let contentType = null;
+  if (opts.json) {
+    body = Buffer.from(JSON.stringify(opts.json));
+    contentType = 'application/json';
+  } else if (opts.formUrlEncoded) {
+    body = Buffer.from(new URLSearchParams(opts.formUrlEncoded).toString());
+    contentType = 'application/x-www-form-urlencoded';
+  } else if (opts.multipart) {
+    const mp = buildMultipartBody(opts.multipart.fields, opts.multipart.files);
+    body = mp.body;
+    contentType = mp.contentType;
+  }
+
+  const headers = {};
+  if (contentType) {
+    headers['Content-Type'] = contentType;
+    headers['Content-Length'] = body.length;
+  }
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method: 'POST',
+      headers,
+      agent,
+      timeout: TELEGRAM_TIMEOUT_MS,
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        let payload = null;
+        try { payload = data ? JSON.parse(data) : null; }
+        catch (_) { reject(new Error(`telegram ${method} non-json response: ${data.slice(0, 200)}`)); return; }
+        if (!payload || payload.ok !== true) {
+          reject(new Error(payload?.description || `telegram ${method} not ok: ${data.slice(0, 200)}`));
+          return;
+        }
+        resolve(payload.result);
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(new Error('telegram request timeout')); });
+    if (body) req.write(body);
+    req.end();
+  });
 }
 
 async function parseTelegramResponse(response) {
@@ -463,9 +463,9 @@ async function telegramRequest(method, botToken, options) {
 
 async function deleteTelegramWebhook(botToken) {
   try {
-    await telegramCurlRequest('deleteWebhook', botToken, () => ['request = "POST"']);
+    await telegramProxyRequest('deleteWebhook', botToken);
   } catch (error) {
-    console.warn('[telegram] curl deleteWebhook failed, fallback to fetch:', error.message);
+    console.warn('[telegram] proxy deleteWebhook failed, fallback to direct:', error.message);
     await telegramRequest('deleteWebhook', botToken, { method: 'POST' });
   }
   return true;
@@ -518,13 +518,14 @@ async function registerTelegramWebhook(botToken, publicUrl) {
   const webhookUrl = buildTelegramWebhookUrl(publicUrl, botToken);
   try {
     // The webhook URL embeds the bot token: keep it in the stdin config.
-    await telegramCurlRequest('setWebhook', botToken, () => [
-      'request = "POST"',
-      `data-urlencode = "${curlConfigEscape(`url=${webhookUrl}`)}"`,
-      `data-urlencode = "${curlConfigEscape('allowed_updates=["callback_query"]')}"`,
-    ]);
+    await telegramProxyRequest('setWebhook', botToken, {
+      formUrlEncoded: {
+        url: webhookUrl,
+        allowed_updates: JSON.stringify(['message', 'callback_query']),
+      },
+    });
   } catch (error) {
-    console.warn('[telegram] curl setWebhook failed, fallback to fetch:', error.message);
+    console.warn('[telegram] proxy setWebhook failed, fallback to direct:', error.message);
     const form = new URLSearchParams({
       url: webhookUrl,
       allowed_updates: JSON.stringify(['message', 'callback_query']),
@@ -545,13 +546,9 @@ async function sendTelegramMessage(botToken, chatId, text, replyMarkup = null) {
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
   };
   try {
-    return await telegramCurlRequest('sendMessage', botToken, () => [
-      'request = "POST"',
-      'header = "Content-Type: application/json"',
-      `data-raw = "${curlConfigEscape(JSON.stringify(payload))}"`,
-    ]);
+    return await telegramProxyRequest('sendMessage', botToken, { json: payload });
   } catch (error) {
-    console.warn('[telegram] curl sendMessage failed, fallback to fetch:', error.message);
+    console.warn('[telegram] proxy sendMessage failed, fallback to direct:', error.message);
   }
   return telegramRequest('sendMessage', botToken, {
     method: 'POST',
@@ -562,23 +559,22 @@ async function sendTelegramMessage(botToken, chatId, text, replyMarkup = null) {
 
 async function sendTelegramPhoto(botToken, chatId, filePath, caption, replyMarkup = null) {
   try {
-    return await telegramCurlRequest('sendPhoto', botToken, () => {
-      const lines = [
-        'request = "POST"',
-        `form = "${curlConfigEscape(`chat_id=${chatId}`)}"`,
-        `form = "${curlConfigEscape(`photo=@${filePath}`)}"`,
-      ];
-      if (caption) {
-        lines.push(`form = "${curlConfigEscape(`caption=${limitText(caption, 1024)}`)}"`);
-        lines.push('form = "parse_mode=HTML"');
-      }
-      if (replyMarkup) {
-        lines.push(`form = "${curlConfigEscape(`reply_markup=${JSON.stringify(replyMarkup)}`)}"`);
-      }
-      return lines;
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileName = path.basename(filePath) || 'screenshot.png';
+    const fields = { chat_id: String(chatId) };
+    if (caption) {
+      fields.caption = limitText(caption, 1024);
+      fields.parse_mode = 'HTML';
+    }
+    if (replyMarkup) fields.reply_markup = JSON.stringify(replyMarkup);
+    return await telegramProxyRequest('sendPhoto', botToken, {
+      multipart: {
+        fields,
+        files: [{ fieldName: 'photo', fileName, contentType: 'image/png', data: fileBuffer }],
+      },
     });
   } catch (error) {
-    console.warn('[telegram] curl sendPhoto failed, fallback to fetch:', error.message);
+    console.warn('[telegram] proxy sendPhoto failed, fallback to direct:', error.message);
   }
 
   const fileBuffer = fs.readFileSync(filePath);
@@ -606,14 +602,9 @@ async function answerTelegramCallback(botToken, callbackQueryId, text, options =
     ...(options.showAlert ? { show_alert: true } : {}),
   };
   try {
-    return await telegramCurlRequest('answerCallbackQuery', botToken, (url) => [
-      '-X', 'POST',
-      url,
-      '-H', 'Content-Type: application/json',
-      '--data-raw', JSON.stringify(payload),
-    ]);
+    return await telegramProxyRequest('answerCallbackQuery', botToken, { json: payload });
   } catch (error) {
-    console.warn('[telegram] curl answerCallbackQuery failed, fallback to fetch:', error.message);
+    console.warn('[telegram] proxy answerCallbackQuery failed, fallback to direct:', error.message);
   }
   return telegramRequest('answerCallbackQuery', botToken, {
     method: 'POST',

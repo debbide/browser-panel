@@ -7,10 +7,10 @@ const { spawnSync } = require('node:child_process');
 
 const projectRoot = path.resolve(__dirname, '../..');
 
-// S5: bot token / proxy password / S3 auth must never appear in a child
-// process argv (visible via `ps aux`). They travel in a curl --config
-// temp file (0600) instead.
-test('S5: curl argv carries no secrets for telegram and s3', () => {
+// S5: secrets must never appear in a child process argv (visible via `ps aux`).
+// - Telegram: no child process at all (Node https + proxy agent, secrets stay in-memory).
+// - S3: secrets travel in a curl --config temp file (0600), never argv.
+test('S5: no secrets in child argv for telegram and s3', () => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-panel-s5-'));
   try {
     const script = String.raw`
@@ -61,12 +61,49 @@ test('S5: curl argv carries no secrets for telegram and s3', () => {
 
         process.env.TG_PROXY = 'http://tgproxyuser:' + TG_PROXY_PASS + '@127.0.0.1:18080';
 
+        // Mock https.request: telegram must go through Node https (with proxy agent),
+        // never spawn a child process. Capture the request for secret-flow assertions.
+        const https = require('node:https');
+        const httpsRequests = [];
+        const origRequest = https.request;
+        https.request = (url, opts, cb) => {
+          httpsRequests.push({ url: String(url), opts });
+          const { EventEmitter } = require('node:events');
+          const req = new EventEmitter();
+          req.write = () => {}; req.end = () => {
+            const res = new EventEmitter();
+            res.statusCode = 200;
+            process.nextTick(() => {
+              cb(res);
+              res.emit('data', Buffer.from(JSON.stringify({ ok: true, result: true })));
+              res.emit('end');
+            });
+          };
+          req.destroy = () => {};
+          req.on = req.addListener.bind(req);
+          return req;
+        };
+
+        const spawnsBeforeTelegram = spawns.length;
         const telegram = require('./server/telegram');
         await telegram.deleteTelegramWebhook(BOT_TOKEN);
         await telegram.sendTelegramMessage(BOT_TOKEN, '12345', 'hello');
         const pngPath = require('node:path').join(require('node:os').tmpdir(), 's5-photo.png');
         fs.writeFileSync(pngPath, Buffer.from([137, 80, 78, 71]));
         await telegram.sendTelegramPhoto(BOT_TOKEN, '12345', pngPath, 'cap <b>x</b>');
+        https.request = origRequest;
+
+        // Telegram must not spawn any child process (no curl, no argv leak surface).
+        if (spawns.length !== spawnsBeforeTelegram) {
+          throw new Error('telegram spawned a child process: ' + JSON.stringify(spawns.slice(spawnsBeforeTelegram)));
+        }
+        // Telegram must have made https requests carrying the token in-URL (in-memory only).
+        if (httpsRequests.length < 3) throw new Error('expected telegram https requests, got ' + httpsRequests.length);
+        for (const r of httpsRequests) {
+          if (!r.url.includes(BOT_TOKEN)) throw new Error('bot token missing from telegram URL');
+          // proxy agent must be set (requests honor TG_PROXY)
+          if (!r.opts || !r.opts.agent) throw new Error('telegram https request missing proxy agent');
+        }
 
         const { createS3Client } = require('./server/cloud/s3-client');
         const s3 = createS3Client({
@@ -85,8 +122,8 @@ test('S5: curl argv carries no secrets for telegram and s3', () => {
         await s3.getObject({ key: 'k1', destPath: dest });
         await s3.deleteObject({ key: 'k1' });
 
-        if (spawns.length < 7) throw new Error('expected curl spawns, got ' + spawns.length);
-        const secrets = [BOT_TOKEN, TG_PROXY_PASS, S3_PROXY_PASS, S3_SESSION_TOKEN];
+        if (spawns.length !== 4) throw new Error('expected 4 s3 curl spawns, got ' + spawns.length);
+        const secrets = [S3_PROXY_PASS, S3_SESSION_TOKEN];
         for (const s of spawns) {
           if (s.cmd !== 'curl') throw new Error('unexpected spawn: ' + s.cmd);
           const argvText = s.args.join(' ');
@@ -99,7 +136,7 @@ test('S5: curl argv carries no secrets for telegram and s3', () => {
           }
           if (/authorization:/i.test(argvText)) throw new Error('Authorization header in argv: ' + argvText);
         }
-        // The secrets must still reach curl — via the --config temp file.
+        // The S3 secrets must still reach curl — via the --config temp file.
         const configAll = configTexts.join('\n');
         for (const secret of secrets) {
           if (!configAll.includes(secret)) throw new Error('secret missing from --config file: ' + secret);
