@@ -9,7 +9,7 @@ const projectRoot = path.resolve(__dirname, '../..');
 
 // S5: bot token / proxy password / S3 auth must never appear in a child
 // process argv (visible via `ps aux`). They travel in a curl --config
-// document piped over stdin instead.
+// temp file (0600) instead.
 test('S5: curl argv carries no secrets for telegram and s3', () => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-panel-s5-'));
   try {
@@ -25,9 +25,14 @@ test('S5: curl argv carries no secrets for telegram and s3', () => {
         const S3_SESSION_TOKEN = 'FAKE_SESSION_TOKEN_XYZ';
 
         const spawns = [];
-        const stdinTexts = [];
+        const configTexts = [];
         childProcess.spawn = (cmd, args = [], opts = {}) => {
           spawns.push({ cmd, args: [...args] });
+          // 密钥走 --config 临时文件（0600）：从 argv 里取出文件路径读内容断言。
+          const cIdx = args.indexOf('--config');
+          if (cIdx >= 0 && args[cIdx + 1] && args[cIdx + 1] !== '-') {
+            try { configTexts.push(fs.readFileSync(args[cIdx + 1], 'utf8')); } catch (_) {}
+          }
           const child = new EventEmitter();
           child.stdout = new EventEmitter();
           child.stderr = new EventEmitter();
@@ -36,15 +41,20 @@ test('S5: curl argv carries no secrets for telegram and s3', () => {
           child.stdin.write = (d) => { buffered += String(d); };
           child.stdin.end = (d) => {
             if (d) buffered += String(d);
-            stdinTexts.push(buffered);
+            configTexts.push(buffered);
             const oIdx = args.indexOf('-o');
             if (oIdx >= 0 && args[oIdx + 1]) fs.writeFileSync(args[oIdx + 1], 'x');
-            process.nextTick(() => {
-              child.stdout.emit('data', Buffer.from(JSON.stringify({ ok: true, result: true })));
-              child.emit('close', 0);
-            });
           };
           child.kill = () => {};
+          // 模拟 curl 成功返回（新代码走 --config 临时文件，不再调 stdin.end）。
+          // -o <dest> 的下载文件也要模拟出来。
+          const oIdx = args.indexOf('-o');
+          if (oIdx >= 0 && args[oIdx + 1]) fs.writeFileSync(args[oIdx + 1], 'x');
+          process.nextTick(() => {
+            child.stdout.emit('data', Buffer.from(JSON.stringify({ ok: true, result: true })));
+            child.emit('close', 0);
+          });
+          return child;
           return child;
         };
         childProcess.spawnSync = () => ({ status: 0 }); // pretend curl exists
@@ -80,18 +90,19 @@ test('S5: curl argv carries no secrets for telegram and s3', () => {
         for (const s of spawns) {
           if (s.cmd !== 'curl') throw new Error('unexpected spawn: ' + s.cmd);
           const argvText = s.args.join(' ');
-          if (!s.args.includes('--config') || !s.args.includes('-')) {
-            throw new Error('curl not using --config -: ' + argvText);
+          const cIdx = s.args.indexOf('--config');
+          if (cIdx < 0 || !s.args[cIdx + 1] || s.args[cIdx + 1] === '-') {
+            throw new Error('curl not using --config <tmpfile>: ' + argvText);
           }
           for (const secret of secrets) {
             if (argvText.includes(secret)) throw new Error('secret leaked into argv: ' + argvText);
           }
           if (/authorization:/i.test(argvText)) throw new Error('Authorization header in argv: ' + argvText);
         }
-        // The secrets must still reach curl — via the stdin config document.
-        const stdinAll = stdinTexts.join('\n');
+        // The secrets must still reach curl — via the --config temp file.
+        const configAll = configTexts.join('\n');
         for (const secret of secrets) {
-          if (!stdinAll.includes(secret)) throw new Error('secret missing from stdin config: ' + secret);
+          if (!configAll.includes(secret)) throw new Error('secret missing from --config file: ' + secret);
         }
         console.log('S5-OK spawns=' + spawns.length);
       })().catch((e) => { console.error('S5-FAIL', e); process.exit(1); });

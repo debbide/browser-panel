@@ -150,7 +150,7 @@ function curlConfigEscape(value) {
 
 // Secrets (proxy credentials, Authorization signature, session token) must
 // NEVER go in argv — argv is visible to any local user via ps. They travel
-// in a curl --config document piped over stdin instead.
+// in a curl --config temp file (0600) instead.
 function proxyCurlSecretLines(proxy) {
   const norm = normalizeProxyForCurl(proxy);
   if (norm.mode === 'socks5' && norm.value) return [`socks5-hostname = "${curlConfigEscape(norm.value)}"`];
@@ -160,11 +160,35 @@ function proxyCurlSecretLines(proxy) {
 
 function runCurl(args, timeoutMs = S3_TIMEOUT_MS, stdinText = null) {
   return new Promise((resolve, reject) => {
-    const child = spawn('curl', args, { stdio: [stdinText ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    // NOTE: --config - (stdin) 在某些环境下（Node 异步 spawn + curl 8.18+）
+    // 会报 "option --config: had unsupported trailing garbage"。检测到这种
+    // 组合时改写 600 权限临时文件，密钥不进 argv 的安全属性不变。
+    let finalArgs = args;
+    let finalStdinText = stdinText;
+    let cleanup = () => {};
+    const configIdx = Array.isArray(args) ? args.indexOf('--config') : -1;
+    if (stdinText && configIdx >= 0 && args[configIdx + 1] === '-') {
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const crypto = require('crypto');
+      const tmpFile = path.join(os.tmpdir(), `s3-curl-${process.pid}-${crypto.randomBytes(8).toString('hex')}.conf`);
+      try {
+        fs.writeFileSync(tmpFile, `${stdinText}\n`, { mode: 0o600 });
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (_) {} };
+      finalArgs = [...args.slice(0, configIdx + 1), tmpFile, ...args.slice(configIdx + 2)];
+      finalStdinText = null;
+    }
+    const child = spawn('curl', finalArgs, { stdio: [finalStdinText ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     let stdout = Buffer.alloc(0);
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
+      cleanup();
       reject(new Error('S3 curl 请求超时'));
     }, timeoutMs);
 
@@ -176,16 +200,18 @@ function runCurl(args, timeoutMs = S3_TIMEOUT_MS, stdinText = null) {
     });
     child.on('error', (err) => {
       clearTimeout(timer);
+      cleanup();
       reject(err);
     });
-    if (stdinText) {
+    if (finalStdinText) {
       child.stdin.on('error', () => {
         // child may exit before reading stdin; close error is already reported
       });
-      child.stdin.end(`${stdinText}\n`);
+      child.stdin.end(`${finalStdinText}\n`);
     }
     child.on('close', (code) => {
       clearTimeout(timer);
+      cleanup();
       if (code !== 0) {
         reject(new Error((stderr || stdout.toString() || `curl exit ${code}`).trim()));
         return;
@@ -273,7 +299,7 @@ function createS3Client(config) {
 
   // Splits headers into argv-safe parts and secret parts. The secret parts
   // (proxy credentials, SigV4 Authorization, session token) are returned as
-  // curl --config lines to be piped over stdin — never in argv.
+  // curl --config lines for a 0600 temp file — never in argv.
   function curlHeaders(headers, method) {
     const argv = [
       '-X', method,
@@ -289,7 +315,7 @@ function createS3Client(config) {
   }
 
   // Builds the full curl invocation for a signed request: secrets travel in
-  // the --config document on stdin, everything else stays in argv.
+  // the --config temp file, everything else stays in argv.
   function buildCurlCall(headers, method, extraArgs, url) {
     const { argv, secretLines } = curlHeaders(headers, method);
     const args = ['--config', '-', ...argv, ...extraArgs, url];

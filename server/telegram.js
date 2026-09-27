@@ -341,16 +341,31 @@ function curlConfigEscape(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-// Run curl with its full configuration on stdin. Secrets (bot token in the
-// URL, proxy credentials) must NEVER go in argv — argv is visible to any
-// local user via ps / /proc/<pid>/cmdline.
+// Run curl with its full configuration from a 0600 temp file (never argv).
+// Secrets (bot token in the URL, proxy credentials) must NEVER go in argv —
+// argv is visible to any local user via ps / /proc/<pid>/cmdline.
+// NOTE: 不用 --config - (stdin)，某些环境下 Node 异步 spawn 的 stdin 时机
+// 会导致 curl 8.18+ 报 "option --config: had unsupported trailing garbage"。
 function runCurlWithConfig(configText, timeoutMs = TELEGRAM_TIMEOUT_MS + 7000) {
   return new Promise((resolve, reject) => {
-    const child = spawn('curl', ['--config', '-'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const crypto = require('crypto');
+    const tmpFile = path.join(os.tmpdir(), `tg-curl-${process.pid}-${crypto.randomBytes(8).toString('hex')}.conf`);
+    try {
+      fs.writeFileSync(tmpFile, `${configText}\n`, { mode: 0o600 });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (_) {} };
+    const child = spawn('curl', ['--config', tmpFile], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
+      cleanup();
       reject(new Error('curl timeout'));
     }, timeoutMs);
 
@@ -362,14 +377,12 @@ function runCurlWithConfig(configText, timeoutMs = TELEGRAM_TIMEOUT_MS + 7000) {
     });
     child.on('error', (err) => {
       clearTimeout(timer);
+      cleanup();
       reject(err);
     });
-    child.stdin.on('error', () => {
-      // child may exit before reading stdin; close error is already reported
-    });
-    child.stdin.end(`${configText}\n`);
     child.on('close', (code) => {
       clearTimeout(timer);
+      cleanup();
       if (code !== 0) {
         const msg = (stderr || stdout || `curl exit ${code}`).trim();
         reject(new Error(msg));
