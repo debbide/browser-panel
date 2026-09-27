@@ -194,69 +194,68 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_id ON audit_log(id DESC);
 INSERT OR IGNORE INTO warp_state (id) VALUES (1);
 `);
 
-const taskRunColumns = db.prepare('PRAGMA table_info(task_runs)').all().map(row => row.name);
-if (!taskRunColumns.includes('error_code')) {
-  db.exec('ALTER TABLE task_runs ADD COLUMN error_code TEXT');
-}
-if (!taskRunColumns.includes('retryable')) {
-  db.exec('ALTER TABLE task_runs ADD COLUMN retryable INTEGER');
-}
-if (!taskRunColumns.includes('retry_reason')) {
-  db.exec('ALTER TABLE task_runs ADD COLUMN retry_reason TEXT');
-}
-if (!taskRunColumns.includes('screenshots_dir')) {
-  db.exec('ALTER TABLE task_runs ADD COLUMN screenshots_dir TEXT');
-}
-if (!taskRunColumns.includes('proxy_snapshot_json')) {
-  db.exec('ALTER TABLE task_runs ADD COLUMN proxy_snapshot_json TEXT');
+// 幂等加列：PRAGMA 检查 + try/catch 吞掉 "duplicate column name"。
+// 并行启动/并行测试时两个进程可能同时通过 PRAGMA 检查，第二个 ALTER 会撞车，
+// 此时列已被另一方加上，直接忽略即可。表名/列名均为代码内常量，无注入风险。
+function addColumnIfMissing(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name);
+  if (cols.includes(column)) return;
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  } catch (err) {
+    if (!/duplicate column name/i.test(String(err && err.message || err))) throw err;
+  }
 }
 
-const taskTableColumns = db.prepare('PRAGMA table_info(tasks)').all().map(row => row.name);
-if (!taskTableColumns.includes('schedule_mode')) db.exec("ALTER TABLE tasks ADD COLUMN schedule_mode TEXT NOT NULL DEFAULT 'fixed'");
-if (!taskTableColumns.includes('interval_min')) db.exec('ALTER TABLE tasks ADD COLUMN interval_min INTEGER');
-if (!taskTableColumns.includes('interval_max')) db.exec('ALTER TABLE tasks ADD COLUMN interval_max INTEGER');
-if (!taskTableColumns.includes('interval_unit')) db.exec('ALTER TABLE tasks ADD COLUMN interval_unit TEXT');
-if (!taskTableColumns.includes('next_run_at')) db.exec('ALTER TABLE tasks ADD COLUMN next_run_at TEXT');
-if (!taskTableColumns.includes('daily_time_start')) db.exec('ALTER TABLE tasks ADD COLUMN daily_time_start TEXT');
-if (!taskTableColumns.includes('daily_time_end')) db.exec('ALTER TABLE tasks ADD COLUMN daily_time_end TEXT');
+addColumnIfMissing('task_runs', 'error_code', 'TEXT');
+addColumnIfMissing('task_runs', 'retryable', 'INTEGER');
+addColumnIfMissing('task_runs', 'retry_reason', 'TEXT');
+addColumnIfMissing('task_runs', 'screenshots_dir', 'TEXT');
+addColumnIfMissing('task_runs', 'proxy_snapshot_json', 'TEXT');
+
+addColumnIfMissing('tasks', 'schedule_mode', `TEXT NOT NULL DEFAULT 'fixed'`);
+addColumnIfMissing('tasks', 'interval_min', `INTEGER`);
+addColumnIfMissing('tasks', 'interval_max', `INTEGER`);
+addColumnIfMissing('tasks', 'interval_unit', `TEXT`);
+addColumnIfMissing('tasks', 'next_run_at', `TEXT`);
+addColumnIfMissing('tasks', 'daily_time_start', `TEXT`);
+addColumnIfMissing('tasks', 'daily_time_end', `TEXT`);
 // 每天时间窗模式的天数间隔；null 视为 1，保持旧任务"每天跑"的行为不变。
-if (!taskTableColumns.includes('daily_day_min')) db.exec('ALTER TABLE tasks ADD COLUMN daily_day_min INTEGER');
-if (!taskTableColumns.includes('daily_day_max')) db.exec('ALTER TABLE tasks ADD COLUMN daily_day_max INTEGER');
+addColumnIfMissing('tasks', 'daily_day_min', `INTEGER`);
+addColumnIfMissing('tasks', 'daily_day_max', `INTEGER`);
 
-if (!taskTableColumns.includes('browser_profile_id')) db.exec('ALTER TABLE tasks ADD COLUMN browser_profile_id INTEGER REFERENCES browser_profiles(id)');
-if (!taskTableColumns.includes('params_json')) db.exec("ALTER TABLE tasks ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}'");
-if (!taskTableColumns.includes('condition_enabled')) db.exec('ALTER TABLE tasks ADD COLUMN condition_enabled INTEGER NOT NULL DEFAULT 0');
-if (!taskTableColumns.includes('condition_json')) db.exec("ALTER TABLE tasks ADD COLUMN condition_json TEXT NOT NULL DEFAULT '{}'");
-if (!taskTableColumns.includes('condition_next_check_at')) db.exec('ALTER TABLE tasks ADD COLUMN condition_next_check_at TEXT');
-if (!taskTableColumns.includes('condition_last_status')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_status TEXT');
-if (!taskTableColumns.includes('condition_last_detail')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_detail TEXT');
-if (!taskTableColumns.includes('condition_last_checked_at')) db.exec('ALTER TABLE tasks ADD COLUMN condition_last_checked_at TEXT');
-if (!taskTableColumns.includes('condition_cooldown_until')) db.exec('ALTER TABLE tasks ADD COLUMN condition_cooldown_until TEXT');
+addColumnIfMissing('tasks', 'browser_profile_id', `INTEGER REFERENCES browser_profiles(id)`);
+addColumnIfMissing('tasks', 'params_json', `TEXT NOT NULL DEFAULT '{}'`);
+addColumnIfMissing('tasks', 'condition_enabled', `INTEGER NOT NULL DEFAULT 0`);
+addColumnIfMissing('tasks', 'condition_json', `TEXT NOT NULL DEFAULT '{}'`);
+addColumnIfMissing('tasks', 'condition_next_check_at', `TEXT`);
+addColumnIfMissing('tasks', 'condition_last_status', `TEXT`);
+addColumnIfMissing('tasks', 'condition_last_detail', `TEXT`);
+addColumnIfMissing('tasks', 'condition_last_checked_at', `TEXT`);
+addColumnIfMissing('tasks', 'condition_cooldown_until', `TEXT`);
 // Script remaining-time callback (always stored when script reports; scheduling uses condition switch)
-if (!taskTableColumns.includes('callback_remaining_sec')) db.exec('ALTER TABLE tasks ADD COLUMN callback_remaining_sec REAL');
-if (!taskTableColumns.includes('callback_reported_at')) db.exec('ALTER TABLE tasks ADD COLUMN callback_reported_at TEXT');
-if (!taskTableColumns.includes('callback_trigger_at')) db.exec('ALTER TABLE tasks ADD COLUMN callback_trigger_at TEXT');
-if (!taskTableColumns.includes('callback_threshold_sec')) db.exec('ALTER TABLE tasks ADD COLUMN callback_threshold_sec REAL');
-if (!taskTableColumns.includes('callback_valid_until')) db.exec('ALTER TABLE tasks ADD COLUMN callback_valid_until TEXT');
-if (!taskTableColumns.includes('callback_action')) db.exec('ALTER TABLE tasks ADD COLUMN callback_action TEXT');
-if (!taskTableColumns.includes('group_id')) db.exec('ALTER TABLE tasks ADD COLUMN group_id INTEGER REFERENCES task_groups(id) ON DELETE SET NULL');
+addColumnIfMissing('tasks', 'callback_remaining_sec', `REAL`);
+addColumnIfMissing('tasks', 'callback_reported_at', `TEXT`);
+addColumnIfMissing('tasks', 'callback_trigger_at', `TEXT`);
+addColumnIfMissing('tasks', 'callback_threshold_sec', `REAL`);
+addColumnIfMissing('tasks', 'callback_valid_until', `TEXT`);
+addColumnIfMissing('tasks', 'callback_action', `TEXT`);
+addColumnIfMissing('tasks', 'group_id', `INTEGER REFERENCES task_groups(id) ON DELETE SET NULL`);
 // 任务声明的附加文件/目录(相对 tasks/ 的 JSON 数组)。只在备份导出时用来决定
 // 主脚本之外还要带哪些文件,不参与执行 —— 运行时的 import 由 Python 自己解析。
-if (!taskTableColumns.includes('extra_paths')) db.exec("ALTER TABLE tasks ADD COLUMN extra_paths TEXT NOT NULL DEFAULT '[]'");
+addColumnIfMissing('tasks', 'extra_paths', `TEXT NOT NULL DEFAULT '[]'`);
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id)');
 
-const browserProfileColumns = db.prepare('PRAGMA table_info(browser_profiles)').all().map(row => row.name);
-if (!browserProfileColumns.includes('runtime_stack')) db.exec("ALTER TABLE browser_profiles ADD COLUMN runtime_stack TEXT NOT NULL DEFAULT ''");
-if (!browserProfileColumns.includes('proxy_mode')) db.exec("ALTER TABLE browser_profiles ADD COLUMN proxy_mode TEXT NOT NULL DEFAULT ''");
-if (!browserProfileColumns.includes('proxy_value')) db.exec("ALTER TABLE browser_profiles ADD COLUMN proxy_value TEXT NOT NULL DEFAULT ''");
-if (!browserProfileColumns.includes('ruyi_fpfile')) db.exec("ALTER TABLE browser_profiles ADD COLUMN ruyi_fpfile TEXT NOT NULL DEFAULT ''");
-if (!browserProfileColumns.includes('locale')) db.exec("ALTER TABLE browser_profiles ADD COLUMN locale TEXT NOT NULL DEFAULT ''");
-if (!browserProfileColumns.includes('timezone_id')) db.exec("ALTER TABLE browser_profiles ADD COLUMN timezone_id TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing('browser_profiles', 'runtime_stack', `TEXT NOT NULL DEFAULT ''`);
+addColumnIfMissing('browser_profiles', 'proxy_mode', `TEXT NOT NULL DEFAULT ''`);
+addColumnIfMissing('browser_profiles', 'proxy_value', `TEXT NOT NULL DEFAULT ''`);
+addColumnIfMissing('browser_profiles', 'ruyi_fpfile', `TEXT NOT NULL DEFAULT ''`);
+addColumnIfMissing('browser_profiles', 'locale', `TEXT NOT NULL DEFAULT ''`);
+addColumnIfMissing('browser_profiles', 'timezone_id', `TEXT NOT NULL DEFAULT ''`);
 
-const panelUserColumns = db.prepare('PRAGMA table_info(panel_users)').all().map(row => row.name);
 // 2FA 的 TOTP 秘钥。NULL = 未启用 TOTP。base32 字符串，明文存——app.db 本来
 // 就是本地敏感库（含任务脚本、代理凭据），和密码哈希的"泄露也白拿"定位不同。
-if (!panelUserColumns.includes('totp_secret')) db.exec('ALTER TABLE panel_users ADD COLUMN totp_secret TEXT');
+addColumnIfMissing('panel_users', 'totp_secret', `TEXT`);
 
 const taskColumns = [
   'name', 'type', 'script_path', 'cron_expr', 'schedule_mode',
