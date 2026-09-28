@@ -549,6 +549,46 @@ export PLAYWRIGHT_BROWSERS_PATH=0
 # ---------------------------------------------------------------------------
 # Xvfb as permanent systemd service (always-on display :1)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# x11vnc as permanent systemd service (:1 -> 127.0.0.1:5901, for panel noVNC)
+# ---------------------------------------------------------------------------
+install_x11vnc_service() {
+  local unit_src="$ROOT/deploy/x11vnc-browser.service"
+  local unit_dst="/etc/systemd/system/x11vnc-browser.service"
+
+  if ! have x11vnc && [[ ! -x /usr/bin/x11vnc ]]; then
+    log "installing x11vnc package"
+    apt-get install -y x11vnc || {
+      log "WARN: apt-get install x11vnc failed — remote desktop will be unavailable until x11vnc is installed"
+      return 0
+    }
+  fi
+
+  if [[ -f "$unit_src" ]]; then
+    log "installing x11vnc-browser.service from $unit_src"
+    install -m 644 "$unit_src" "$unit_dst"
+  else
+    log "WARN: $unit_src missing — skip x11vnc service install"
+    return 0
+  fi
+
+  # Stop any ad-hoc x11vnc so the service owns :1/5901
+  pkill -f '[x]11vnc.*-display :1' 2>/dev/null || true
+  sleep 0.5
+
+  systemctl daemon-reload
+  systemctl enable x11vnc-browser.service
+  systemctl restart x11vnc-browser.service
+  sleep 1
+  if systemctl is-active --quiet x11vnc-browser.service; then
+    log "x11vnc-browser.service is active (VNC 127.0.0.1:5901 on :1)"
+  else
+    log "WARN: x11vnc-browser.service failed to start — check: journalctl -u x11vnc-browser -n 50"
+    systemctl --no-pager --full status x11vnc-browser.service || true
+  fi
+}
+
 install_xvfb_service() {
   local unit_src="$ROOT/deploy/xvfb-browser.service"
   local unit_dst="/etc/systemd/system/xvfb-browser.service"
@@ -599,6 +639,7 @@ UNIT
 }
 
 install_xvfb_service
+install_x11vnc_service
 
 # Restart panel if present so it picks up .env.panel + display
 if systemctl list-unit-files 2>/dev/null | grep -q browser-automation-panel.service; then

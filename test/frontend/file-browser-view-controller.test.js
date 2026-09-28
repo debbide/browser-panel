@@ -92,7 +92,7 @@ test('file browser freezes API refresh and static loading order contracts before
     '/features/file-browser/api.js?v=20260907a',
     '/features/file-browser/view.js?v=20260907a',
     '/features/file-browser/controller.js?v=20260907a',
-    '/panel-runtime.js?v=20260907a',
+    '/panel-runtime.js?v=20260908a',
     '/app.js?v=20260814c',
   ];
   const positions = paths.map((path) => html.indexOf(path));

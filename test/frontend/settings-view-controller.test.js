@@ -112,7 +112,7 @@ test('settings static scripts preserve api view controller runtime app order', (
     '/features/settings/api.js?v=20260907a',
     '/features/settings/view.js?v=20260907a',
     '/features/settings/controller.js?v=20260907a',
-    '/panel-runtime.js?v=20260907a',
+    '/panel-runtime.js?v=20260908a',
     '/app.js?v=20260814c',
   ];
   const positions = paths.map((path) => html.indexOf(path));

@@ -65,6 +65,7 @@ const {
 } = require('./conditions');
 const remainingCallback = require('./conditions/types/remaining_callback');
 const { router: authRouter, requireAuth } = require('./auth');
+const { createVncRouter, createVncUpgradeHandler, VNC_WS_PATH } = require('./vnc');
 const { createApiRateLimiter } = require('./rate-limit');
 const events = require('./events');
 const logStream = require('./log-stream');
@@ -695,6 +696,8 @@ registerPublicRoutes(app);
 // 只作用于 /api/*，/healthz 等公开探针天然豁免。
 app.use(createApiRateLimiter());
 app.use(requireAuth);
+// 内嵌 noVNC：REST 接口挂鉴权之后；静态客户端 public/vnc/* 走下面的 express.static，同样要登录。
+app.use('/api/vnc', createVncRouter({ db }));
 app.use('/api/extensions-fs', createResourceRouter({
   rootDir: config.paths.extensionsDir,
   label: '插件管理',
@@ -1155,7 +1158,22 @@ const lifecycle = createLifecycle({
 });
 
 function startServer() {
-  return lifecycle.startServer();
+  const httpServer = lifecycle.startServer();
+  // noVNC 的 WebSocket 通道：Express 不处理 upgrade，在这里按路径分发。
+  // 非 VNC 路径的 upgrade 直接掐掉（当前没有其他 WS 用途）。
+  const handleVncUpgrade = createVncUpgradeHandler({ db });
+  httpServer.on('upgrade', (req, socket, head) => {
+    let pathname = '';
+    try {
+      pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+    } catch { /* fallthrough -> destroy */ }
+    if (pathname === VNC_WS_PATH) {
+      handleVncUpgrade(req, socket, head);
+    } else {
+      socket.destroy();
+    }
+  });
+  return httpServer;
 }
 
 // 可复用的停机序列：停调度 → 断 SSE → 停 WARP → 关库。

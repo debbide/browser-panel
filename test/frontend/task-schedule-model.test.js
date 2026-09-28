@@ -56,7 +56,7 @@ test('task schedule model preserves interval conversions', () => {
 test('production page loads task schedule model before panel runtime', () => {
   const html = read('public/index.html');
   const scheduleModel = html.indexOf('/features/tasks/schedule-model.js?v=20260908a');
-  const runtime = html.indexOf('/panel-runtime.js?v=20260907a');
+  const runtime = html.indexOf('/panel-runtime.js?v=20260908a');
   assert.ok(scheduleModel >= 0);
   assert.ok(runtime > scheduleModel);
 });

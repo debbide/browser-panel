@@ -90,6 +90,9 @@
           <button id="backup-import-btn" type="button" class="alt btn-with-icon">
             <i data-lucide="upload" class="icon-sm"></i> 恢复
           </button>
+          <button id="vnc-open-btn" type="button" class="alt btn-with-icon" title="打开远程桌面 (noVNC)" hidden>
+            <i data-lucide="monitor" class="icon-sm"></i> 远程桌面
+          </button>
           <button id="add-task-btn" type="button" class="btn-primary btn-with-icon" data-testid="add-task-btn">
             <i data-lucide="plus-circle" class="icon-sm"></i> 添加任务
           </button>
@@ -504,6 +507,7 @@
               <button type="button" class="config-subnav-btn" data-config-target="cfg-env">变量与密钥</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-cloud-backup">云端备份</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-security">安全</button>
+              <button type="button" class="config-subnav-btn" data-config-target="cfg-vnc">远程桌面</button>
               <button type="button" class="config-subnav-btn" data-config-target="cfg-advanced">高级</button>
               <span class="config-subnav-group">高级设置</span>
               <button type="button" class="config-subnav-btn config-subnav-child" data-config-target="cfg-details-runtime" data-config-parent="cfg-advanced">运行时插件</button>
@@ -774,6 +778,43 @@
             <div class="row" style="margin-top:8px;">
               <button type="submit" id="security-save-btn" class="btn-primary btn-with-icon">
                 <i data-lucide="save" class="icon-sm"></i> 保存安全设置
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section id="cfg-vnc" class="modal-panel config-panel config-section" data-config-section="vnc" data-config-title="远程桌面" data-config-path="远程桌面" data-config-keywords="vnc novnc 远程桌面 remote desktop 桌面 屏幕 远程控制 x11vnc">
+          <div class="section-header compact">
+            <div>
+              <h2>远程桌面 (noVNC)</h2>
+              <p class="muted" id="vnc-status-text">状态：加载中...</p>
+            </div>
+          </div>
+          <form id="vnc-form" class="grid single-col">
+            <label class="inline-check">
+              <input type="checkbox" id="vnc-enabled" name="enabled" />
+              启用远程桌面（主页右上角显示入口按钮）
+            </label>
+            <div class="two-col-modal" style="grid-template-columns:1fr 1fr;">
+              <div>
+                <label class="field-label" for="vnc-host">VNC 地址</label>
+                <input type="text" id="vnc-host" name="host" placeholder="127.0.0.1" autocomplete="off" spellcheck="false" />
+              </div>
+              <div>
+                <label class="field-label" for="vnc-port">VNC 端口</label>
+                <input type="number" id="vnc-port" name="port" placeholder="5901" min="1" max="65535" autocomplete="off" />
+              </div>
+            </div>
+            <div class="schedule-note" style="margin-top:4px;">
+              面板内置 noVNC 客户端与 WebSocket 转发（<code>/vnc/websockify</code>），替代独立的 websockify 进程与隧道端口。
+              VNC 服务端（x11vnc）需保持运行：bp.sh 会把它装成系统服务（<code>x11vnc-browser.service</code>，掉线自动拉起），只监听 127.0.0.1，唯一入口是面板登录后的转发通道。
+            </div>
+            <div class="row" style="margin-top:8px; gap:8px; flex-wrap:wrap;">
+              <button type="button" id="vnc-test-btn" class="alt btn-with-icon">
+                <i data-lucide="plug-zap" class="icon-sm"></i> 测试连接
+              </button>
+              <button type="submit" id="vnc-save-btn" class="btn-primary btn-with-icon">
+                <i data-lucide="save" class="icon-sm"></i> 保存远程桌面设置
               </button>
             </div>
           </form>
@@ -1458,6 +1499,8 @@
   <script src="/features/scheduler/api.js?v=20260907a"></script>
   <script src="/features/scheduler/view.js?v=20260907a"></script>
   <script src="/features/scheduler/controller.js?v=20260907a"></script>
+  <script src="/features/vnc/api.js?v=20260908a"></script>
+  <script src="/features/vnc/controller.js?v=20260908a"></script>
   <script src="/features/environment/editor.js?v=20260908a"></script>
   <script src="/features/browser-resources/api.js?v=20260907a"></script>
   <script src="/features/browser-resources/view.js?v=20260907a"></script>
@@ -1469,7 +1512,7 @@
   <script src="/core/clipboard.js?v=20260908a"></script>
   <script src="/core/run-presentation.js?v=20260908a"></script>
   <script src="/features/auth/ui.js?v=20260908a"></script>
-  <script src="/panel-runtime.js?v=20260907a"></script>
+  <script src="/panel-runtime.js?v=20260908a"></script>
   <script src="/app.js?v=20260814c"></script>
   <script>
     // Initialize Lucide icons on static elements

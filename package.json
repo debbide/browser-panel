@@ -28,7 +28,8 @@
     "proxy-chain": "^3.0.1",
     "puppeteer-extra-plugin-anonymize-ua": "^2.4.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "socks-proxy-agent": "^10.1.0"
+    "socks-proxy-agent": "^10.1.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "jsdom": "^26.1.0"

@@ -115,7 +115,7 @@ test('condition model derives HTTP and callback field visibility', () => {
 test('production page loads condition model before panel runtime', () => {
   const html = read('public/index.html');
   const model = html.indexOf('/features/tasks/condition-model.js?v=20260908a');
-  const runtime = html.indexOf('/panel-runtime.js?v=20260907a');
+  const runtime = html.indexOf('/panel-runtime.js?v=20260908a');
   assert.ok(model >= 0);
   assert.ok(runtime > model);
 });

@@ -8,6 +8,7 @@ REPO="${GITHUB_REPO:-debbide/browser-panel}"
 ROOT="${PANEL_ROOT:-/opt/browser-panel}"
 SERVICE="${SERVICE_NAME:-browser-automation-panel}"
 XVFB_SERVICE="${XVFB_SERVICE:-xvfb-browser}"
+X11VNC_SERVICE="${X11VNC_SERVICE:-x11vnc-browser}"
 
 export http_proxy="${http_proxy:-${HTTP_PROXY:-}}"
 export https_proxy="${https_proxy:-${HTTPS_PROXY:-}}"
@@ -196,6 +197,7 @@ restart_panel() {
   node_bin="$(command -v node)"
   local unit_panel="/etc/systemd/system/${SERVICE}.service"
   local unit_xvfb="/etc/systemd/system/${XVFB_SERVICE}.service"
+  local unit_x11vnc="/etc/systemd/system/${X11VNC_SERVICE}.service"
   local units_changed=0
 
   # 显示模式自动检测：有物理桌面(:0) → 浏览器直显；无头服务器 → Xvfb(:1)
@@ -237,6 +239,16 @@ SCRIPT_EOF
     if [[ ! -f "$unit_xvfb" ]] || ! cmp -s "$ROOT/deploy/xvfb-browser.service" "$unit_xvfb" 2>/dev/null; then
       log "install/update ${XVFB_SERVICE}.service"
       install -m 644 "$ROOT/deploy/xvfb-browser.service" "$unit_xvfb"
+      units_changed=1
+    fi
+  fi
+
+  # x11vnc：给面板内嵌 noVNC 用的 VNC 服务端（:1 → 127.0.0.1:5901），掉线自动拉起。
+  # 只在服务器模式（Xvfb :1）下装：桌面模式 :0 的 X authority 归属登录用户，服务里挂 x11vnc 容易权限翻车。
+  if [[ "$DISPLAY_VAL" != ":0" ]] && [[ -f "$ROOT/deploy/x11vnc-browser.service" ]]; then
+    if [[ ! -f "$unit_x11vnc" ]] || ! cmp -s "$ROOT/deploy/x11vnc-browser.service" "$unit_x11vnc" 2>/dev/null; then
+      log "install/update ${X11VNC_SERVICE}.service"
+      install -m 644 "$ROOT/deploy/x11vnc-browser.service" "$unit_x11vnc"
       units_changed=1
     fi
   fi
@@ -333,10 +345,18 @@ EOF
   systemctl daemon-reload
   systemctl enable "${XVFB_SERVICE}.service" 2>/dev/null || true
   systemctl enable "${SERVICE}.service" 2>/dev/null || true
+  # x11vnc：二进制不存在就不启用（比如没装 x11vnc 的机器），避免服务一直 failed 刷屏
+  if [[ -f "$unit_x11vnc" ]] && command -v x11vnc >/dev/null 2>&1; then
+    systemctl enable "${X11VNC_SERVICE}.service" 2>/dev/null || true
+  fi
 
   log "restart services"
   systemctl reset-failed "${XVFB_SERVICE}.service" 2>/dev/null || true
   systemctl restart "${XVFB_SERVICE}.service" 2>/dev/null || true
+  if [[ -f "$unit_x11vnc" ]] && command -v x11vnc >/dev/null 2>&1; then
+    systemctl reset-failed "${X11VNC_SERVICE}.service" 2>/dev/null || true
+    systemctl restart "${X11VNC_SERVICE}.service" 2>/dev/null || true
+  fi
   # 杀掉残留的浏览器进程：面板"关闭浏览器"可能没杀干净，或手动启动的残留；
   # 不杀的话，旧 Chrome（可能是错的 DISPLAY）会继续占着，新的起不来或显示错乱
   # （用 user-data-dir 定位，只杀本面板的浏览器，不误伤用户自己的 Chrome）

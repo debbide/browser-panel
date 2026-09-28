@@ -1,0 +1,20 @@
+[Unit]
+Description=x11vnc VNC server on :1 for browser panel remote desktop
+After=network.target xvfb-browser.service
+Wants=xvfb-browser.service
+# 把 Xvfb :1 的画面通过 VNC 暴露出去，给面板内嵌的 noVNC 用。
+# 只监听 127.0.0.1：唯一入口是面板登录后的 /vnc/websockify 转发通道，
+# 面板鉴权即门禁，所以这里用 -nopw（RFB 密码仍可由客户端与 x11vnc 直接协商，但默认不需要）。
+
+[Service]
+Type=simple
+# 清掉旧的手动残留（之前用脚本/隧道手动起的 x11vnc）
+ExecStartPre=-/usr/bin/pkill -f '[x]11vnc.*-display :1'
+ExecStart=/usr/bin/x11vnc -display :1 -rfbport 5901 -listen 127.0.0.1 -shared -forever -nopw
+Restart=always
+RestartSec=2
+# 跟机器一起活着
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

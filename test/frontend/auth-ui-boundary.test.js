@@ -7,7 +7,7 @@ test('auth UI owns account dialogs and wiring before panel runtime', () => {
   const runtime = read('public/panel-runtime.js');
   const authUi = read('public/features/auth/ui.js');
   const authIndex = html.indexOf('/features/auth/ui.js?v=20260908a');
-  const runtimeIndex = html.indexOf('/panel-runtime.js?v=20260907a');
+  const runtimeIndex = html.indexOf('/panel-runtime.js?v=20260908a');
 
   assert.ok(authIndex >= 0);
   assert.ok(authIndex < runtimeIndex);

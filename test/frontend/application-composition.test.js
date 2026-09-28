@@ -4,7 +4,7 @@ const { read } = require('./helpers');
 
 test('production page loads panel runtime before the application entry', () => {
   const html = read('public/index.html');
-  const runtime = html.indexOf('/panel-runtime.js?v=20260907a');
+  const runtime = html.indexOf('/panel-runtime.js?v=20260908a');
   const entry = html.indexOf('/app.js?v=20260814c');
 
   assert.ok(runtime >= 0);
@@ -36,7 +36,7 @@ test('UI feedback owns dialogs and loads before panel runtime', () => {
   const runtime = read('public/panel-runtime.js');
   const feedback = read('public/core/ui-feedback.js');
   const feedbackIndex = html.indexOf('/core/ui-feedback.js?v=20260908a');
-  const runtimeIndex = html.indexOf('/panel-runtime.js?v=20260907a');
+  const runtimeIndex = html.indexOf('/panel-runtime.js?v=20260908a');
 
   assert.ok(feedbackIndex >= 0);
   assert.ok(feedbackIndex < runtimeIndex);

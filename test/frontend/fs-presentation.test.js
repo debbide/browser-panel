@@ -35,7 +35,7 @@ test('production loads filesystem presentation before feature callers', () => {
   const shared = html.indexOf('/core/fs-presentation.js?v=20260907a');
   const fileBrowser = html.indexOf('/features/file-browser/view.js?v=20260907a');
   const browserResources = html.indexOf('/features/browser-resources/view.js?v=20260907a');
-  const runtime = html.indexOf('/panel-runtime.js?v=20260907a');
+  const runtime = html.indexOf('/panel-runtime.js?v=20260908a');
   assert.ok(shared >= 0);
   assert.ok(fileBrowser > shared);
   assert.ok(browserResources > shared);

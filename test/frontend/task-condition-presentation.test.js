@@ -43,7 +43,7 @@ test('condition presentation preserves detailed callback status', () => {
 test('production page loads condition presentation before panel runtime', () => {
   const html = read('public/index.html');
   const presentation = html.indexOf('/features/tasks/condition-presentation.js?v=20260908a');
-  const runtime = html.indexOf('/panel-runtime.js?v=20260907a');
+  const runtime = html.indexOf('/panel-runtime.js?v=20260908a');
   assert.ok(presentation >= 0);
   assert.ok(runtime > presentation);
 });

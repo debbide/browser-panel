@@ -27,7 +27,7 @@ test("run presentation loads before runtime and owns its helpers", () => {
   const html = read("public/index.html");
   const runtime = read("public/panel-runtime.js");
   const shared = html.indexOf("/core/run-presentation.js?v=20260908a");
-  const runtimeScript = html.indexOf("/panel-runtime.js?v=20260907a");
+  const runtimeScript = html.indexOf("/panel-runtime.js?v=20260908a");
   assert.ok(shared >= 0);
   assert.ok(runtimeScript > shared);
   assert.doesNotMatch(runtime, /function prettyErrorCode\(/);

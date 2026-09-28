@@ -928,6 +928,32 @@ const schedulerController = SchedulerController.create({
   },
 });
 
+const vncForm = document.getElementById('vnc-form');
+const vncStatusText = document.getElementById('vnc-status-text');
+const vncEnabled = document.getElementById('vnc-enabled');
+const vncHost = document.getElementById('vnc-host');
+const vncPort = document.getElementById('vnc-port');
+const vncTestBtn = document.getElementById('vnc-test-btn');
+const vncSaveBtn = document.getElementById('vnc-save-btn');
+const vncOpenBtn = document.getElementById('vnc-open-btn');
+const vncController = VncController.create({
+  api: VncApi,
+  elements: {
+    form: vncForm,
+    statusText: vncStatusText,
+    enabled: vncEnabled,
+    host: vncHost,
+    port: vncPort,
+    testBtn: vncTestBtn,
+    saveBtn: vncSaveBtn,
+    openBtn: vncOpenBtn,
+  },
+  toast,
+  createIcons: () => {
+    if (window.lucide) window.lucide.createIcons();
+  },
+});
+
 const browserResourcesController = BrowserResourcesController.create({
   api: BrowserResourcesApi,
   view: BrowserResourcesView,
@@ -2795,6 +2821,7 @@ async function bootPanel() {
   settingsController.mount();
   backupStorageController.mount();
   schedulerController.mount();
+  vncController.mount();
   taskEditorController.mount();
 
   taskEditorController.reset();
@@ -2802,6 +2829,7 @@ async function bootPanel() {
   refreshAll();
   startStatusStream();
   schedulerController.load();
+  vncController.load();
   loadSuccessHeuristicsSettings();
   loadBrowserRuntimeSettings();
   settingsController.load();
