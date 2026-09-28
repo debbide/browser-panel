@@ -216,7 +216,25 @@ install_deps() {
     log "node_modules 不完整，干净重装"
     rm -rf node_modules
     "${npm_cmd[@]}" install --omit=dev
-    verify_deps || die "干净重装后依赖仍残缺，请检查磁盘/网络/npm 是否正常"
+    if ! verify_deps; then
+      # 整包安装被 npm 误判为 up to date（如 7vt4x 的 arborist 异常）时，
+      # 逐个用 --force 硬装，绕过整包误判。正常机器走不到这里。
+      log "整包安装无效，逐个强制安装依赖"
+      rm -rf node_modules
+      local spec node_for_read
+      node_for_read="$(command -v node)"
+      while IFS= read -r spec; do
+        [[ -n "$spec" ]] || continue
+        log "强制安装 $spec"
+        "${npm_cmd[@]}" install "$spec" --no-save --force --omit=dev || die "安装 $spec 失败，请检查网络/npm"
+      done < <("$node_for_read" -e "
+try {
+  const pkg = require('./package.json');
+  for (const [k, v] of Object.entries(pkg.dependencies || {})) console.log(k + '@' + v);
+} catch (e) { process.exit(1); }
+" 2>/dev/null)
+      verify_deps || die "逐个安装后依赖仍残缺，请检查磁盘/网络/npm 是否正常"
+    fi
   fi
 
   # Python 浏览器任务统一使用 install-browser-stack.sh 准备的系统 Python。
