@@ -199,11 +199,16 @@ verify_deps() {
 install_deps() {
   cd "$ROOT"
   # PATH 上的 npm 可能是垫片（7vt4x 的 /usr/local/bin/npm 只打印不干活）；
-  # node 安装目录旁的 npm-cli.js 才是真身，优先用它（正常机器上两者是同一个）。
+  # 用 npm 同目录的 node 去跑它上级 lib 下的真身 npm-cli.js（正常机器上两者是同一个）。
+  # 注意：不用 command -v node 定位，因为管道 bash 的 PATH 顺序可能不同。
   local -a npm_cmd=("npm")
-  local cli="$(dirname "$(command -v node)")/../lib/node_modules/npm/bin/npm-cli.js"
-  if [[ -f "$cli" ]]; then
-    npm_cmd=("node" "$cli")
+  local npm_dir node_bin cli
+  npm_dir="$(dirname "$(command -v npm)")"
+  node_bin="$npm_dir/node"
+  cli="$npm_dir/../lib/node_modules/npm/bin/npm-cli.js"
+  if [[ -f "$cli" && -x "$node_bin" ]]; then
+    npm_cmd=("$node_bin" "$cli")
+    log "使用真身 npm: $cli"
   fi
   log "npm install"
   "${npm_cmd[@]}" install --omit=dev
