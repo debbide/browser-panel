@@ -173,10 +173,39 @@ download_and_merge() {
   fi
 }
 
+# npm 的 "up to date" 只表示 arborist 算出的 diff 为空，不校验包内文件完整性。
+# 安装被中断/网络抖动可能留下"目录+package.json 在、代码文件缺失"的残包，
+# 之后每次 npm install 都会被骗过而永久跳过（ws 漏装事件，2026-09-28，两台机器）。
+# 这里对 dependencies 逐个 require.resolve，残缺就删 node_modules 干净重装。
+verify_deps() {
+  node -e '
+    const { createRequire } = require("module");
+    const path = require("path");
+    const cwd = process.cwd();
+    const pkg = require(path.join(cwd, "package.json"));
+    const req = createRequire(path.join(cwd, "package.json"));
+    const deps = Object.keys(pkg.dependencies || {});
+    const bad = [];
+    for (const d of deps) {
+      try { req.resolve(d); } catch { bad.push(d); }
+    }
+    if (bad.length) {
+      console.error("[bp] broken deps: " + bad.join(", "));
+      process.exit(1);
+    }
+  '
+}
+
 install_deps() {
   cd "$ROOT"
   log "npm install"
   npm install --omit=dev
+  if ! verify_deps; then
+    log "node_modules 不完整，干净重装"
+    rm -rf node_modules
+    npm install --omit=dev
+    verify_deps || die "干净重装后依赖仍残缺，请检查磁盘/网络后重试"
+  fi
 
   # Python 浏览器任务统一使用 install-browser-stack.sh 准备的系统 Python。
   # bp.sh 只安装/更新面板本身，不创建 venv，也不重复修改 Python 依赖。
