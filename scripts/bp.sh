@@ -198,13 +198,20 @@ verify_deps() {
 
 install_deps() {
   cd "$ROOT"
+  # PATH 上的 npm 可能是垫片（7vt4x 的 /usr/local/bin/npm 只打印不干活）；
+  # node 安装目录旁的 npm-cli.js 才是真身，优先用它（正常机器上两者是同一个）。
+  local -a npm_cmd=("npm")
+  local cli="$(dirname "$(command -v node)")/../lib/node_modules/npm/bin/npm-cli.js"
+  if [[ -f "$cli" ]]; then
+    npm_cmd=("node" "$cli")
+  fi
   log "npm install"
-  npm install --omit=dev
+  "${npm_cmd[@]}" install --omit=dev
   if ! verify_deps; then
     log "node_modules 不完整，干净重装"
     rm -rf node_modules
-    npm install --omit=dev
-    verify_deps || die "干净重装后依赖仍残缺，请检查磁盘/网络后重试"
+    "${npm_cmd[@]}" install --omit=dev
+    verify_deps || die "干净重装后依赖仍残缺，请检查磁盘/网络/npm 是否正常"
   fi
 
   # Python 浏览器任务统一使用 install-browser-stack.sh 准备的系统 Python。
