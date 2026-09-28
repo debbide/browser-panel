@@ -196,17 +196,50 @@ verify_deps() {
   '
 }
 
+# 从 registry 下载官方 npm 包并解压，返回可用的 npm-cli.js 路径。
+# 用于本机 npm 本体损坏（能打印版本号但装不出文件）的极端情况，如 7vt4x 的 16M 残包。
+# 注意：本函数会被 $() 捕获输出，内部日志必须走 stderr。
+bootstrap_npm_cli() {
+  local ver="11.8.0"
+  local dest="/tmp/bp-npm-bootstrap"
+  local cli="$dest/package/bin/npm-cli.js"
+  if [[ -f "$cli" ]]; then
+    echo "$cli"
+    return 0
+  fi
+  log "本机 npm 已损坏，从 registry 下载 npm $ver 做 bootstrap" >&2
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  if ! curl -fsSL --retry 2 --max-time 120 \
+      "https://registry.npmjs.org/npm/-/npm-$ver.tgz" \
+      -o "$dest/npm.tgz"; then
+    log "下载 npm 失败" >&2
+    return 1
+  fi
+  if ! tar -xzf "$dest/npm.tgz" -C "$dest"; then
+    log "解压 npm 失败" >&2
+    return 1
+  fi
+  if [[ -f "$cli" ]]; then
+    echo "$cli"
+  else
+    log "bootstrap 包结构异常" >&2
+    return 1
+  fi
+}
+
 install_deps() {
   cd "$ROOT"
   # PATH 上的 npm 可能是垫片（7vt4x 的 /usr/local/bin/npm 只打印不干活）；
   # 用 npm 同目录的 node 去跑它上级 lib 下的真身 npm-cli.js（正常机器上两者是同一个）。
   # 注意：不用 command -v node 定位，因为管道 bash 的 PATH 顺序可能不同。
-  local -a npm_cmd=("npm")
   local npm_dir node_bin cli
   npm_dir="$(dirname "$(command -v npm)")"
   node_bin="$npm_dir/node"
+  [[ -x "$node_bin" ]] || node_bin="$(command -v node)"
+  local -a npm_cmd=("npm")
   cli="$npm_dir/../lib/node_modules/npm/bin/npm-cli.js"
-  if [[ -f "$cli" && -x "$node_bin" ]]; then
+  if [[ -f "$cli" ]]; then
     npm_cmd=("$node_bin" "$cli")
     log "使用真身 npm: $cli"
   fi
@@ -216,7 +249,15 @@ install_deps() {
     log "node_modules 不完整，干净重装"
     rm -rf node_modules
     "${npm_cmd[@]}" install --omit=dev
-    verify_deps || die "干净重装后依赖仍残缺，请检查磁盘/网络/npm 是否正常"
+  fi
+  if ! verify_deps; then
+    # 连干净重装都装不出文件 → npm 本体已损坏，bootstrap 一个真 npm
+    local boot_cli
+    boot_cli="$(bootstrap_npm_cli)" || die "无法 bootstrap npm，请检查网络/代理后重试"
+    log "使用 bootstrap npm: $boot_cli"
+    rm -rf node_modules
+    "$node_bin" "$boot_cli" install --omit=dev
+    verify_deps || die "bootstrap npm 安装后依赖仍残缺，请检查磁盘/网络"
   fi
 
   # Python 浏览器任务统一使用 install-browser-stack.sh 准备的系统 Python。
