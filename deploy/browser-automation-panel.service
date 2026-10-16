@@ -36,7 +36,7 @@ ExecStart=/usr/local/bin/node server/index.js
 # Fallback if node is only on PATH from nodesource/apt:
 # ExecStart=/usr/bin/node server/index.js
 
-Restart=on-failure
+Restart=always
 RestartSec=5
 # Browser tasks use `su` to BROWSER_USER; keep root or a user that can su
 User=root

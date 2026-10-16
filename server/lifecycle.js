@@ -34,7 +34,16 @@ function createLifecycle(options) {
 function registerSignalHandlers(shutdown) {
   for (const signal of ['SIGTERM', 'SIGINT']) {
     process.once(signal, () => {
-      void shutdown(signal).finally(() => process.exit());
+      void shutdown(signal).finally(() => {
+        // Re-raise the signal with its default disposition instead of a bare
+        // process.exit(): exit() reports code 0, which systemd
+        // Restart=on-failure reads as "clean shutdown" and will NOT restart
+        // us — the panel then stays down (connection refused) until someone
+        // notices. Dying by signal reports the truth and gets restarted.
+        // (process.once already removed our handler, so the default action
+        // applies again here.)
+        process.kill(process.pid, signal);
+      });
     });
   }
 }
