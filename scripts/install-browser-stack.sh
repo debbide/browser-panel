@@ -54,7 +54,6 @@ apt-get install -y --no-install-recommends \
   wget \
   gnupg \
   apt-transport-https \
-  software-properties-common \
   build-essential \
   python3 \
   python3-pip \
