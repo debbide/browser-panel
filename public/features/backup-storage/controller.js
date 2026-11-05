@@ -441,6 +441,40 @@
       });
     }
 
+    /**
+     * 手动上传 .bpsnap 快照还原（不经 S3）。按钮驱动： input 里已有文件时点按钮 →
+     * 现场输入该快照的备份密码 → 以 octet-stream 上传，密码走请求头。
+     * 成功后面板重启，网络错误按「已触发重启」处理。
+     */
+    function uploadCloudBackupRestore() {
+      const input = elements.cloudBackupUploadInput;
+      const button = elements.cloudBackupUploadBtn;
+      if (!input || !button) return;
+      const file = input.files && input.files[0];
+      if (!file) { actions.toast('请先选择 .bpsnap 快照文件', 'warn'); return; }
+      input.value = '';
+
+      actions.dialogPassphraseOnce('请输入这份快照的备份密码（备份时设置的口令，不是云端设置里的那个）。', async (passphrase) => {
+        button.disabled = true;
+        button.textContent = '上传中...';
+        try {
+          await api.restoreCloudBackupUpload(file, passphrase);
+          actions.toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
+        } catch (error) {
+          const msg = String(error && error.message || '');
+          if (/fetch failed|failed to fetch|networkerror|ecoonreset|sock/i.test(msg)) {
+            actions.toast('还原已触发，面板正在重启，请稍后刷新页面确认结果', 'warn');
+            return;
+          }
+          actions.toast(error.message || '上传还原失败', 'error');
+        } finally {
+          button.disabled = false;
+          button.innerHTML = '<i data-lucide="upload" class="icon-sm"></i> 上传并还原';
+          icons();
+        }
+      });
+    }
+
     function getStorageCleanupPayload() {
       const retentionDays = Math.min(3650, Math.max(1, Number(elements.storageCleanupDays?.value) || 30));
       const categories = elements.storageCleanupCategories ? Array.from(elements.storageCleanupCategories.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value) : [];
@@ -572,10 +606,10 @@
       on(elements.cloudBackupRunBtn, 'click', runCloudBackupNow);
       on(elements.cloudBackupRefreshBtn, 'click', loadCloudBackupList);
       on(elements.cloudBackupSchedule, 'change', updateCloudBackupTimeFields);
-      on(elements.cloudBackupUploadBtn, 'click', () => elements.cloudBackupUploadInput?.click());
-      if (typeof actions.uploadCloudBackupRestore === 'function') {
-        on(elements.cloudBackupUploadInput, 'change', actions.uploadCloudBackupRestore);
-      }
+      on(elements.cloudBackupUploadBtn, 'click', () => {
+        if (elements.cloudBackupUploadInput?.files?.length) uploadCloudBackupRestore();
+        else elements.cloudBackupUploadInput?.click();
+      });
       actions.mount?.({ api, view, state });
     }
 

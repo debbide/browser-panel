@@ -18,6 +18,11 @@
     listCloudBackups: () => global.fetchJson('/api/cloud-backup/list'),
     previewCloudBackup: (body) => global.fetchJson('/api/cloud-backup/preview', json(body)),
     restoreCloudBackup: (body) => global.fetchJson('/api/cloud-backup/restore', json(body)),
+    restoreCloudBackupUpload: (file, passphrase) => global.fetchJson('/api/cloud-backup/restore-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'x-backup-passphrase': passphrase },
+      body: file,
+    }),
     previewCleanup: (query) => global.fetchJson(`/api/storage/cleanup/preview?${query}`),
     runCleanup: (body) => global.fetchJson('/api/storage/cleanup', json(body)),
   };
