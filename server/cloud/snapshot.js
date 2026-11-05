@@ -1,5 +1,5 @@
 /**
- * 全量快照：一致性 db 快照 + tasks/ 整目录 + manifest，流式加密成 .bpsnap。
+ * 全量快照：一致性 db 快照 + tasks/ 整目录 + 代理库 + 主密钥 + manifest，流式加密成 .bpsnap。
  *
  * .bpsnap 二进制信封（字节序均为大端）：
  *   [0..6]   magic "BPSNAP1"
@@ -291,6 +291,27 @@ async function createSnapshot({ outPath, passphrase, meta = {} } = {}) {
       console.warn(`[snapshot] 主密钥文件打包失败（不影响快照其余内容）: ${err && err.message}`);
     }
 
+    // 2c) 代理库：上游地址存在独立的 proxy-manager.db（WAL），加密密钥存在
+    // app.db 的 proxy_manager_encryption_key 设置里。快照漏了它，换机还原后
+    // 新库密钥对不上旧代理库，启动校验直接炸掉整个面板（2026-11-05 实测）。
+    // 用 backup() 拿一致性拷贝（WAL 下普通文件 cp 可能拿到撕裂状态）。
+    try {
+      const proxyDbPath = path.join(config.paths.dataDir, 'proxy-manager.db');
+      if (fs.existsSync(proxyDbPath)) {
+        const proxyDest = path.join(staging, 'proxy-manager.db');
+        const proxyDb = new Database(proxyDbPath);
+        try {
+          await proxyDb.backup(proxyDest);
+        } finally {
+          proxyDb.close();
+        }
+        extraTarEntries.push('proxy-manager.db');
+        includes.push('proxy-manager.db');
+      }
+    } catch (err) {
+      console.warn(`[snapshot] 代理库打包失败（还原后代理列表将为空，不影响快照其余内容）: ${err && err.message}`);
+    }
+
     // 3) manifest
     const manifest = baseManifest({ ...meta, includes });
     fs.writeFileSync(path.join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
@@ -364,6 +385,27 @@ async function restoreSnapshot({ filePath, passphrase } = {}) {
     const dbFile = path.join(extractDir, 'app.db');
     if (!fs.existsSync(dbFile)) throw new Error('快照缺少 app.db');
     validateDb(dbFile);
+
+    // 快照里有代理库就校验它（老快照没有，跳过——还原时本地旧库会被归档，
+    // 还原后状态即“无代理”，绝不能留着错密钥的旧库让启动校验炸面板）。
+    const proxyDbFile = path.join(extractDir, 'proxy-manager.db');
+    if (fs.existsSync(proxyDbFile)) {
+      let proxyDb;
+      try {
+        proxyDb = new Database(proxyDbFile, { readonly: true });
+        const check = proxyDb.prepare('PRAGMA integrity_check').get();
+        if (!check || check.integrity_check !== 'ok') {
+          throw new Error(`快照代理库完整性检查未通过: ${check ? check.integrity_check : '无结果'}`);
+        }
+        const tables = proxyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
+        if (!tables.includes('proxies')) throw new Error('快照代理库缺少 proxies 表');
+      } catch (error) {
+        if (error.message && error.message.includes('代理库')) throw error;
+        throw new Error(`快照代理库校验失败: ${error.message}`);
+      } finally {
+        if (proxyDb) proxyDb.close();
+      }
+    }
 
     return { stagingRoot: staging, stagingDir: extractDir, manifest };
   } catch (error) {

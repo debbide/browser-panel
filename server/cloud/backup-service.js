@@ -303,7 +303,8 @@ async function performSwap(stagingDir) {
 
 /**
  * 把当前 data 目录挪到 pre-restore-<stamp>/（绝不删除，这是回滚路径），
- * 再把 staging 里的 app.db + tasks/ + .master_key 落盘。调用方负责先关掉数据库。
+ * 再把 staging 里的 app.db + tasks/ + proxy-manager.db + .master_key 落盘。
+ * 调用方负责先关掉数据库。
  */
 function swapDataDir(stagingDir) {
   const stamp = buildStamp();
@@ -316,6 +317,12 @@ function swapDataDir(stagingDir) {
     [path.join(dataDir, 'app.db-wal'), path.join(preRestoreDir, 'app.db-wal')],
     [path.join(dataDir, 'app.db-shm'), path.join(preRestoreDir, 'app.db-shm')],
     [config.paths.tasksDir, path.join(preRestoreDir, 'tasks')],
+    // 代理库必须和 app.db 成对换：密钥在 app.db 里，库在 proxy-manager.db 里，
+    // 只换一个就会留下错密钥的旧库，启动校验直接炸掉面板（2026-11-05 实测）。
+    // 老快照没有代理库时，本地旧库同样归档，还原后状态即“无代理”。
+    [path.join(dataDir, 'proxy-manager.db'), path.join(preRestoreDir, 'proxy-manager.db')],
+    [path.join(dataDir, 'proxy-manager.db-wal'), path.join(preRestoreDir, 'proxy-manager.db-wal')],
+    [path.join(dataDir, 'proxy-manager.db-shm'), path.join(preRestoreDir, 'proxy-manager.db-shm')],
   ];
   for (const [from, to] of pairs) {
     if (fs.existsSync(from)) fs.renameSync(from, to);
@@ -323,6 +330,11 @@ function swapDataDir(stagingDir) {
   fs.mkdirSync(config.paths.tasksDir, { recursive: true });
   copyDirContents(path.join(stagingDir, 'tasks'), config.paths.tasksDir);
   fs.copyFileSync(path.join(stagingDir, 'app.db'), path.join(dataDir, 'app.db'));
+  // 快照里有代理库就换上；没有（老快照）则不留旧库，还原后即“无代理”。
+  const stagedProxyDb = path.join(stagingDir, 'proxy-manager.db');
+  if (fs.existsSync(stagedProxyDb)) {
+    fs.copyFileSync(stagedProxyDb, path.join(dataDir, 'proxy-manager.db'));
+  }
   // 主密钥文件：快照里有就换上（0600；旧文件进 pre-restore 做回滚），没有就保留
   // 现有的（兼容此次改动之前的老快照）。
   const stagedKey = path.join(stagingDir, MASTER_KEY_FILE_NAME);
